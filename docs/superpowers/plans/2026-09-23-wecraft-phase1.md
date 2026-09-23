@@ -1981,6 +1981,11 @@ export class ChunkRenderer {
 - Water texture has α=200 but plan's MeshBasicMaterial lacks `transparent: true` → Phase 1 renders water OPAQUE (α=200 is currently dead data). Decision: accept opaque water for Phase 1; real translucency deferred to phase 2. Optionally Task 11 may set water tile α=255 + comment to make intent explicit — Task 11 implementer's choice, note both options.
 - NearestFilter (mag+min) + generateMipmaps:false + 0.5px UV inset are load-bearing — forbid LinearFilter "improvements"
 
+**Deviations:**
+- Deviation: main.ts queue hang fix — dropped not-ready entries from mesh budget loop (refreshQueues re-queues next frame); generate data-only ring at r+1, mesh within r, unload at r+2. Plan's original loop text was provably infinite.
+- Deviation: camera clearance y=80→96, lookAt 66→82 (plan's orbit starts inside seed-1337 terrain, max surface 86; dy=14 preserved). Task 16 replaces camera anyway.
+- Note: ImageData via ctx.createImageData (TS 5.7 ArrayBufferLike); water α=200 option B (per Task 10 notes).
+
 - [ ] **Step 3: 整檔替換 `src/main.ts`（orbit 觀察相機版；Task 16 會再替換）**
 
 ```ts
@@ -2289,18 +2294,15 @@ function processQueues(): void {
     });
     budgetGen--;
   }
-  // pendingMesh 迴維持不變（neighborsReady 檢查已涵蓋 worker 非同步）
+  // pendingMesh 迴維持不變（neighborsReady 檢查已涵蓋 worker 非同步）；refreshQueues 已是 gen r+1 / mesh r
   while (budgetMesh > 0 && pendingMesh.length > 0) {
     const [cx, cz] = pendingMesh.shift()!;
     const c = world.getChunk(cx, cz);
-    if (c?.dirty) {
-      if (neighborsReady(cx, cz)) {
-        chunkRenderer.rebuild(world, cx, cz);
-        c.dirty = false;
-        budgetMesh--;
-      } else {
-        pendingMesh.push([cx, cz]);
-      }
+    // fixed: no re-push (see Task 11 deviations)
+    if (c?.dirty && neighborsReady(cx, cz)) {
+      chunkRenderer.rebuild(world, cx, cz);
+      c.dirty = false;
+      budgetMesh--;
     }
   }
 }
@@ -3563,15 +3565,17 @@ function refreshQueues(): void {
   const pcx = Math.floor(player.position.x / CHUNK_SIZE);
   const pcz = Math.floor(player.position.z / CHUNK_SIZE);
   const r = settings.renderDistance;
+  const rg = r + 1; // gen one ring past mesh radius so edge chunks have all 4 neighbors
   pendingGen.length = 0;
   pendingMesh.length = 0;
-  for (let dz = -r; dz <= r; dz++) {
-    for (let dx = -r; dx <= r; dx++) {
+  for (let dz = -rg; dz <= rg; dz++) {
+    for (let dx = -rg; dx <= rg; dx++) {
       const cx = pcx + dx;
       const cz = pcz + dz;
       const key = chunkKey(cx, cz);
       if (!world.hasChunk(cx, cz) && !generated.has(key)) pendingGen.push([cx, cz]);
-      else if (world.getChunk(cx, cz)?.dirty) pendingMesh.push([cx, cz]);
+      else if (Math.abs(dx) <= r && Math.abs(dz) <= r && world.getChunk(cx, cz)?.dirty)
+        pendingMesh.push([cx, cz]);
     }
   }
   pendingGen.sort((a, b) => dist2(a, pcx, pcz) - dist2(b, pcx, pcz));
@@ -3624,14 +3628,11 @@ function processQueues(): void {
   while (budgetMesh > 0 && pendingMesh.length > 0) {
     const [cx, cz] = pendingMesh.shift()!;
     const c = world.getChunk(cx, cz);
-    if (c?.dirty) {
-      if (neighborsReady(cx, cz)) {
-        chunkRenderer.rebuild(world, cx, cz);
-        c.dirty = false;
-        budgetMesh--;
-      } else {
-        pendingMesh.push([cx, cz]);
-      }
+    // fixed: no re-push (see Task 11 deviations)
+    if (c?.dirty && neighborsReady(cx, cz)) {
+      chunkRenderer.rebuild(world, cx, cz);
+      c.dirty = false;
+      budgetMesh--;
     }
   }
 }

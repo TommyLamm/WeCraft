@@ -33,6 +33,7 @@ export class ChunkRenderer {
     canvas.width = atlas.width;
     canvas.height = atlas.height;
     const ctx = canvas.getContext('2d')!;
+    // ImageData(...) blocked by TS 5.7 ArrayBufferLike vs ArrayBuffer — createImageData+set is pixel-identical
     const imageData = ctx.createImageData(atlas.width, atlas.height);
     imageData.data.set(atlas.data);
     ctx.putImageData(imageData, 0, 0);

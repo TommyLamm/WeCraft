@@ -26,9 +26,6 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   // y=96 clears seed-1337 orbit terrain (peaks ~86+trees); dy=14 to lookAt keeps plan framing
   camera.position.set(0.5, 96, 0.5);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 1.0);
-  scene.add(ambient);
-
   return {
     scene,
     camera,

@@ -88,10 +88,10 @@ function processQueues(): void {
 
 function neighborsReady(cx: number, cz: number): boolean {
   return (
-    world.hasChunk(cx + 1, cz) &&
-    world.hasChunk(cx - 1, cz) &&
-    world.hasChunk(cx, cz + 1) &&
-    world.hasChunk(cx, cz - 1)
+    world.getChunk(cx + 1, cz)?.generated === true &&
+    world.getChunk(cx - 1, cz)?.generated === true &&
+    world.getChunk(cx, cz + 1)?.generated === true &&
+    world.getChunk(cx, cz - 1)?.generated === true
   );
 }
 
