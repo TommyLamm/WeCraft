@@ -25,6 +25,9 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   );
   // y=96 clears seed-1337 orbit terrain (peaks ~86+trees); dy=14 to lookAt keeps plan framing
   camera.position.set(0.5, 96, 0.5);
+  // YXZ before any lookAt/rotation: default XYZ + lookAt leaves residual z that
+  // becomes pure roll once the play loop assigns only y/x (Task 17 CR fix)
+  camera.rotation.order = 'YXZ';
 
   return {
     scene,

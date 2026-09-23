@@ -36,6 +36,7 @@ const hotbar: BlockId[] = [...HOTBAR_DEFAULT];
 let selected = 0;
 let showDebug = false;
 let thirdPerson = false;
+let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
 
 function applyRenderDistanceFog(): void {
@@ -194,7 +195,12 @@ function setState(next: GameState): void {
         // menus relocks the canvas after onResume returns (click gesture)
         setState('playing');
       },
-      onQuit: () => setState('title'),
+      // reset to spawn before title: title orbit queues key off player.position —
+      // leaving it far away would orbit a one-chunk island (Task 17 CR fix)
+      onQuit: () => {
+        resetPlayerToSpawn();
+        setState('title');
+      },
     });
   } else if (next === 'inventory') {
     inv.open(
@@ -214,9 +220,13 @@ function setState(next: GameState): void {
   }
 }
 
-function startGame(): void {
+function resetPlayerToSpawn(): void {
   const sp = spawnPoint();
   player = createPlayer(sp.x, sp.y, sp.z);
+}
+
+function startGame(): void {
+  resetPlayerToSpawn();
   setState('playing');
   relockCanvas();
 }
@@ -225,6 +235,13 @@ function startGame(): void {
 input.onLockChange((locked) => {
   if (locked) return;
   if (state === 'playing') setState('paused');
+});
+
+// relock can reject after backdrop/Esc inventory close (no transient activation):
+// without this we'd sit in 'playing' with dead controls and no pause menu.
+// Page-lifetime listener — attach once (Task 17 deviation: pointerlockerror → pause).
+document.addEventListener('pointerlockerror', () => {
+  if (state === 'playing' && !input.locked) setState('paused');
 });
 
 input.setMouseMoveHandler((dx, dy) => {
@@ -270,19 +287,24 @@ gs.renderer.setAnimationLoop(() => {
     gs.camera.rotation.order = 'YXZ';
     gs.camera.rotation.y = player.yaw;
     gs.camera.rotation.x = player.pitch;
+    gs.camera.rotation.z = 0; // defensive: never let residue become roll
+    const back = 4;
     if (thirdPerson) {
-      const back = 4;
       gs.camera.position.x -= Math.sin(player.yaw) * back;
       gs.camera.position.z -= Math.cos(player.yaw) * back;
       gs.camera.position.y += 0.5;
     }
 
-    // 挖掘/放置
+    // 挖掘/放置：crosshair tracks the camera ray — in third person origin must be
+    // camera.position (not the eye) with reach extended by the back-offset
     const dir = { x: 0, y: 0, z: 0 };
     dir.x = -Math.sin(player.yaw) * Math.cos(player.pitch);
     dir.y = Math.sin(player.pitch);
     dir.z = -Math.cos(player.yaw) * Math.cos(player.pitch);
-    const hit = raycast(world, eye, dir, 5);
+    const rayOrigin = thirdPerson
+      ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
+      : eye;
+    const hit = raycast(world, rayOrigin, dir, thirdPerson ? 5 + back : 5);
 
     if (hit && input.state.dig) {
       const id = world.getBlock(hit.x, hit.y, hit.z);
@@ -317,7 +339,8 @@ gs.renderer.setAnimationLoop(() => {
       selected = inSlot;
       hud.setSelected(selected);
       hud.showItemName(getBlockDef(hotbar[selected]).name);
-      setTimeout(() => hud.showItemName(null), 1200);
+      clearTimeout(itemNameTimer);
+      itemNameTimer = setTimeout(() => hud.showItemName(null), 1200);
     }
 
     if (showDebug) {

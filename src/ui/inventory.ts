@@ -15,6 +15,7 @@ export interface InventoryUi {
 
 export function createInventory(uiRoot: HTMLElement): InventoryUi {
   let el: HTMLElement | null = null;
+  let escHandler: ((e: KeyboardEvent) => void) | null = null;
 
   return {
     open(_hotbar, selected, onPick, onClose) {
@@ -30,6 +31,14 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
         this.close();
         onClose?.();
       });
+      // Esc also closes (does not conflict: input E-gating skips keys while unlocked);
+      // removed again in close()
+      escHandler = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape') return;
+        this.close();
+        onClose?.();
+      };
+      document.addEventListener('keydown', escHandler);
       const panel = document.createElement('div');
       panel.className = 'ui-inventory interactive';
       const h = document.createElement('h3');
@@ -49,6 +58,10 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       uiRoot.appendChild(el);
     },
     close() {
+      if (escHandler) {
+        document.removeEventListener('keydown', escHandler);
+        escHandler = null;
+      }
       el?.remove();
       el = null;
     },
