@@ -1,12 +1,14 @@
 import { getBlockDef, BLOCK } from '../world/blocks';
 import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
+import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 
 export function getBreakTime(blockId: number): number {
   return getBlockDef(blockId).hardness;
 }
 
+/** Per-frame contract: call update(blockId, hit, dt) before isDone(blockId) each frame with the same target; isDone assumes progress belongs to the current target key. */
 export class DigProgress {
   private key = '';
   progress = 0;
@@ -23,7 +25,11 @@ export class DigProgress {
   }
 
   isDone(blockId: number): boolean {
-    return isFinite(getBreakTime(blockId)) && this.progress >= 1;
+    return (
+      isFinite(getBreakTime(blockId)) &&
+      this.progress >= 1 &&
+      this.key.endsWith(`,${blockId}`)
+    );
   }
 
   reset(): void {
@@ -33,6 +39,9 @@ export class DigProgress {
 }
 
 export function placeTarget(hit: RayHit): { x: number; y: number; z: number } {
+  if (Math.abs(hit.nx) + Math.abs(hit.ny) + Math.abs(hit.nz) !== 1) {
+    return { x: hit.x, y: hit.y, z: hit.z };
+  }
   return { x: hit.x + hit.nx, y: hit.y + hit.ny, z: hit.z + hit.nz };
 }
 
@@ -43,6 +52,7 @@ export function canPlaceAt(
   z: number,
   playerPos: { x: number; y: number; z: number },
 ): boolean {
+  if (y < 0 || y >= CHUNK_HEIGHT) return false;
   const id = world.getBlock(x, y, z);
   if (id !== BLOCK.AIR && id !== BLOCK.WATER) return false; // 只能放進空氣/水
 

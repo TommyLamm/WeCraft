@@ -4,6 +4,7 @@ import { BLOCK, getBlockDef } from '../world/blocks';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
+import { PLAYER_HEIGHT } from './physics';
 
 describe('getBreakTime', () => {
   it('dirt faster than stone', () => {
@@ -40,6 +41,22 @@ describe('DigProgress', () => {
     d.update(BLOCK.DIRT, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
     d.reset();
     expect(d.progress).toBe(0);
+  });
+
+  it('resets when target moves from negative coordinates', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, { x: -1, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
+    expect(d.progress).toBeCloseTo(0.5, 5);
+    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 0.01);
+    expect(d.progress).toBeCloseTo(0.005, 5); // 重新起算，不是 0.5+
+  });
+
+  it('isDone false before any update and for bedrock', () => {
+    const d = new DigProgress();
+    expect(d.isDone(BLOCK.STONE)).toBe(false);
+    d.update(BLOCK.BEDROCK, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 100);
+    expect(d.progress).toBe(0);
+    expect(d.isDone(BLOCK.BEDROCK)).toBe(false);
   });
 });
 
@@ -79,5 +96,13 @@ describe('canPlaceAt', () => {
     const world = w();
     world.setBlock(5, 70, 5, BLOCK.WATER);
     expect(canPlaceAt(world, 5, 70, 5, { x: 5.5, y: 65, z: 5.5 })).toBe(true);
+  });
+
+  it('touch-only: top exactly on cell floor allowed, one-px overlap denied', () => {
+    const targetY = 65;
+    const feet = targetY - PLAYER_HEIGHT; // pMaxY === targetY，僅貼齊
+    expect(canPlaceAt(w(), 5, targetY, 5, { x: 5.5, y: feet, z: 5.5 })).toBe(true);
+    // 1/16 block（一 px）侵入 → 重疊
+    expect(canPlaceAt(w(), 5, targetY, 5, { x: 5.5, y: feet + 1 / 16, z: 5.5 })).toBe(false);
   });
 });

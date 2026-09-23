@@ -2877,6 +2877,11 @@ git commit -m "feat: keyboard mouse pointer-lock input controller"
 - Create: `src/player/interact.ts`
 - Test: `src/player/interact.test.ts`
 
+**Deviations:**
+- 測試 literal 的 `RayHit` 補上 `t: 0`（實作的 `RayHit` interface 有 `t`，計畫 Step 1 測試碼漏了）。
+- 實作捨棄計畫 Step 3 的 `isSolid` import（從未使用，lint 會掛）。
+- Task 15 review follow-up：`DigProgress` 加 JSDoc 每幀契約（update 先於 isDone、同一目標）＋ `isDone` 校驗 key 尾端 blockId；`canPlaceAt` 加 y-bounds guard（`CHUNK_HEIGHT`）；`placeTarget` 加 non-axial normal guard（回傳 hit cell 不變）；補 3 個邊界測試（負座標 dig key reset、isDone 未 update/bedrock、touch-only 放置邊界）。
+
 - [ ] **Step 1: 寫失敗測試**
 
 ```ts
