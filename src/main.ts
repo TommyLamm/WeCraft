@@ -4,7 +4,7 @@ import { ChunkRenderer } from './render/chunk-renderer';
 import { drawAtlas } from './render/textures';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE } from './world/chunk';
-import { generateChunk } from './world/terrain';
+import { TerrainWorkerClient } from './world/worker-client';
 import { loadSettings } from './core/settings';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -12,6 +12,8 @@ const gs = createGameScene(canvas);
 const world = new World();
 const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
 const settings = loadSettings();
+const terrain = new TerrainWorkerClient(settings.seed);
+const genInFlight = new Set<string>();
 
 const pendingGen: Array<[number, number]> = [];
 const pendingMesh: Array<[number, number]> = [];
@@ -64,12 +66,28 @@ function processQueues(): void {
   let budgetGen = 2;
   let budgetMesh = 2;
   while (budgetGen > 0 && pendingGen.length > 0) {
-    const [cx, cz] = pendingGen.shift()!;
-    const chunk = new Chunk(cx, cz, generateChunk(cx, cz, settings.seed));
-    chunk.generated = true;
-    chunk.dirty = true;
-    world.addChunk(chunk);
-    generated.add(chunkKey(cx, cz));
+    const [cx, cz] = pendingGen[0];
+    const key = chunkKey(cx, cz);
+    if (genInFlight.has(key)) break;
+    pendingGen.shift();
+    genInFlight.add(key);
+    void terrain.request(cx, cz).then((resp) => {
+      genInFlight.delete(key);
+      const data = new Uint8Array(resp.buffer);
+      const existing = world.getChunk(cx, cz);
+      if (existing) {
+        if (existing.generated) return;
+        existing.data.set(data);
+        existing.generated = true;
+        existing.dirty = true;
+      } else {
+        const chunk = new Chunk(cx, cz, data);
+        chunk.generated = true;
+        chunk.dirty = true;
+        world.addChunk(chunk);
+      }
+      generated.add(key);
+    });
     budgetGen--;
   }
   while (budgetMesh > 0 && pendingMesh.length > 0) {
