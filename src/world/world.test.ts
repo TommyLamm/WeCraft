@@ -63,4 +63,59 @@ describe('World', () => {
     w.setBlock(15, 64, 0, BLOCK.STONE);
     expect(w.getChunk(1, 0)!.dirty).toBe(true);
   });
+
+  it('negative world coords roundtrip into correct chunk', () => {
+    const w = new World();
+    expect(w.setBlock(-1, 64, -1, BLOCK.STONE)).toBe(true);
+    expect(w.getBlock(-1, 64, -1)).toBe(BLOCK.STONE);
+    expect(w.getChunk(-1, -1)).toBeDefined();
+    expect(w.setBlock(-17, 64, -1, BLOCK.STONE)).toBe(true);
+    expect(w.getChunk(-2, -1)).toBeDefined();
+    expect(w.getBlock(-17, 64, -1)).toBe(BLOCK.STONE);
+  });
+
+  it('dirties only touched neighbors on edges, none in interior', () => {
+    const w = new World();
+    const coords = [
+      [-1, 0],
+      [0, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ] as const;
+    for (const [cx, cz] of coords) w.addChunk(new Chunk(cx, cz));
+    const reset = () => {
+      for (const [cx, cz] of coords) w.getChunk(cx, cz)!.dirty = false;
+    };
+    const dirtied = () =>
+      coords.map(([cx, cz]) => w.getChunk(cx, cz)!.dirty);
+
+    reset();
+    w.setBlock(0, 64, 0, BLOCK.STONE);
+    expect(dirtied()).toEqual([true, true, false, true, false]);
+
+    reset();
+    w.setBlock(15, 64, 0, BLOCK.STONE);
+    expect(dirtied()).toEqual([false, true, true, true, false]);
+
+    reset();
+    w.setBlock(0, 64, 15, BLOCK.STONE);
+    expect(dirtied()).toEqual([true, true, false, false, true]);
+
+    reset();
+    w.setBlock(5, 64, 5, BLOCK.STONE);
+    expect(dirtied()).toEqual([false, true, false, false, false]);
+  });
+
+  it('successful setBlock records chunk in modified set', () => {
+    const w = new World();
+    w.setBlock(5, 70, 5, BLOCK.STONE);
+    expect(w.modified.has('0,0')).toBe(true);
+  });
+
+  it('setBlock returns true on success', () => {
+    const w = new World();
+    expect(w.setBlock(5, 70, 5, BLOCK.STONE)).toBe(true);
+    expect(w.setBlock(0, 0, 0, BLOCK.DIRT)).toBe(true);
+  });
 });

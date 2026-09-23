@@ -828,6 +828,12 @@ git commit -m "feat: block registry with hardness and tiles"
 - Create: `src/world/chunk.ts`, `src/world/world.ts`
 - Test: `src/world/world.test.ts`
 
+**Deviations:**
+- `chunkIndex` middle test asserts swapped: plan originally asserted `(0,1,0)=16, (0,0,1)=256`, which is unsatisfiable with the boundary max `16*16*256-1=65535`; implementation keeps y-stride-256 (`lx + lz*16 + ly*256`), so tests now assert `(0,1,0)=256, (0,0,1)=16`.
+- `World.setBlock` AUTO-CREATES the target chunk when y is in range and the chunk is missing (plan Step 4 code said `return false`, but plan Step 1 tests require creation). The y-OOB check still comes first and does NOT create.
+- `World.isSolid` delegates to `blocks.isSolid` (aliased import) instead of the plan's local `SOLID` Set.
+- Downstream (Tasks 12/13/14): because setBlock auto-creates, loaders must key off `chunk.generated` (or equivalent), not just `world.hasChunk`, to avoid generation-queue poisoning.
+
 - [ ] **Step 1: 寫失敗測試**
 
 ```ts
