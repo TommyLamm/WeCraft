@@ -5,22 +5,25 @@ export interface Settings {
   volume: number;
 }
 
-export const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Settings = Object.freeze({
   seed: 1337,
   renderDistance: 10,
   sensitivity: 1.0,
   volume: 0.8,
-};
+});
 
 const KEY = 'wecraft.settings';
 
+const finite = (v: unknown, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+
 function clampSettings(s: Settings): Settings {
+  const seed = finite(s.seed, DEFAULT_SETTINGS.seed);
   return {
-    ...s,
-    renderDistance: Math.min(16, Math.max(6, Math.round(s.renderDistance))),
-    sensitivity: Math.min(3, Math.max(0.1, s.sensitivity)),
-    volume: Math.min(1, Math.max(0, s.volume)),
-    seed: Math.floor(s.seed) || 0,
+    seed: Math.floor(seed) || 0,
+    renderDistance: Math.min(16, Math.max(6, Math.round(finite(s.renderDistance, DEFAULT_SETTINGS.renderDistance)))),
+    sensitivity: Math.min(3, Math.max(0.1, finite(s.sensitivity, DEFAULT_SETTINGS.sensitivity))),
+    volume: Math.min(1, Math.max(0, finite(s.volume, DEFAULT_SETTINGS.volume))),
   };
 }
 
@@ -37,6 +40,10 @@ export function loadSettings(): Settings {
 
 export function saveSettings(patch: Partial<Settings>): Settings {
   const next = clampSettings({ ...loadSettings(), ...patch });
-  localStorage.setItem(KEY, JSON.stringify(next));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(next));
+  } catch (err) {
+    console.warn('Failed to persist settings', err);
+  }
   return next;
 }

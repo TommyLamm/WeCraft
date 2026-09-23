@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './settings';
 
 beforeEach(() => {
@@ -23,5 +23,45 @@ describe('settings', () => {
     expect(loadSettings().renderDistance).toBe(16);
     saveSettings({ renderDistance: 1 });
     expect(loadSettings().renderDistance).toBe(6);
+  });
+
+  it('returns defaults when stored JSON is corrupt', () => {
+    localStorage.setItem('wecraft.settings', '{oops');
+    expect(loadSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('clamps out-of-range sensitivity and volume on save', () => {
+    const next = saveSettings({ sensitivity: 99, volume: -1 });
+    expect(next.sensitivity).toBe(3);
+    expect(next.volume).toBe(0);
+    expect(loadSettings().sensitivity).toBe(3);
+    expect(loadSettings().volume).toBe(0);
+  });
+
+  it('falls back to defaults for non-finite stored values', () => {
+    localStorage.setItem(
+      'wecraft.settings',
+      JSON.stringify({ sensitivity: 'abc' }),
+    );
+    const s = loadSettings();
+    expect(s.sensitivity).toBe(DEFAULT_SETTINGS.sensitivity);
+    expect(Number.isFinite(s.sensitivity)).toBe(true);
+  });
+
+  it('still returns settings when localStorage.setItem throws', () => {
+    const spy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new Error('quota');
+      });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const next = saveSettings({ sensitivity: 2 });
+      expect(next.sensitivity).toBe(2);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
+    }
   });
 });
