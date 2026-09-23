@@ -3,6 +3,7 @@ import { BLOCK } from '../world/blocks';
 
 export const PLAYER_HALF_WIDTH = 0.3;
 export const PLAYER_HEIGHT = 1.8;
+export const EYE_HEIGHT = 1.62;
 const GRAVITY = 32;
 const JUMP_SPEED = 9;
 const WALK_SPEED = 4.3;
@@ -11,6 +12,7 @@ const SNEAK_SPEED = 1.3;
 const FLY_SPEED = 10;
 const TERMINAL_VELOCITY = 50;
 const IN_WATER_DRAG = 0.5;
+const MAX_SUBSTEP = 0.05;
 
 export interface PlayerState {
   position: { x: number; y: number; z: number }; // 腳底中心
@@ -63,7 +65,20 @@ function boxCollides(world: World, px: number, py: number, pz: number): boolean 
   return false;
 }
 
+/** dt is substepped internally (≤0.05s); safe to pass raw frame dt. */
 export function stepPlayer(
+  p: PlayerState,
+  input: MoveInput,
+  world: World,
+  dt: number,
+): void {
+  if (!Number.isFinite(dt)) return;
+  const steps = Math.max(1, Math.ceil(dt / MAX_SUBSTEP));
+  const h = dt / steps;
+  for (let i = 0; i < steps; i++) stepOnce(p, input, world, h);
+}
+
+function stepOnce(
   p: PlayerState,
   input: MoveInput,
   world: World,
@@ -79,15 +94,18 @@ export function stepPlayer(
     p.flying = true;
     p.velocity.y = 0;
   }
-  if (!input.fly && p.flying && input.jump === false && p.onGround) {
+  if (!input.fly && p.flying) {
     p.flying = false;
   }
 
   // 水平移動方向（yaw 慣例：yaw=0 面向 -z）
-  const sin = Math.sin(p.yaw);
-  const cos = Math.cos(p.yaw);
+  const yawOk = Number.isFinite(p.yaw);
+  const sin = yawOk ? Math.sin(p.yaw) : 0;
+  const cos = yawOk ? Math.cos(p.yaw) : 1;
   let dirX = input.strafe * cos - input.fwd * sin;
   let dirZ = -input.strafe * sin - input.fwd * cos;
+  if (!yawOk || !Number.isFinite(dirX)) dirX = 0;
+  if (!yawOk || !Number.isFinite(dirZ)) dirZ = 0;
   const len = Math.hypot(dirX, dirZ);
   if (len > 1) {
     dirX /= len;

@@ -2335,6 +2335,15 @@ git commit -m "feat: terrain generation web worker with fallback"
 - Create: `src/player/physics.ts`
 - Test: `src/player/physics.test.ts`
 
+**Deviations:**
+- Test uses value import `import { World } from '../world/world'` (plan wrote `import type`, but the test does `new World()` — plan bug).
+- `moveAxis` snap rewritten per the plan's own mandate (程式碼註解): literal plan code (`Math.floor(y+1e-6)+1` / ceil hacks) fails the landing test; implemented "move → detect overlap → walk back 0.01 → re-tune → snap y to `floor(y+1e-9)` on downward hit".
+- Dropped unused plan helper `solidAt`.
+- Water check uses `BLOCK.WATER` instead of the plan's literal `9`.
+- Fly exit: `!input.fly && flying` leaves flight IMMEDIATELY without requiring `onGround` (midair fly-off soft-lock fix; Minecraft behavior — start falling).
+- `dt` substepped internally (≤0.05s chunks) with `!Number.isFinite(dt)` → return early; non-finite yaw/derived dirX/dirZ → zero horizontal input for that step.
+- Added `export const EYE_HEIGHT = 1.62`; 4 regression tests (+ sprint/sneak exact-speed asserts) beyond the plan's 8 — 13 physics tests total.
+
 - [ ] **Step 1: 寫失敗測試**
 
 ```ts
