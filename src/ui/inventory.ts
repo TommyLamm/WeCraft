@@ -3,7 +3,12 @@ import { PLACEABLE, getBlockDef, type BlockId } from '../world/blocks';
 import { getBlockIcon } from './icons';
 
 export interface InventoryUi {
-  open(hotbar: BlockId[], selected: number, onPick: (slot: number, id: BlockId) => void): void;
+  open(
+    hotbar: BlockId[],
+    selected: number,
+    onPick: (slot: number, id: BlockId) => void,
+    onClose?: () => void,
+  ): void;
   close(): void;
   isOpen(): boolean;
 }
@@ -12,13 +17,19 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
   let el: HTMLElement | null = null;
 
   return {
-    open(_hotbar, selected, onPick) {
+    open(_hotbar, selected, onPick, onClose) {
       this.close();
       // Full-screen transparent backdrop captures outside clicks so they never
       // reach the canvas (prevents requestPointerLock while inventory is open).
-      // Phase 1: clicking the backdrop does nothing — inventory stays open.
+      // Phase 1 close path: E only fires while pointer-locked and opening the
+      // inventory unlocks, so a backdrop ("screen") click closes instead.
       el = document.createElement('div');
       el.className = 'ui-overlay ui-inv-backdrop interactive';
+      el.addEventListener('click', (e) => {
+        if (e.target !== el) return; // clicks on the panel pick a block, never close
+        this.close();
+        onClose?.();
+      });
       const panel = document.createElement('div');
       panel.className = 'ui-inventory interactive';
       const h = document.createElement('h3');

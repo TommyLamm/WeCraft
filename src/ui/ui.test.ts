@@ -105,6 +105,23 @@ describe('inventory pick', () => {
   });
 });
 
+describe('inventory backdrop close', () => {
+  it('backdrop click closes and calls onClose; panel click does not', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const onClose = vi.fn();
+    inv.open(HOTBAR_DEFAULT, 0, () => {}, onClose);
+    const panel = root.querySelector('.ui-inventory') as HTMLElement;
+    panel.click();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(inv.isOpen()).toBe(true);
+    const backdrop = root.querySelector('.ui-inv-backdrop') as HTMLElement;
+    backdrop.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(inv.isOpen()).toBe(false);
+  });
+});
+
 describe('pause menu', () => {
   it('resume invokes callback and can hide menu', () => {
     const root = document.getElementById('ui-root')!;

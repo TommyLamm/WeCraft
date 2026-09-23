@@ -3064,7 +3064,7 @@ git commit -m "feat: dig progress and placement rules"
 
 **Deviations (Task 16 code review):**
 - Settings sliders persist on `change` (release) not `input` — avoids JSON.parse+setItem per drag pixel; test fires `change` and asserts `input` alone does not persist.
-- Inventory panel wrapped in a full-screen transparent `.ui-overlay.ui-inv-backdrop.interactive` backdrop: outside clicks are captured so they never reach the canvas (no requestPointerLock / relock while open); backdrop click does nothing (inventory stays open per Phase 1 state machine).
+- Inventory panel wrapped in a full-screen transparent `.ui-overlay.ui-inv-backdrop.interactive` backdrop: outside clicks are captured so they never reach the canvas (no requestPointerLock / relock while open); backdrop click does nothing (inventory stays open per Phase 1 state machine) — **superseded by Task 17 deviation: backdrop click now closes the inventory**.
 - New `src/ui/icons.ts`: null-safe `getContext2d`, `getAtlas()`, per-block `getBlockIcon()` Map cache; `hud.ts`/`inventory.ts` duplicated icon pipelines removed (hud redraws its own slot canvas via drawImage from the cached icon).
 - `drawAtlas()` memoized at module level in `textures.ts` (no-arg, deterministic) — main.ts Three texture and UI share the one instance automatically.
 - `setDebug` dirty-checks the joined string (skips DOM write when unchanged); `setHotbar` per-slot blockId cache (skips icon redraw when unchanged).
@@ -3537,6 +3537,20 @@ git commit -m "feat: hud hotbar debug menus and creative inventory"
 
 **Files:**
 - Modify: `src/main.ts`（整檔替換）
+- Modify: `src/ui/inventory.ts`（backdrop click closes — see deviation 1）
+- Test: `src/ui/ui.test.ts`（+1 backdrop-close case）
+
+**Deviations (Task 17):**
+- Inventory close: `E` keydown only fires while pointer-locked, and opening the inventory unlocks — so the plan's "再按 E 關閉" path is impossible as written (also noted: unlock clears the E pulse). Phase 1 fix chosen: backdrop click CLOSES the inventory — `inventory.ts` `open()` gained optional `onClose`; backdrop handler closes when `e.target` is the backdrop itself (panel clicks still pick only). `onClose` in main.ts does `setState('playing')` + relock (the click is a valid lock gesture). Supersedes Task 16's "backdrop click does nothing" deviation. New test covers backdrop-close and panel-click-does-not-close.
+- `dt` clamped at loop entry: `dt = Math.min(0.1, Math.max(0, dt))` (Task 13 deviation mandate; plan snippet used `Math.min(0.05, …)` with no negative guard). Physics still substeps internally.
+- State-split render branch: plan's single `else` ran the orbit camera + queues for EVERY non-playing state, which would yank the camera into the orbit on pause/inventory (both overlays show the world behind them). Orbit + queue processing run only when `state === 'title'`; `paused`/`inventory` keep the frozen world view and only render.
+- Shipped queue/worker fixes preserved over the plan snippet (current main.ts wins): `refreshQueues` keys off `chunk.generated !== true` (not `hasChunk`, Task 6 deviation); gen response handler is fill-if-not-generated (+ `.catch` to clear `genInFlight`), not the plan's `if (hasChunk) return`; `neighborsReady` uses `?.generated === true`; mesh loop drops not-ready entries with NO re-push (Task 11 deviation). In-flight gen entries use the plan's shift-continue (allows >1 concurrent request).
+- Spawn: `surfaceHeight(0.5, 0.5, settings.seed) + 1` per the task brief (plan snippet scanned the column top), with a walk-up while the player AABB (feet/mid/head probes) would overlap solid blocks so a tree at (0,0) can't trap the spawn; chunk (0,0) still sync-generated first and keyed off `generated`. Spawn chunk (0,0) never unloaded (plan behavior).
+- `consumePlace()` is consumed unconditionally (even when the ray misses) so a right-click into air can't leave a stale pulse that fires when the crosshair later crosses a block.
+- Settings live-apply on resume: `Object.assign(settings, loadSettings())` inside `onResume`; when `renderDistance` changed, `scene.fog.far = renderDistance * CHUNK_SIZE` (also applied once at startup). Queue radius picks the new value up on the next `refreshQueues`. `onResume` itself only flips state — menus handles `relockCanvas`.
+- No block-outline/wireframe highlight on the ray target: not present in the plan's Task 17 snippet (nothing to implement per plan).
+- Title orbit uses `y=96` / `lookAt y=82` (Task 11 deviation — plan snippet's y=75/83 sits inside seed-1337 terrain, max surface 86); radius 24 and 0.1 speed per plan.
+- Camera eye uses exported `EYE_HEIGHT` (1.62, Task 13) instead of the plan's literal.
 
 - [ ] **Step 1: 整檔替換 `src/main.ts`**
 
