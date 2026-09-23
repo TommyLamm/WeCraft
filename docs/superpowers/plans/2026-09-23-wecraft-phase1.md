@@ -1976,6 +1976,11 @@ export class ChunkRenderer {
 }
 ```
 
+**Notes from Task 10 review:**
+- Keep `alphaTest: 0.1` exactly — glass interior is α=0 (hardened); a comment at the material must say `// must stay > glass interior 0 and == 0.1 contract`
+- Water texture has α=200 but plan's MeshBasicMaterial lacks `transparent: true` → Phase 1 renders water OPAQUE (α=200 is currently dead data). Decision: accept opaque water for Phase 1; real translucency deferred to phase 2. Optionally Task 11 may set water tile α=255 + comment to make intent explicit — Task 11 implementer's choice, note both options.
+- NearestFilter (mag+min) + generateMipmaps:false + 0.5px UV inset are load-bearing — forbid LinearFilter "improvements"
+
 - [ ] **Step 3: 整檔替換 `src/main.ts`（orbit 觀察相機版；Task 16 會再替換）**
 
 ```ts

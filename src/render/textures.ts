@@ -58,6 +58,7 @@ export function drawAtlas(): AtlasImage {
     fillTile(data, tile, fn);
 
   put(0, (_x, _y, r) => vary([106, 170, 64, 255], r, 26)); // grass_top
+  // green strip at image-top; with CanvasTexture flipY + bakeAtlasUvs this is block-face TOP — do not move
   put(1, (x, y, r) =>
     y < 3 + (x % 3 === 0 ? 1 : 0)
       ? vary([106, 170, 64, 255], r, 26)
@@ -106,7 +107,8 @@ export function drawAtlas(): AtlasImage {
     const border = x === 0 || y === 0 || x === 15 || y === 15;
     if (border) return [220, 240, 250, 220];
     if (x === y || x + y === 15) return [230, 245, 255, 60];
-    return [200, 230, 245, 25];
+    // interior a=0 must stay < alphaTest 0.1 in Task 11 material
+    return [200, 230, 245, 0];
   }); // glass
   put(15, (x, y, r) => {
     const stone = vary([125, 125, 125, 255], r, 20);
