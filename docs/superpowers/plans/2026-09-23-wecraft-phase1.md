@@ -1421,6 +1421,9 @@ git commit -m "feat: voxel DDA raycast with face normals"
 - Create: `src/world/mesher.ts`
 - Test: `src/world/mesher.test.ts`
 
+**Deviations:**
+- plan test expected 10 (both faces culled) but that creates FrontSide holes through solid blocks; rule is: transparent face hides against opaque, opaque face draws toward transparent → 11. Plan test updated accordingly.
+
 - [ ] **Step 1: 寫失敗測試**
 
 ```ts

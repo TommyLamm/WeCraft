@@ -42,10 +42,11 @@ describe('meshChunk', () => {
     expect(meshChunk(w, 0, 0).quadCount).toBe(10);
   });
 
-  it('glass next to stone hides shared faces from both', () => {
+  it('stone|glass: solid face draws toward glass, glass face hides against stone', () => {
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     w.setBlock(6, 64, 5, BLOCK.GLASS);
-    expect(meshChunk(w, 0, 0).quadCount).toBe(10);
+    // stone: all 6 faces (neighbor glass is transparent → draw); glass: 5 (face against opaque stone culled)
+    expect(meshChunk(w, 0, 0).quadCount).toBe(11);
   });
 
   it('water against air is drawn', () => {
@@ -114,5 +115,58 @@ describe('meshChunk', () => {
       expect(idx).toBeGreaterThanOrEqual(0);
       expect(idx).toBeLessThan(vertCount);
     }
+  });
+
+  it('quad winding yields outward normals for all 6 faces', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    const m = meshChunk(w, 0, 0);
+    const center = [5.5, 64.5, 5.5];
+    const seen = new Set<string>();
+    for (let q = 0; q < m.quadCount; q++) {
+      const v: number[][] = [];
+      for (let i = 0; i < 4; i++) {
+        const b = (q * 4 + i) * 3;
+        v.push([m.positions[b], m.positions[b + 1], m.positions[b + 2]]);
+      }
+      const e1 = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
+      const e2 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
+      const n = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      ];
+      const d = [
+        (v[0][0] + v[1][0] + v[2][0] + v[3][0]) / 4 - center[0],
+        (v[0][1] + v[1][1] + v[2][1] + v[3][1]) / 4 - center[1],
+        (v[0][2] + v[1][2] + v[2][2] + v[3][2]) / 4 - center[2],
+      ];
+      const axis = d[0] !== 0 ? 0 : d[1] !== 0 ? 1 : 2;
+      const expected = [0, 0, 0];
+      expected[axis] = Math.sign(d[axis]);
+      const dot = n[0] * expected[0] + n[1] * expected[1] + n[2] * expected[2];
+      expect(dot).toBeGreaterThan(0);
+      seen.add(expected.join(','));
+    }
+    expect(seen).toEqual(
+      new Set(['1,0,0', '-1,0,0', '0,1,0', '0,-1,0', '0,0,1', '0,0,-1']),
+    );
+  });
+
+  it('side faces pin vv=0 at block bottom and vv=1 at block top', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    const m = meshChunk(w, 0, 0);
+    let sideFaces = 0;
+    for (let q = 0; q < m.quadCount; q++) {
+      const y0 = m.positions[(q * 4) * 3 + 1];
+      const y1 = m.positions[(q * 4 + 1) * 3 + 1];
+      const y2 = m.positions[(q * 4 + 2) * 3 + 1];
+      if (y0 === y1 && y1 === y2) continue; // top/bottom face: constant y
+      sideFaces++;
+      for (let i = 0; i < 4; i++) {
+        const y = m.positions[(q * 4 + i) * 3 + 1];
+        expect(m.uvs[(q * 4 + i) * 2 + 1]).toBe(y === 64 ? 0 : 1);
+      }
+    }
+    expect(sideFaces).toBe(4);
   });
 });
