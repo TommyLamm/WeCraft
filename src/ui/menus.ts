@@ -28,7 +28,7 @@ interface SliderOpts {
   value: number;
 }
 
-function sliderRow(label: string, opts: SliderOpts, onInput: (v: number) => void): HTMLElement {
+function sliderRow(label: string, opts: SliderOpts, onChange: (v: number) => void): HTMLElement {
   const row = document.createElement('div');
   row.className = 'row';
   const lab = document.createElement('label');
@@ -39,7 +39,9 @@ function sliderRow(label: string, opts: SliderOpts, onInput: (v: number) => void
   input.max = String(opts.max);
   input.step = String(opts.step);
   input.value = String(opts.value);
-  input.addEventListener('input', () => onInput(Number(input.value)));
+  // persist on release only: 'input' fires every drag pixel (JSON.parse+setItem spam);
+  // the thumb already updates visually without a listener
+  input.addEventListener('change', () => onChange(Number(input.value)));
   row.append(lab, input);
   return row;
 }

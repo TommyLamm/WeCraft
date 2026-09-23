@@ -52,7 +52,10 @@ function fillTile(
   }
 }
 
+let cachedAtlas: AtlasImage | null = null;
+
 export function drawAtlas(): AtlasImage {
+  if (cachedAtlas) return cachedAtlas;
   const data = new Uint8ClampedArray(ATLAS_SIZE * ATLAS_SIZE * 4);
   const put = (tile: number, fn: (x: number, y: number, rnd: () => number) => RGBA) =>
     fillTile(data, tile, fn);
@@ -123,5 +126,6 @@ export function drawAtlas(): AtlasImage {
     return stone;
   }); // iron_ore
 
-  return { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
+  cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
+  return cachedAtlas;
 }

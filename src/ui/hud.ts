@@ -1,7 +1,6 @@
 import '../ui/ui.css';
-import { getBlockDef } from '../world/blocks';
 import type { BlockId } from '../world/blocks';
-import { ATLAS_SIZE, TILE_PX, TILES_PER_ROW, drawAtlas } from '../render/textures';
+import { ICON_PX, getContext2d, getBlockIcon } from './icons';
 
 export interface Hud {
   root: HTMLElement;
@@ -10,51 +9,6 @@ export interface Hud {
   setDebug(lines: string[] | null): void;
   showItemName(name: string | null): void;
   dispose(): void;
-}
-
-const atlasData = drawAtlas();
-
-let ctx2dAvailable: boolean | null = null;
-
-function getContext2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
-  if (ctx2dAvailable === false) return null;
-  let ctx: CanvasRenderingContext2D | null = null;
-  try {
-    ctx = canvas.getContext('2d');
-  } catch {
-    ctx = null;
-  }
-  ctx2dAvailable = !!ctx;
-  return ctx;
-}
-
-function drawBlockIcon(canvas: HTMLCanvasElement, blockId: BlockId): void {
-  canvas.width = 32;
-  canvas.height = 32;
-  const ctx = getContext2d(canvas);
-  if (!ctx) return; // jsdom has no 2d context; browser draws icons
-  const def = getBlockDef(blockId);
-  const tx = def.side % TILES_PER_ROW;
-  const ty = Math.floor(def.side / TILES_PER_ROW);
-  const img = ctx.createImageData(TILE_PX, TILE_PX);
-  for (let y = 0; y < TILE_PX; y++) {
-    for (let x = 0; x < TILE_PX; x++) {
-      const si = ((ty * TILE_PX + y) * ATLAS_SIZE + tx * TILE_PX + x) * 4;
-      const di = (y * TILE_PX + x) * 4;
-      img.data[di] = atlasData.data[si];
-      img.data[di + 1] = atlasData.data[si + 1];
-      img.data[di + 2] = atlasData.data[si + 2];
-      img.data[di + 3] = atlasData.data[si + 3];
-    }
-  }
-  const tmp = document.createElement('canvas');
-  tmp.width = TILE_PX;
-  tmp.height = TILE_PX;
-  const tmpCtx = getContext2d(tmp);
-  if (!tmpCtx) return;
-  tmpCtx.putImageData(img, 0, 0);
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(tmp, 0, 0, 32, 32);
 }
 
 export function createHud(uiRoot: HTMLElement): Hud {
@@ -85,6 +39,18 @@ export function createHud(uiRoot: HTMLElement): Hud {
 
   uiRoot.append(crosshair, hotbar, itemName, debug);
 
+  const slotBlocks: Array<BlockId | undefined> = new Array(9).fill(undefined);
+  let lastDebug: string | null = null; // null = hidden
+
+  const drawSlotIcon = (canvas: HTMLCanvasElement, id: BlockId) => {
+    const ctx = getContext2d(canvas);
+    if (!ctx) return; // jsdom has no 2d context; browser draws icons
+    canvas.width = ICON_PX;
+    canvas.height = ICON_PX;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(getBlockIcon(id), 0, 0);
+  };
+
   return {
     root: uiRoot,
     setHotbar(list, selected) {
@@ -92,20 +58,26 @@ export function createHud(uiRoot: HTMLElement): Hud {
         const s = slots[i];
         if (!s) return;
         s.classList.toggle('selected', i === selected);
+        if (slotBlocks[i] === id) return;
+        slotBlocks[i] = id;
         const canvas = s.querySelector('canvas');
-        if (canvas) drawBlockIcon(canvas, id);
+        if (canvas) drawSlotIcon(canvas, id);
       });
     },
     setSelected(index) {
       slots.forEach((s, i) => s.classList.toggle('selected', i === index));
     },
     setDebug(lines) {
-      if (!lines) {
+      const next = lines ? lines.join('\n') : null;
+      if (next === lastDebug) return;
+      lastDebug = next;
+      if (next === null) {
         debug.style.display = 'none';
+        debug.textContent = '';
         return;
       }
       debug.style.display = 'block';
-      debug.textContent = lines.join('\n');
+      debug.textContent = next;
     },
     showItemName(name) {
       itemName.textContent = name ?? '';

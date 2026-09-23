@@ -3058,9 +3058,19 @@ git commit -m "feat: dig progress and placement rules"
 ### Task 16: `ui/hud` + `ui/menus` + `ui/inventory`
 
 **Files:**
-- Create: `src/ui/hud.ts`, `src/ui/menus.ts`, `src/ui/inventory.ts`, `src/ui/ui.css`
+- Create: `src/ui/hud.ts`, `src/ui/menus.ts`, `src/ui/inventory.ts`, `src/ui/ui.css`, `src/ui/icons.ts`
 
 （DOM/CSS 為主，手動驗收；每個模組附最小 smoke 測試確認可建立。）
+
+**Deviations (Task 16 code review):**
+- Settings sliders persist on `change` (release) not `input` — avoids JSON.parse+setItem per drag pixel; test fires `change` and asserts `input` alone does not persist.
+- Inventory panel wrapped in a full-screen transparent `.ui-overlay.ui-inv-backdrop.interactive` backdrop: outside clicks are captured so they never reach the canvas (no requestPointerLock / relock while open); backdrop click does nothing (inventory stays open per Phase 1 state machine).
+- New `src/ui/icons.ts`: null-safe `getContext2d`, `getAtlas()`, per-block `getBlockIcon()` Map cache; `hud.ts`/`inventory.ts` duplicated icon pipelines removed (hud redraws its own slot canvas via drawImage from the cached icon).
+- `drawAtlas()` memoized at module level in `textures.ts` (no-arg, deterministic) — main.ts Three texture and UI share the one instance automatically.
+- `setDebug` dirty-checks the joined string (skips DOM write when unchanged); `setHotbar` per-slot blockId cache (skips icon redraw when unchanged).
+- Crosshair hidden under overlays via `#ui-root:has(.ui-overlay)` (fallback comment: without `:has()` crosshair stays visible — cosmetic only).
+- `menus` resume button calls `relockCanvas()` (plan snippet omitted it; pointer lock needs the click gesture).
+- Tests superset: dispose clears DOM, setHotbar change re-render, slider change-vs-input, inventory backdrop presence. Stray `src/ui-preview.ts` + `ui-preview.html` previews deleted (never committed).
 
 - [ ] **Step 1: 建立 `src/ui/ui.css`**
 

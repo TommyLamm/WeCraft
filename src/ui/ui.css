@@ -25,6 +25,11 @@
   width: 20px;
   height: 2px;
 }
+/* Hide crosshair under any full-screen overlay (title/pause/settings/inventory).
+   Fallback: browsers without :has() keep the crosshair visible (cosmetic only). */
+#ui-root:has(.ui-overlay) .ui-crosshair {
+  display: none;
+}
 
 .ui-hotbar {
   position: absolute;
@@ -131,6 +136,10 @@
   border-radius: 4px;
   padding: 12px;
   pointer-events: auto;
+}
+/* transparent full-screen catcher: outside clicks never reach the canvas */
+.ui-overlay.ui-inv-backdrop {
+  background: transparent;
 }
 .ui-inventory h3 {
   margin: 0 0 8px;

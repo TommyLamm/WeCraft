@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHud } from './hud';
 import { createMenus } from './menus';
 import { createInventory } from './inventory';
-import { HOTBAR_DEFAULT, PLACEABLE } from '../world/blocks';
+import { HOTBAR_DEFAULT, PLACEABLE, BLOCK } from '../world/blocks';
 import { loadSettings } from '../core/settings';
 
 beforeEach(() => {
@@ -29,6 +29,30 @@ describe('ui smoke', () => {
     hud.dispose();
   });
 
+  it('setHotbar re-renders when a slot block changes', () => {
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    hud.setHotbar(HOTBAR_DEFAULT, 0);
+    expect(root.querySelectorAll('.ui-slot').length).toBe(9);
+    const next = [...HOTBAR_DEFAULT];
+    next[0] = BLOCK.BEDROCK;
+    hud.setHotbar(next, 0);
+    expect(root.querySelectorAll('.ui-slot').length).toBe(9);
+    expect(root.querySelectorAll('.ui-slot.selected').length).toBe(1);
+    hud.setHotbar(next, 0);
+    expect(root.querySelectorAll('.ui-slot').length).toBe(9);
+    hud.dispose();
+  });
+
+  it('dispose clears hud DOM', () => {
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    hud.setHotbar(HOTBAR_DEFAULT, 0);
+    expect(root.querySelectorAll('*').length).toBeGreaterThan(0);
+    hud.dispose();
+    expect(root.querySelectorAll('*').length).toBe(0);
+  });
+
   it('menus show and hide title', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
@@ -44,8 +68,10 @@ describe('ui smoke', () => {
     const inv = createInventory(root);
     inv.open(HOTBAR_DEFAULT, 0, () => {});
     expect(inv.isOpen()).toBe(true);
+    expect(root.querySelector('.ui-inv-backdrop')).not.toBeNull();
     inv.close();
     expect(inv.isOpen()).toBe(false);
+    expect(root.querySelector('.ui-inv-backdrop')).toBeNull();
   });
 });
 
@@ -101,7 +127,7 @@ describe('pause menu', () => {
     menus.hideAll();
   });
 
-  it('settings sliders persist via saveSettings', () => {
+  it('settings sliders persist via saveSettings on change only', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     menus.showPause({ onResume: () => {}, onQuit: () => {} });
@@ -110,6 +136,8 @@ describe('pause menu', () => {
     expect(ranges.length).toBe(3);
     ranges[0].value = '12';
     ranges[0].dispatchEvent(new Event('input', { bubbles: true }));
+    expect(loadSettings().renderDistance).toBe(10); // input alone must not persist
+    ranges[0].dispatchEvent(new Event('change', { bubbles: true }));
     expect(loadSettings().renderDistance).toBe(12);
     btnByText(root, '返回').click();
     expect(root.textContent).toContain('遊戲已暫停');
