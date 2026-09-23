@@ -2012,17 +2012,22 @@ function refreshQueues(): void {
   const pcx = Math.floor(gs.camera.position.x / CHUNK_SIZE);
   const pcz = Math.floor(gs.camera.position.z / CHUNK_SIZE);
   const r = settings.renderDistance;
+  const rg = r + 1; // gen one ring past mesh radius so edge chunks have all 4 neighbors
   pendingGen.length = 0;
   pendingMesh.length = 0;
 
-  for (let dz = -r; dz <= r; dz++) {
-    for (let dx = -r; dx <= r; dx++) {
+  for (let dz = -rg; dz <= rg; dz++) {
+    for (let dx = -rg; dx <= rg; dx++) {
       const cx = pcx + dx;
       const cz = pcz + dz;
       const key = chunkKey(cx, cz);
       if (!world.hasChunk(cx, cz) && !generated.has(key)) {
         pendingGen.push([cx, cz]);
-      } else if (world.getChunk(cx, cz)?.dirty) {
+      } else if (
+        Math.abs(dx) <= r &&
+        Math.abs(dz) <= r &&
+        world.getChunk(cx, cz)?.dirty
+      ) {
         pendingMesh.push([cx, cz]);
       }
     }
@@ -2058,18 +2063,17 @@ function processQueues(): void {
     generated.add(chunkKey(cx, cz));
     budgetGen--;
   }
+  // fixed: no re-push (see Task 11 deviations)
   while (budgetMesh > 0 && pendingMesh.length > 0) {
     const [cx, cz] = pendingMesh.shift()!;
     const c = world.getChunk(cx, cz);
-    if (c?.dirty) {
-      // 相鄰區塊可能還沒生成 → 等鄰居就緒再 mesh（避免邊界洞）
-      if (neighborsReady(cx, cz)) {
-        chunkRenderer.rebuild(world, cx, cz);
-        c.dirty = false;
-        budgetMesh--;
-      } else {
-        pendingMesh.push([cx, cz]);
-      }
+    // 相鄰區塊可能還沒生成 → 等鄰居就緒再 mesh（避免邊界洞）；
+    // not-ready entries are dropped (not re-pushed): readiness cannot change mid-pass,
+    // and refreshQueues re-queues dirty chunks next frame — re-pushing would spin forever.
+    if (c?.dirty && neighborsReady(cx, cz)) {
+      chunkRenderer.rebuild(world, cx, cz);
+      c.dirty = false;
+      budgetMesh--;
     }
   }
 }
