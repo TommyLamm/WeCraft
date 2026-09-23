@@ -32,7 +32,8 @@ function refreshQueues(): void {
       const cx = pcx + dx;
       const cz = pcz + dz;
       const key = chunkKey(cx, cz);
-      if (!world.hasChunk(cx, cz) && !generated.has(key)) {
+      const c = world.getChunk(cx, cz);
+      if ((c?.generated !== true) && !generated.has(key)) {
         pendingGen.push([cx, cz]);
       } else if (
         Math.abs(dx) <= r &&
@@ -87,7 +88,7 @@ function processQueues(): void {
         world.addChunk(chunk);
       }
       generated.add(key);
-    });
+    }).catch(() => genInFlight.delete(key));
     budgetGen--;
   }
   while (budgetMesh > 0 && pendingMesh.length > 0) {

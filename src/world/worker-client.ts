@@ -1,3 +1,4 @@
+// Types imported with import type — worker.ts has top-level self.onmessage side effect; never value-import it on the main thread.
 import type { GenRequest, GenResponse } from './worker';
 import { generateChunk } from './terrain';
 
@@ -34,7 +35,11 @@ export class TerrainWorkerClient {
     this.failed = true;
     this.worker?.terminate();
     this.worker = null;
-    // 把排隊中與執行中的請求改用主執行緒同步生成
+    this.drainPendingSync();
+  }
+
+  // 把排隊中與執行中的請求改用主執行緒同步生成；每個 deferred 恰好 settle 一次
+  private drainPendingSync(): void {
     const jobs = [...this.queue, ...this.inflight.values()];
     this.queue = [];
     this.inflight.clear();
@@ -82,6 +87,8 @@ export class TerrainWorkerClient {
   }
 
   dispose(): void {
+    this.failed = true;
+    this.drainPendingSync();
     this.worker?.terminate();
     this.worker = null;
   }
