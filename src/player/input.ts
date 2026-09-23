@@ -37,7 +37,7 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   let lastSpaceTime = Number.NEGATIVE_INFINITY;
   let flyToggle = false;
   let mouseMoveHandler: ((dx: number, dy: number) => void) | null = null;
-  const lockListeners: Array<(locked: boolean) => void> = [];
+  let lockListeners: Array<(locked: boolean) => void> | null = [];
 
   const updateMove = () => {
     state.fwd = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
@@ -51,6 +51,7 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.code === 'F3' || e.code === 'F5') e.preventDefault();
     if (!locked) return;
     if (e.code === 'Space' && !e.repeat) {
       const now = performance.now();
@@ -62,14 +63,8 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
       if (n >= 1 && n <= 9) state.slot = n - 1;
     }
     if (e.code === 'KeyE' && !e.repeat) state.toggleInventory = true;
-    if (e.code === 'F3') {
-      e.preventDefault();
-      if (!e.repeat) state.toggleDebug = true;
-    }
-    if (e.code === 'F5') {
-      e.preventDefault();
-      if (!e.repeat) state.toggleView = true;
-    }
+    if (e.code === 'F3' && !e.repeat) state.toggleDebug = true;
+    if (e.code === 'F5' && !e.repeat) state.toggleView = true;
     keys.add(e.code);
     updateMove();
   };
@@ -100,18 +95,30 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   };
   const onContext = (e: Event) => e.preventDefault();
 
-  const onLockChange = () => {
-    locked = document.pointerLockElement === canvas;
-    if (!locked) {
-      keys.clear();
-      state.dig = false;
-      updateMove();
-    }
-    lockListeners.forEach((fn) => fn(locked));
+  const clearActive = () => {
+    keys.clear();
+    state.dig = false;
+    state.place = false;
+    state.toggleInventory = false;
+    state.toggleDebug = false;
+    state.toggleView = false;
+    state.requestPause = false;
+    updateMove();
   };
 
+  const onLockChange = () => {
+    locked = document.pointerLockElement === canvas;
+    if (!locked) clearActive();
+    lockListeners?.forEach((fn) => fn(locked));
+  };
+
+  const onWindowBlur = () => clearActive();
+
   const onClick = () => {
-    if (!locked) canvas.requestPointerLock();
+    if (!locked) {
+      const p = canvas.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    }
   };
 
   document.addEventListener('keydown', onKeyDown);
@@ -123,6 +130,7 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   canvas.addEventListener('contextmenu', onContext);
   document.addEventListener('pointerlockchange', onLockChange);
   canvas.addEventListener('click', onClick);
+  window.addEventListener('blur', onWindowBlur);
 
   return {
     state,
@@ -130,7 +138,7 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
       return locked;
     },
     onLockChange(fn) {
-      lockListeners.push(fn);
+      lockListeners?.push(fn);
     },
     setMouseMoveHandler(fn) {
       mouseMoveHandler = fn;
@@ -171,6 +179,10 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
       canvas.removeEventListener('contextmenu', onContext);
       document.removeEventListener('pointerlockchange', onLockChange);
       canvas.removeEventListener('click', onClick);
+      window.removeEventListener('blur', onWindowBlur);
+      if (document.pointerLockElement === canvas) document.exitPointerLock();
+      mouseMoveHandler = null;
+      lockListeners = null;
     },
   };
 }

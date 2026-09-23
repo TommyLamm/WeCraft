@@ -2674,6 +2674,11 @@ git commit -m "feat: AABB player physics with fly and swim"
 - `lastSpaceTime` 初始 `-Infinity`（計畫的 `0` 在頁面載入後 300ms 內的第一次 Space 會誤觸雙擊判定）。
 - `state.requestPause` 永不設 true（與計畫程式碼一致）；暫停流程走 Task 17 的 `onLockChange`，`consumeRequestPause` 保留供 API 相容。
 - 俯仰夾制 ±(π/2−0.01) 在 Task 17 的 `setMouseMoveHandler` 回呼做，input 只送 sensitivity 縮放後的 delta。
+- F3/F5 `preventDefault` 上移到 locked guard **之前**：原本 `if (!locked) return` 先執行，暫停/背包狀態下按 F5 會整頁重新載入、銷毀 session。
+- `requestPointerLock()` 回傳的 promise 加 `.catch(() => {})`：瀏覽器 Esc 冷卻期（~1.25s）內請求會 reject，不攔會噴 unhandled rejection（主暫停/恢復 QA 路徑）。
+- unlock 時清除脈衝旗標（`place`/`toggleInventory`/`toggleDebug`/`toggleView`/`requestPause`），避免 resume 時回溯觸發（原本只清 keys/dig）。
+- 新增 `window` `blur` 監聽，重用 unlock 的清鍵路徑（alt-tab 卡鍵防禦）；dispose 時移除（listener 9→10）。
+- `dispose()` 加固：仍持鎖時 `document.exitPointerLock()`，並把 `mouseMoveHandler`/`lockListeners` 參考清成 null。
 
 - [ ] **Step 1: 實作 `src/player/input.ts`**
 
