@@ -96,8 +96,10 @@ function plantTrees(
   const baseX = cx * CHUNK_SIZE;
   const baseZ = cz * CHUNK_SIZE;
 
-  for (let tz = 0; tz < CHUNK_SIZE; tz++) {
-    for (let tx = 0; tx < CHUNK_SIZE; tx++) {
+  // Halo of 2 covers the radius-2 canopy of bases just outside the chunk,
+  // so canopies are written by the chunk that owns each cell (deterministic).
+  for (let tz = -2; tz < CHUNK_SIZE + 2; tz++) {
+    for (let tx = -2; tx < CHUNK_SIZE + 2; tx++) {
       const wx = baseX + tx;
       const wz = baseZ + tz;
       const h = hash2(wx, wz, seed ^ 0xabc123);
@@ -107,14 +109,7 @@ function plantTrees(
       const moist = biomeN.fbm2(wx * 0.004 + 50, wz * 0.004 + 50, 2);
       if (pickBiome(temp, moist) === 'desert') continue;
 
-      let ground = -1;
-      for (let y = CHUNK_HEIGHT - 1; y > 0; y--) {
-        const id = data[chunkIndex(tx, y, tz)];
-        if (id !== BLOCK.AIR && id !== BLOCK.WATER) {
-          ground = y;
-          break;
-        }
-      }
+      const ground = surfaceHeight(wx, wz, seed);
       if (ground <= SEA_LEVEL + 1) continue;
 
       const trunkH = 4 + (h % 3);
