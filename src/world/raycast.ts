@@ -1,5 +1,4 @@
 import type { World } from './world';
-import { isSolid } from './blocks';
 
 export interface RayHit {
   x: number;
@@ -8,25 +7,33 @@ export interface RayHit {
   nx: number;
   ny: number;
   nz: number;
+  t: number;
 }
 
+/** DDA raycast. dir is normalized internally; maxDistance is euclidean world units. */
 export function raycast(
   world: World,
   origin: { x: number; y: number; z: number },
   dir: { x: number; y: number; z: number },
   maxDist: number,
 ): RayHit | null {
+  const len = Math.hypot(dir.x, dir.y, dir.z);
+  if (len === 0) return null;
+  const dx = dir.x / len;
+  const dy = dir.y / len;
+  const dz = dir.z / len;
+
   let x = Math.floor(origin.x);
   let y = Math.floor(origin.y);
   let z = Math.floor(origin.z);
 
-  const stepX = dir.x > 0 ? 1 : dir.x < 0 ? -1 : 0;
-  const stepY = dir.y > 0 ? 1 : dir.y < 0 ? -1 : 0;
-  const stepZ = dir.z > 0 ? 1 : dir.z < 0 ? -1 : 0;
+  const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+  const stepZ = dz > 0 ? 1 : dz < 0 ? -1 : 0;
 
-  const tDeltaX = stepX !== 0 ? Math.abs(1 / dir.x) : Infinity;
-  const tDeltaY = stepY !== 0 ? Math.abs(1 / dir.y) : Infinity;
-  const tDeltaZ = stepZ !== 0 ? Math.abs(1 / dir.z) : Infinity;
+  const tDeltaX = stepX !== 0 ? Math.abs(1 / dx) : Infinity;
+  const tDeltaY = stepY !== 0 ? Math.abs(1 / dy) : Infinity;
+  const tDeltaZ = stepZ !== 0 ? Math.abs(1 / dz) : Infinity;
 
   const frac = (o: number) => o - Math.floor(o);
   let tMaxX = stepX === 0 ? Infinity : stepX > 0 ? (1 - frac(origin.x)) * tDeltaX : frac(origin.x) * tDeltaX;
@@ -38,9 +45,16 @@ export function raycast(
   let nz = 0;
   let t = 0;
 
-  // 起點若在 solid 內：法線朝射線來向
-  if (isSolid(world.getBlock(x, y, z))) {
-    return { x, y, z, nx: -stepX, ny: -stepY, nz: -stepZ };
+  // Start-inside has no true entry face: emit the dominant-axis back-face
+  // (ties resolved x, then y, then z) so the normal is always a single-axis
+  // unit vector — keeps placeTarget = hit + normal face-adjacent (Task 15).
+  if (world.isSolid(x, y, z)) {
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    const az = Math.abs(dz);
+    if (ax >= ay && ax >= az) return { x, y, z, nx: -stepX, ny: 0, nz: 0, t };
+    if (ay >= az) return { x, y, z, nx: 0, ny: -stepY, nz: 0, t };
+    return { x, y, z, nx: 0, ny: 0, nz: -stepZ, t };
   }
 
   while (t <= maxDist) {
@@ -67,8 +81,8 @@ export function raycast(
       nz = -stepZ;
     }
     if (t > maxDist) break;
-    if (isSolid(world.getBlock(x, y, z))) {
-      return { x, y, z, nx, ny, nz };
+    if (world.isSolid(x, y, z)) {
+      return { x, y, z, nx, ny, nz, t };
     }
   }
   return null;

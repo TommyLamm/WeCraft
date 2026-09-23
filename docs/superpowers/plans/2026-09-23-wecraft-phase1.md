@@ -1254,6 +1254,11 @@ git commit -m "feat: deterministic terrain generator with biomes"
 - Create: `src/world/raycast.ts`
 - Test: `src/world/raycast.test.ts`
 
+**Deviations:**
+- start-inside normal: dominant-axis single face (was multi-axis `-step`) — protects Task 15 face-adjacent placement
+- dir normalized internally; RayHit gained `t` field
+- tests use world.isSolid
+
 - [ ] **Step 1: 寫失敗測試**
 
 ```ts
