@@ -2668,6 +2668,13 @@ git commit -m "feat: AABB player physics with fly and swim"
 
 （瀏覽器手動驗收，無單測。）
 
+**Deviations:**
+- `setMouseMoveHandler` 宣告進 `InputController` 介面（照計畫註記），回傳物件不需 `as` 轉型。
+- keydown 加 `e.repeat` 防護：Space 雙擊飛行與 E/F3/F5 脈衝若吃 OS auto-repeat，按住會每 ~33ms 狂切換（計畫原始碼漏了）。
+- `lastSpaceTime` 初始 `-Infinity`（計畫的 `0` 在頁面載入後 300ms 內的第一次 Space 會誤觸雙擊判定）。
+- `state.requestPause` 永不設 true（與計畫程式碼一致）；暫停流程走 Task 17 的 `onLockChange`，`consumeRequestPause` 保留供 API 相容。
+- 俯仰夾制 ±(π/2−0.01) 在 Task 17 的 `setMouseMoveHandler` 回呼做，input 只送 sensitivity 縮放後的 delta。
+
 - [ ] **Step 1: 實作 `src/player/input.ts`**
 
 ```ts
