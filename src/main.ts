@@ -409,11 +409,15 @@ function setState(next: GameState): void {
       },
     });
   } else if (next === 'dead') {
-    // Death screen + respawn (Task 10). `player-died` fires ONCE per death:
-    // this transition is guarded at the call site by `state === 'playing'`
-    // (plus the vitals guard), and nothing else calls setState('dead').
-    bus.emit('player-died', {});
-    deathScreen.show(handleRespawn); // callback wiring (Decision A — death.ts is bus-free)
+    // Death screen + respawn (Task 10). Callback-opts like menus.showPause —
+    // death.ts stays bus-free (Decision A). Mount FIRST so a future
+    // synchronous `player-died` listener that changes state can't leave this
+    // overlay mounting on top of the next screen (review Minor #3): the emit
+    // is deliberately the LAST statement in this branch.
+    deathScreen.show({
+      onRespawn: handleRespawn,
+      onQuit: handleQuitToTitle,
+    });
     // Freeze behavior (Task 9) unchanged: the pointer unlocks (the lock-change
     // handler pauses only from 'playing', so this can't bounce into the pause
     // menu), and every later frame skips the `playing` block → movement,
@@ -421,6 +425,10 @@ function setState(next: GameState): void {
     // (harmless: a survival dig needs many frames and further damage is
     // blocked by the vitals guard).
     document.exitPointerLock?.();
+    // `player-died` fires ONCE per death: this transition is guarded at the
+    // call site by `state === 'playing'` (plus the vitals guard), and nothing
+    // else calls setState('dead').
+    bus.emit('player-died', {});
   } else if (next === 'inventory') {
     inv.open(
       hotbar,
@@ -458,14 +466,26 @@ function startGame(): void {
 
 /** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
  *  Inventory is intentionally untouched (settled: death does NOT drop items),
- *  and mobs frozen at death stay put (out of scope, settled). The overlay hides
- *  before the transition — setState clears it again anyway (defensive). */
+ *  and mobs frozen at death stay put (out of scope, settled). The overlay goes
+ *  with the transition — setState clears it. */
 function handleRespawn(): void {
   setVitals(createVitals()); // hp 0 → 20 / hunger refilled — emits vitals-changed via the integer gate
   resetPlayerToSpawn(); // pos/vel/fallState/attackCd → spawn; inventory untouched
-  deathScreen.hide();
-  setState('playing'); // resumes the world (playing block + render tail)
+  setState('playing'); // resumes the world (playing block + render tail) + clears the overlay
   relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
+}
+
+/** Death-screen quit (review Important #1): mirror the pause-menu quit — reset
+ *  to spawn first (the title orbit queues key off player.position; leaving it
+ *  far away would orbit a one-chunk island, Task 17 CR fix) — plus full vitals:
+ *  leaving at hp 0 would carry the corpse into 單人遊戲 and re-kill the fresh
+ *  spawn on its first frame (only respawn/mode-change reset vitals otherwise).
+ *  `if (vitals)` keeps creative's hidden bar hidden (unreachable from death —
+ *  it requires vitals — but defensive). No save here (Task 13 owns it). */
+function handleQuitToTitle(): void {
+  if (vitals) setVitals(createVitals());
+  resetPlayerToSpawn();
+  setState('title');
 }
 
 // pointer lock 釋放 → 暫停；inventory 開啟時主動解鎖，保持背包開著
