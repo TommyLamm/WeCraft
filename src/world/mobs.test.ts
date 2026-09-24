@@ -9,11 +9,16 @@ import {
   stepArrows,
   findSpawnPos,
   chooseSpawnKind,
+  trySpawnMob,
   xzDistance,
+  SPAWN_MIN_DIST,
+  SPAWN_MAX_DIST,
+  MAX_MOBS,
   type Mob,
   type MobEvent,
   type Arrow,
 } from './mobs';
+import { BLOCK } from './blocks';
 
 // ---- helpers -------------------------------------------------------------
 /** Flat world: everything below y = 0 is solid (ground top face at y = 0). */
@@ -324,6 +329,49 @@ describe('stepMob — wander', () => {
   });
 });
 
+// ---- line of sight (review Minor #4) ------------------------------------
+
+describe('line of sight', () => {
+  const wallAt = (wx: number, yMax: number) => (x: number, y: number, z: number): boolean =>
+    y < 0 || (x === wx && y >= 0 && y <= yMax && z === 0);
+
+  it('a zombie behind a 1-block wall swipes nothing (the chase continues)', () => {
+    const wall = wallAt(1, 2);
+    const m = mob({ pos: { x: 0.9, y: 0, z: 0.5 } });
+    const player = { x: 2.1, y: 0, z: 0.5 }; // 3D dist 1.2 ≤ 1.6 → in melee range
+
+    const blocked = stepMob(m, ctxOf(player, 0.1, wall));
+    expect(blocked.events).toHaveLength(0); // wall swallows the swipe
+    expect(blocked.mob.state).toBe('chase'); // movement/AI untouched — it keeps coming
+
+    // same geometry with open sky: LOS is the only difference → the swipe fires
+    const clear = stepMob(m, ctxOf(player, 0.1, flatGround));
+    expect(clear.events).toHaveLength(1);
+  });
+
+  it('a skeleton with terrain between emits no shoot event', () => {
+    const wall = wallAt(4, 3);
+    const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
+    const player = { x: 8, y: 0, z: 0 }; // inside the 7–9 keep band → stands and (would) shoot
+
+    expect(stepMob(m, ctxOf(player, 0.1, wall)).events).toHaveLength(0);
+    // clear LOS unchanged: same setup on open ground fires exactly once
+    expect(stepMob(m, ctxOf(player, 0.1, flatGround)).events).toHaveLength(1);
+  });
+
+  it('clear line of sight keeps attack behavior identical', () => {
+    const swipe = stepMob(mob({ pos: { x: 0, y: 0, z: 0 } }), ctxOf({ x: 1, y: 0, z: 0 }, 0.1));
+    expect(swipe.events).toEqual([
+      { type: 'damage', target: 'player', amount: 3, mobId: swipe.mob.id },
+    ]);
+    const shot = stepMob(
+      mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } }),
+      ctxOf({ x: 8, y: 0, z: 0 }, 0.1),
+    );
+    expect(shot.events).toHaveLength(1);
+  });
+});
+
 // ---- stepMobs ------------------------------------------------------------
 
 describe('stepMobs', () => {
@@ -384,6 +432,17 @@ describe('damageMob', () => {
     // tiny residual is cleared outright
     const tiny = stepMob(mob({ kbVel: { x: 0.05, z: 0 } }), ctxOf(player, 0.1));
     expect(tiny.mob.kbVel).toEqual({ x: 0, z: 0 });
+  });
+
+  it('never pushes the mob into a solid cell (knockback embed guard)', () => {
+    // kb 6 b/s × 0.1 s → 0.5 + 0.6 = 1.1, i.e. destination cell x = 1.
+    const wall = (x: number, y: number, _z: number): boolean => y < 0 || (x === 1 && y === 0);
+    const embedded = stepMob(mob({ kbVel: { x: 6, z: 0 } }), ctxOf({ x: 40, y: 0, z: 40 }, 0.1, wall));
+    expect(embedded.mob.pos.x).toBeCloseTo(0.5, 10); // kb step skipped — outside the wall
+    expect(wall(Math.floor(embedded.mob.pos.x), Math.floor(embedded.mob.pos.y), Math.floor(embedded.mob.pos.z))).toBe(false);
+    // control: same knockback with open ground does move the mob (the guard is what stopped it)
+    const free = stepMob(mob({ kbVel: { x: 6, z: 0 } }), ctxOf({ x: 40, y: 0, z: 40 }, 0.1));
+    expect(free.mob.pos.x).toBeCloseTo(1.1, 10);
   });
 
   it('without a direction there is no knockback; bad damage is a no-op', () => {
@@ -511,6 +570,60 @@ describe('stepArrows', () => {
     expect(arrows[0]).not.toBe(input[0]);
     expect(input[0].age).toBe(0);
   });
+
+  it('sweeps a 4-block step: a 1-block wall mid-flight consumes the arrow', () => {
+    // speed 40 × dt 0.1 → the arrow advances 4 blocks in ONE tick; the wall at
+    // cell x = 2 sits in the middle (an endpoint-only check sees only x ≈ 4.5
+    // and would let the arrow tunnel straight through).
+    const wall = (x: number, y: number, z: number): boolean =>
+      y < 0 || (x === 2 && y === 1 && z === 0);
+    const flying: Arrow = {
+      id: 0,
+      pos: { x: 0.5, y: 1.4, z: 0.5 },
+      vel: { x: 40, y: 0, z: 0 },
+      age: 0,
+      ownerId: 1,
+    };
+    const { arrows, events } = stepArrows([flying], 0.1, wall, { x: 50, y: 0, z: 0 });
+    expect(arrows).toHaveLength(0); // stuck in the wall, not past it
+    expect(events).toHaveLength(0); // and nothing beyond the wall was hit
+  });
+
+  it('registers a grazing hit at ~0.5 perpendicular distance (segment, not endpoint)', () => {
+    // The path skims the eye point (0, 1.4, 0) at ~0.5 in z; BOTH endpoints sit
+    // ~2 blocks away, so an endpoint-only check would miss this at dt = 0.1.
+    const player = { x: 0, y: 0, z: 0 };
+    const grazing: Arrow = {
+      id: 0,
+      pos: { x: -2, y: 1.4, z: 0.5 },
+      vel: { x: 40, y: 0, z: 0 },
+      age: 0,
+      ownerId: 3,
+    };
+    const { arrows, events } = stepArrows([grazing], 0.1, noGround, player);
+    expect(events).toEqual([
+      { type: 'damage', target: 'player', amount: 2, mobId: 3 },
+    ]);
+    expect(arrows).toHaveLength(0);
+  });
+
+  it('checks solid BEFORE the player: a wall cell next to the eye consumes silently', () => {
+    // Arrow ends at ≈ (-0.57, 1.33, 0.01) — inside solid cell (-1, 1, 0), which
+    // is adjacent to the eye cell (0, 1, 0) and within the 0.6 hit radius.
+    // Solid-first (the player AABB never occupies a solid cell) → stuck, no damage.
+    const wall = (x: number, y: number, z: number): boolean =>
+      x === -1 && y === 1 && z === 0;
+    const intoWall: Arrow = {
+      id: 0,
+      pos: { x: -0.57, y: 1.4, z: -0.42 },
+      vel: { x: 0, y: 0, z: 6.5 },
+      age: 0,
+      ownerId: 5,
+    };
+    const { arrows, events } = stepArrows([intoWall], 0.1, wall, { x: 0, y: 0, z: 0 });
+    expect(arrows).toHaveLength(0);
+    expect(events).toHaveLength(0); // wall hit wins over the eye-range hit
+  });
 });
 
 // ---- spawn helpers -------------------------------------------------------
@@ -541,6 +654,55 @@ describe('chooseSpawnKind', () => {
     expect(chooseSpawnKind(() => 0.49)).toBe('zombie');
     expect(chooseSpawnKind(() => 0.5)).toBe('skeleton');
     expect(chooseSpawnKind(() => 0.99)).toBe('skeleton');
+  });
+});
+
+describe('trySpawnMob', () => {
+  /** Flat column: top solid block at y = 5 for every XZ (surface Y → 6). */
+  const surface = (_x: number, y: number, _z: number): boolean => y <= 5;
+  const ctxOf = (over: Partial<Parameters<typeof trySpawnMob>[2]> = {}) => ({
+    isNight: true,
+    isSolidAt: surface,
+    blockIdAt: () => BLOCK.DIRT, // any non-bedrock id
+    rng: () => 0.5, // angle π, distance 18 → spot (≈0, −18); kind → skeleton
+    ...over,
+  });
+  const player = { x: 0, y: 0, z: 0 };
+
+  it('spawns at night under the cap on a valid surface', () => {
+    const spawned = trySpawnMob([], player, ctxOf());
+    expect(spawned).not.toBeNull();
+    expect(spawned!.kind).toBe('skeleton');
+    expect(spawned!.pos.y).toBe(6); // top solid (5) + 1
+    expect(spawned!.pos.x).toBeCloseTo(0, 5); // rng 0.5 → angle π → −z axis
+    expect(spawned!.pos.z).toBeCloseTo(-18, 10);
+    const dist = xzDistance(spawned!.pos, player);
+    expect(dist).toBeGreaterThanOrEqual(SPAWN_MIN_DIST);
+    expect(dist).toBeLessThanOrEqual(SPAWN_MAX_DIST);
+  });
+
+  it('never spawns in day', () => {
+    expect(trySpawnMob([], player, ctxOf({ isNight: false }))).toBeNull();
+  });
+
+  it('never spawns once the cap is reached', () => {
+    const atCap = Array.from({ length: MAX_MOBS }, (_, i) =>
+      createMob('zombie', { x: i, y: 6, z: 0 }),
+    );
+    expect(trySpawnMob(atCap, player, ctxOf())).toBeNull();
+    // one below the cap spawns again
+    expect(trySpawnMob(atCap.slice(0, MAX_MOBS - 1), player, ctxOf())).not.toBeNull();
+  });
+
+  it('skips bedrock-only and ungenerated columns (no spawn)', () => {
+    const bedrock = trySpawnMob([], player, ctxOf({ blockIdAt: () => BLOCK.BEDROCK }));
+    expect(bedrock).toBeNull();
+    const ungenerated = trySpawnMob(
+      [],
+      player,
+      ctxOf({ isSolidAt: () => false, blockIdAt: () => BLOCK.AIR }),
+    );
+    expect(ungenerated).toBeNull();
   });
 });
 

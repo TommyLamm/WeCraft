@@ -16,15 +16,12 @@ import { createVitals, damage, type Vitals } from './player/survival';
 import { DigProgress, placeTarget, canPlaceAt, spawnBlockDrop, toolSpeed, digStep } from './player/interact';
 import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
 import {
-  createMob,
   stepMobs,
   stepArrows,
   spawnArrow,
-  findSpawnPos,
-  chooseSpawnKind,
+  trySpawnMob,
   isDead,
   xzDistance,
-  MAX_MOBS,
   SPAWN_INTERVAL_SEC,
   DESPAWN_DISTANCE,
   type Mob,
@@ -185,32 +182,17 @@ function spawnPoint(): { x: number; y: number; z: number } {
 
 // ---- Task 8: mob spawning + event application ----
 
-/** Feet position on the surface of a column (column scan — settled over a
- *  DDA raycast): topmost non-bedrock solid block, +1. Because the scan runs
- *  top-down, everything above it was already seen as air, so the 2-block mob
- *  body always fits. Null when the column is ungenerated or only bedrock —
- *  the spawn tick then just skips this cycle. */
-function surfaceYAt(wx: number, wz: number): number | null {
-  const x = Math.floor(wx);
-  const z = Math.floor(wz);
-  for (let y = CHUNK_HEIGHT - 2; y >= 1; y--) {
-    if (!world.isSolid(x, y, z)) continue;
-    return world.getBlock(x, y, z) === BLOCK.BEDROCK ? null : y + 1;
-  }
-  return null;
-}
-
-/** Every 5 s while playing at night with room under the cap: pick a candidate
- *  XZ 12–24 blocks out (pure `findSpawnPos`), resolve its surface Y and drop
- *  one mob there. `phaseOf` night check only — no per-block light engine this
- *  phase (plan 8.5). Count changes are announced by the caller. */
+/** Every 5 s while playing: delegate to the pure `trySpawnMob` (world/mobs.ts)
+ *  — night gate, cap, candidate XZ 12–24 out, surface Y and kind all live
+ *  there; this composition-root wrapper only supplies the world callbacks and
+ *  pushes the result. Count changes are announced by the caller. */
 function spawnTick(): void {
-  if (phaseOf(clock.t) !== 'night') return;
-  if (mobs.length >= MAX_MOBS) return;
-  const spot = findSpawnPos(player.position);
-  const y = surfaceYAt(spot.x, spot.z);
-  if (y === null) return;
-  mobs = [...mobs, createMob(chooseSpawnKind(), { x: spot.x, y, z: spot.z })];
+  const mob = trySpawnMob(mobs, player.position, {
+    isNight: phaseOf(clock.t) === 'night',
+    isSolidAt: (x, y, z) => world.isSolid(x, y, z),
+    blockIdAt: (x, y, z) => world.getBlock(x, y, z),
+  });
+  if (mob) mobs = [...mobs, mob];
 }
 
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
