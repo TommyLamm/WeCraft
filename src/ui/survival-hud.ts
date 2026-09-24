@@ -1,4 +1,4 @@
-import '../ui/ui.css';
+import './ui.css';
 import type { Vitals } from '../player/survival';
 
 /** Survival vitals bars (pure DOM — no Three). Each bar shows `ICON_COUNT`
@@ -12,8 +12,9 @@ const GRID = 8;
 /** Columns left of this boundary are "filled" in a half icon. */
 const HALF = GRID / 2;
 
-const HEART_FILL = '#e02020';
-const HEART_EMPTY = '#3f3f3f';
+/** Exported for tests that pin which side of a half icon gets which color. */
+export const HEART_FILL = '#e02020';
+export const HEART_EMPTY = '#3f3f3f';
 const FOOD_FILL = '#c87830';
 const FOOD_EMPTY = '#3f3f3f';
 
@@ -92,7 +93,9 @@ function pixelSvg(spec: BarSpec, state: IconState): string {
 
 /** Build one group div holding `ICON_COUNT` icons for `units` half-units. */
 function renderBar(spec: BarSpec, units: number): HTMLElement {
-  const clamped = Math.max(0, Math.min(units, ICON_COUNT * 2));
+  // Non-finite input (NaN/±Infinity) is not meaningful — fall back to 0 so the
+  // bar renders all-empty instead of relying on NaN comparison chains.
+  const clamped = Number.isFinite(units) ? Math.max(0, Math.min(units, ICON_COUNT * 2)) : 0;
   const group = document.createElement('div');
   group.className = spec.row;
   let html = '';

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { renderVitals } from './survival-hud';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { renderVitals, HEART_FILL, HEART_EMPTY } from './survival-hud';
 import { createVitals, damage, starve } from '../player/survival';
 
 /** Icon states ('full' | 'half' | 'empty') in DOM order for a selector. */
@@ -27,6 +27,10 @@ describe('renderVitals', () => {
     document.body.appendChild(container);
   });
 
+  afterEach(() => {
+    container.remove(); // don't accumulate containers in document.body across tests
+  });
+
   it('full vitals: 10 full hearts and 10 full hunger icons', () => {
     renderVitals(container, createVitals());
     expect(iconStates('.heart', container)).toEqual(new Array(10).fill('full'));
@@ -49,6 +53,25 @@ describe('renderVitals', () => {
     expect(iconStates('.heart', container)).toEqual(new Array(10).fill('full'));
   });
 
+  it('hp=0 renders 10 empty hearts', () => {
+    renderVitals(container, damage(createVitals(), 99)); // clamps to 0
+    expect(iconStates('.heart', container)).toEqual(new Array(10).fill('empty'));
+  });
+
+  it('non-finite units (NaN) fall back to an all-empty bar without crashing', () => {
+    // `hp`/`hunger` are typed `number`, so NaN passes the API without a cast;
+    // renderBar guards with Number.isFinite → 0 (defensive fallback pinned here).
+    renderVitals(container, { ...createVitals(), hp: Number.NaN, hunger: Number.NaN });
+    expect(iconStates('.heart', container)).toEqual(new Array(10).fill('empty'));
+    expect(iconStates('.hunger-icon', container)).toEqual(new Array(10).fill('empty'));
+  });
+
+  it('units above the 20 half-unit bar clamp to all-full', () => {
+    renderVitals(container, { ...createVitals(), hp: 25, hunger: 30 });
+    expect(iconStates('.heart', container)).toEqual(new Array(10).fill('full'));
+    expect(iconStates('.hunger-icon', container)).toEqual(new Array(10).fill('full'));
+  });
+
   it('groups icons under .hearts (left) and .hunger (right)', () => {
     renderVitals(container, createVitals());
     const hearts = container.querySelector('.hearts');
@@ -68,6 +91,19 @@ describe('renderVitals', () => {
     expect(full.querySelectorAll('rect').length).toBeGreaterThan(10);
     expect(fills(full).size).toBe(1); // every pixel the same color
     expect(fills(half).size).toBe(2); // left half filled, right half empty
+  });
+
+  it('half icon fills the LEFT half (side pinned against mirroring)', () => {
+    renderVitals(container, damage(createVitals(), 5)); // hp 15 → one half heart
+    const half = container.querySelector('.heart.half')!;
+    const rectAt = (x: number, y: number) =>
+      [...half.querySelectorAll('rect')].find(
+        (r) => r.getAttribute('x') === String(x) && r.getAttribute('y') === String(y),
+      );
+    // Heart silhouette row y=2 is full width (x=0..7): a left-of-center pixel
+    // must be filled, its mirror right-of-center pixel must be empty color.
+    expect(rectAt(1, 2)?.getAttribute('fill')).toBe(HEART_FILL);
+    expect(rectAt(6, 2)?.getAttribute('fill')).toBe(HEART_EMPTY);
   });
 
   it('renderVitals(el, null) clears the container (creative mode)', () => {
