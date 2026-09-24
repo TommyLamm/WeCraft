@@ -2,18 +2,17 @@ import { describe, it, expect } from 'vitest';
 import {
   itemFromBlock,
   blockFromItem,
+  stackFromBlock,
   stackName,
   maxStack,
-  isBlockItem,
   type ItemId,
-  type ItemStack,
 } from './items';
 import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
 
 // Type-annotated: a missing union member fails `tsc --noEmit`.
 const BLOCK_ITEMS: ItemId[] = [
   'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
-  'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore', 'water',
+  'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
   'crafting_table', 'chest',
 ];
 const TOOL_ITEMS: ItemId[] = [
@@ -29,17 +28,14 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 ])];
 
 describe('items', () => {
-  it('ItemId union covers blocks and new item ids', () => {
-    expect(ALL_ITEMS.length).toBe(28);
+  it('ItemId union covers every obtainable block item', () => {
+    expect(ALL_ITEMS.length).toBe(27);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
-    for (const id of [...BLOCK_ITEMS, ...TOOL_ITEMS, ...DROP_ITEMS]) {
-      expect(ALL_ITEMS).toContain(id);
+    // real guard: every block except air and block-only water maps to an item
+    for (const id of Object.values(BLOCK)) {
+      if (id === BLOCK.AIR || id === BLOCK.WATER) continue;
+      expect(itemFromBlock(id), `block ${id} has no item`).not.toBeNull();
     }
-    const named: ItemId[] = [
-      'stick', 'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe',
-      'wooden_sword', 'stone_sword', 'arrow', 'crafting_table', 'apple',
-    ];
-    for (const id of named) expect(ALL_ITEMS).toContain(id);
   });
 
   it('every placeable and default hotbar block maps to an item', () => {
@@ -51,6 +47,7 @@ describe('items', () => {
   it('itemFromBlock maps grass to the grass stack id', () => {
     expect(itemFromBlock(BLOCK.GRASS)).toBe('grass');
     expect(itemFromBlock(BLOCK.AIR)).toBeNull();
+    expect(itemFromBlock(BLOCK.WATER)).toBeNull(); // water is block-only: never an item
     expect(itemFromBlock(999)).toBeNull();
   });
 
@@ -78,13 +75,11 @@ describe('items', () => {
     for (const tool of TOOL_ITEMS) expect(maxStack(tool)).toBe(1);
   });
 
-  it('isBlockItem is true only for items with a placeable block form', () => {
-    expect(isBlockItem('grass')).toBe(true);
-    expect(isBlockItem('oak_log')).toBe(true);
-    expect(isBlockItem('water')).toBe(false); // block-only: no item form
-    expect(isBlockItem('stick')).toBe(false);
-    expect(isBlockItem('crafting_table')).toBe(false); // no block yet (Task 11)
-    const stack: ItemStack = { item: 'stick', count: 64 };
-    expect(isBlockItem(stack.item)).toBe(false);
+  it('stackFromBlock builds a full stack by default and honors an explicit count', () => {
+    expect(stackFromBlock(BLOCK.GRASS)).toEqual({ item: 'grass', count: 64 });
+    expect(stackFromBlock(BLOCK.GRASS, 3)).toEqual({ item: 'grass', count: 3 });
+    expect(stackFromBlock(BLOCK.STONE, 1)).toEqual({ item: 'stone', count: 1 });
+    expect(stackFromBlock(BLOCK.AIR)).toBeNull();
+    expect(stackFromBlock(BLOCK.WATER)).toBeNull(); // no obtainable item form
   });
 });

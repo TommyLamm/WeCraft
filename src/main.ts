@@ -6,11 +6,12 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast } from './world/raycast';
-import { BLOCK, HOTBAR_DEFAULT, type BlockId } from './world/blocks';
-import { blockFromItem, itemFromBlock, maxStack, stackName, type ItemStack } from './core/items';
+import { BLOCK, HOTBAR_DEFAULT } from './world/blocks';
+import { blockFromItem, stackFromBlock, stackName } from './core/items';
+import { createInventoryModel } from './core/inventory';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { DigProgress, placeTarget, canPlaceAt } from './player/interact';
+import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop } from './player/interact';
 import { createHud } from './ui/hud';
 import { createMenus } from './ui/menus';
 import { createInventory } from './ui/inventory';
@@ -33,10 +34,13 @@ const inv = createInventory(uiRoot);
 
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
-const hotbar: Array<ItemStack | null> = HOTBAR_DEFAULT.map((b) => {
-  const item = itemFromBlock(b);
-  return item ? { item, count: maxStack(item) } : null; // creative: full stacks, never consumed
-});
+// Stack-based model owns the hotbar slots; `hotbar` is the live reference the
+// HUD/palette render. Creative: full stacks, addItem/removeItem no-op (Phase 1 behavior).
+const inventory = createInventoryModel(
+  HOTBAR_DEFAULT.map((b) => stackFromBlock(b)),
+  'creative',
+);
+const hotbar = inventory.slots;
 let selected = 0;
 let showDebug = false;
 let thirdPerson = false;
@@ -211,7 +215,7 @@ function setState(next: GameState): void {
       hotbar,
       selected,
       (slot, stack) => {
-        hotbar[slot] = stack;
+        inventory.setSlot(slot, stack);
         hud.setHotbar(hotbar, selected);
       },
       // backdrop click closes: E can only fire while pointer-locked, and opening
@@ -315,6 +319,8 @@ gs.renderer.setAnimationLoop(() => {
       dig.update(id, hit, dt);
       if (dig.isDone(id)) {
         world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+        collectBlockDrop(id, inventory); // creative (today): no-op; survival adds 1×
+        hud.setHotbar(hotbar, selected); // reflect the drop (no-op diff in creative)
         dig.reset();
       }
     } else {
@@ -328,8 +334,7 @@ gs.renderer.setAnimationLoop(() => {
       const held = hotbar[selected];
       const placeId = held ? blockFromItem(held.item) : null;
       if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-        // blockFromItem only ever yields ids taken from the block table
-        world.setBlock(t.x, t.y, t.z, placeId as BlockId);
+        world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
       }
     }
 

@@ -3,15 +3,12 @@ import { createHud } from './hud';
 import { createMenus } from './menus';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
-import { itemFromBlock, maxStack, type ItemStack } from '../core/items';
+import { itemFromBlock, maxStack, stackFromBlock, type ItemStack } from '../core/items';
 import { loadSettings } from '../core/settings';
 
 /** Build the stack form of a block list (every placeable block has an item). */
 function stacksOf(blocks: BlockId[]): Array<ItemStack | null> {
-  return blocks.map((b) => {
-    const item = itemFromBlock(b);
-    return item ? { item, count: maxStack(item) } : null;
-  });
+  return blocks.map((b) => stackFromBlock(b));
 }
 const DEFAULT_STACKS = stacksOf(HOTBAR_DEFAULT);
 

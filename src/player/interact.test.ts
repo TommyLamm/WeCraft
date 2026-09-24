@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { getBreakTime, DigProgress, canPlaceAt, placeTarget } from './interact';
+import { getBreakTime, DigProgress, canPlaceAt, placeTarget, collectBlockDrop } from './interact';
 import { BLOCK, getBlockDef } from '../world/blocks';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
 import { PLAYER_HEIGHT } from './physics';
+import { createInventoryModel } from '../core/inventory';
 
 describe('getBreakTime', () => {
   it('dirt faster than stone', () => {
@@ -104,5 +105,34 @@ describe('canPlaceAt', () => {
     expect(canPlaceAt(w(), 5, targetY, 5, { x: 5.5, y: feet, z: 5.5 })).toBe(true);
     // 1/16 block（一 px）侵入 → 重疊
     expect(canPlaceAt(w(), 5, targetY, 5, { x: 5.5, y: feet + 1 / 16, z: 5.5 })).toBe(false);
+  });
+});
+
+describe('collectBlockDrop', () => {
+  it('adds 1× the block item in survival', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(0);
+    expect(inv.slots[0]).toEqual({ item: 'stone', count: 1 });
+    expect(collectBlockDrop(BLOCK.DIRT, inv)).toBe(0);
+    expect(inv.slots[1]).toEqual({ item: 'dirt', count: 1 });
+  });
+
+  it('skips adding in creative (infinite supply)', () => {
+    const inv = createInventoryModel([null], 'creative');
+    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(0);
+    expect(inv.slots[0]).toBeNull();
+  });
+
+  it('adds nothing for blocks without an item form (air, water)', () => {
+    const inv = createInventoryModel([null], 'survival');
+    expect(collectBlockDrop(BLOCK.AIR, inv)).toBe(0);
+    expect(collectBlockDrop(BLOCK.WATER, inv)).toBe(0);
+    expect(inv.slots[0]).toBeNull();
+  });
+
+  it('returns overflow when the inventory is full', () => {
+    const inv = createInventoryModel([{ item: 'stone', count: 64 }], 'survival');
+    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(1);
+    expect(inv.countItem('stone')).toBe(64);
   });
 });

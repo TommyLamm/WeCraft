@@ -1,5 +1,16 @@
 export type Unsubscribe = () => void;
 
+// Phase 2 game events (Task 2). Type-only additions — producers/consumers land
+// with their own tasks (HUD/vitals, day-night, mobs, drops).
+export type GameEvent =
+  | { type: 'mode-changed'; mode: 'survival' | 'creative' }
+  | { type: 'vitals-changed'; hp: number; maxHp: number; hunger: number; maxHunger: number }
+  | { type: 'player-died' }
+  | { type: 'time-changed'; phase: 'day' | 'night'; t: number }
+  | { type: 'mobs-changed'; count: number }
+  | { type: 'drops-changed' };
+
+
 export interface Bus<Events extends Record<string, unknown>> {
   on<K extends keyof Events>(type: K, fn: (payload: Events[K]) => void): Unsubscribe;
   emit<K extends keyof Events>(type: K, payload: Events[K]): void;

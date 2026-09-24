@@ -3,6 +3,17 @@ import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
+import { itemFromBlock } from '../core/items';
+import type { InventoryModel } from '../core/inventory';
+
+/** Mined-block drop: adds 1× the block's item via inventory.add — survival only,
+ *  creative skips (infinite supply no-ops inside the model). Returns overflow
+ *  that did not fit; 0 when nothing was added. */
+export function collectBlockDrop(blockId: number, inventory: InventoryModel): number {
+  const item = itemFromBlock(blockId);
+  if (!item) return 0; // air/water: no item form
+  return inventory.addItem(item, 1);
+}
 
 export function getBreakTime(blockId: number): number {
   return getBlockDef(blockId).hardness;

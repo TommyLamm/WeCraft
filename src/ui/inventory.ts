@@ -1,6 +1,6 @@
 import './ui.css';
 import { PLACEABLE } from '../world/blocks';
-import { itemFromBlock, maxStack, stackName, type ItemStack } from '../core/items';
+import { stackFromBlock, stackName, type ItemStack } from '../core/items';
 import { itemIcon } from './icons';
 
 export interface InventoryUi {
@@ -47,13 +47,13 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       const grid = document.createElement('div');
       grid.className = 'ui-inv-grid';
       for (const id of PLACEABLE) {
-        const item = itemFromBlock(id);
-        if (!item) continue; // unreachable: every PLACEABLE block has an item
+        const stack = stackFromBlock(id);
+        if (!stack) continue; // unreachable: every PLACEABLE block has an item
         const s = document.createElement('div');
         s.className = 'ui-slot';
-        s.title = stackName(item);
-        s.appendChild(itemIcon(item));
-        s.addEventListener('click', () => onPick(selected, { item, count: maxStack(item) }));
+        s.title = stackName(stack.item);
+        s.appendChild(itemIcon(stack.item));
+        s.addEventListener('click', () => onPick(selected, { ...stack }));
         grid.appendChild(s);
       }
       panel.append(h, grid);
