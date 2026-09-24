@@ -12,7 +12,7 @@ import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { createVitals, damage, exhaust, tickVitals, isDead as isPlayerDead, type Vitals } from './player/survival';
+import { createVitals, damage, exhaust, tickVitals, isDead as isPlayerDead, fallDamage, type Vitals } from './player/survival';
 import {
   DigProgress,
   placeTarget,
@@ -96,12 +96,19 @@ const dig = new DigProgress();
 // per-frame attack dispatch would deal ~60 hits/s; while the cooldown runs a
 // mob under the crosshair also blocks digging (attack takes precedence).
 const ATTACK_COOLDOWN_SEC = 0.6;
+/** Melee reach in blocks (plan: "ray hits mob within 3.5 blocks") — separate
+ *  from the block reach (`reachFor`, 4.5/5) which still governs dig/place. */
+const MELEE_REACH = 3.5;
 /** Exhaustion rates (settled 9.5): sprint drains 0.05/s, one jump costs 0.15
  *  at its ground-launch edge; plain walking costs nothing. */
 const SPRINT_EXHAUST_PER_SEC = 0.05;
 const JUMP_EXHAUST = 0.15;
 /** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
 let attackCd = 0;
+/** Apex (peak y) of the current airborne span for fall damage (plan 9.1) —
+ *  null while grounded/flying/in water; physics.ts exposes only `onGround`,
+ *  so the peak is tracked here (see the fall-damage block in the game loop). */
+let fallStartY: number | null = null;
 
 // ---- 物品掉落（Task 7）----
 // Pure entities stepped each frame while playing; survival breaks spawn them
@@ -493,6 +500,30 @@ gs.renderer.setAnimationLoop(() => {
       input.state.jump && player.onGround && !player.flying && !player.inWater;
     stepPlayer(player, input.state, world, dt);
 
+    // ---- Fall damage (plan 9.1) ----
+    // physics.ts exposes only `onGround` — no built-in fall distance — so the
+    // airborne apex is tracked here: airborne → remember the peak y; landing →
+    // fallDamage(peak − y), charged in survival only (creative is exempt;
+    // vitals is null there too, the mode guard keeps the intent explicit).
+    // Plan 9.1 "landing on water/ground decides resetFall": water contact and
+    // flight clear the apex WITHOUT damage; hops under 3 blocks are absorbed
+    // by fallDamage itself. A kill is picked up by the death check in the
+    // vitals block below.
+    if (player.flying || player.inWater) {
+      fallStartY = null; // not a fall — clear the apex
+    } else if (player.onGround) {
+      if (fallStartY !== null) {
+        const amount = fallDamage(fallStartY - player.position.y);
+        fallStartY = null;
+        if (currentMode === 'survival' && amount > 0 && vitals) {
+          setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+        }
+      }
+    } else {
+      // airborne: track the peak (a jump's up-phase nets ~0 on landing)
+      fallStartY = Math.max(fallStartY ?? player.position.y, player.position.y);
+    }
+
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
     const dropsBefore = drops.length;
     drops = stepDrops(drops, dt, (x, y, z) => world.isSolid(x, y, z)); // water ≠ solid → falls through
@@ -586,25 +617,31 @@ gs.renderer.setAnimationLoop(() => {
     // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
     const reach = reachFor(currentMode) + (thirdPerson ? back : 0);
     const hit = raycast(world, rayOrigin, dir, reach);
+    // Melee reach (plan: "ray hits mob within 3.5 blocks") is its own constant —
+    // the block reach above still governs dig/place. The third-person camera
+    // back-offset is added with the same offset logic as block reach, so the
+    // effective reach from the eye stays 3.5 in both views.
+    const meleeReach = MELEE_REACH + (thirdPerson ? back : 0);
 
     // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
-    // Same origin/dir/reach as the block raycast above; works in BOTH modes
-    // (mobs exist regardless of mode once spawned). The 0.6 s cooldown paces
-    // repeat hits and — while it runs — keeps a mob under the crosshair from
-    // being dug through to the block behind it (attackMob/hitMobId are pure;
-    // kill removal + mobs-changed follow the Task 8 filter pattern).
+    // Same origin/dir as the block raycast above, but the 3.5-block melee
+    // reach; works in BOTH modes (mobs exist regardless of mode once spawned).
+    // The 0.6 s cooldown paces repeat hits and — while it runs — keeps a mob
+    // under the crosshair from being dug through to the block behind it
+    // (attackMob/hitMobId are pure; kill removal + mobs-changed follow the
+    // Task 8 filter pattern).
     attackCd = Math.max(0, attackCd - dt);
     let attacking = false;
     if (input.state.dig) {
       if (attackCd > 0) {
-        attacking = hitMobId(mobs, rayOrigin, dir, reach) !== null; // query only, no damage
+        attacking = hitMobId(mobs, rayOrigin, dir, meleeReach) !== null; // query only, no damage
       } else {
         const heldStack = hotbar[selected];
         const atk = attackMob(
           mobs,
           rayOrigin,
           dir,
-          reach,
+          meleeReach,
           toolDamage(heldStack?.item ?? null),
           dir, // knockback along the look direction (damageMob normalizes XZ)
         );

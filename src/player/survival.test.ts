@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createVitals, damage, heal, eat, exhaust, starve, tickVitals, isDead } from './survival';
+import { createVitals, damage, heal, eat, exhaust, starve, tickVitals, isDead, fallDamage } from './survival';
 import type { Vitals } from './survival';
 
 /** Hand-built fixture: full vitals with a patch applied directly — bypasses
@@ -268,5 +268,27 @@ describe('isDead', () => {
     expect(isDead(createVitals())).toBe(false);
     expect(isDead(at({ hp: 1 }))).toBe(false);
     expect(isDead(at({ hp: 0 }))).toBe(true);
+  });
+});
+
+describe('fallDamage (plan 9.1: max(0, floor(distance − 3)))', () => {
+  it('the 3-block exemption absorbs short hops', () => {
+    expect(fallDamage(0)).toBe(0);
+    expect(fallDamage(2)).toBe(0);
+    expect(fallDamage(3)).toBe(0); // exactly at the threshold → 0
+  });
+
+  it('damage is one per block beyond the exemption', () => {
+    expect(fallDamage(4)).toBe(1);
+    expect(fallDamage(7.9)).toBe(4); // fractional distances floor first
+    expect(fallDamage(8)).toBe(5);
+    expect(fallDamage(23)).toBe(20); // a 23-block cliff is a one-hit kill
+  });
+
+  it('negative and non-finite distances are 0 (guards)', () => {
+    expect(fallDamage(-1)).toBe(0);
+    expect(fallDamage(-100)).toBe(0);
+    expect(fallDamage(Number.NaN)).toBe(0);
+    expect(fallDamage(Number.POSITIVE_INFINITY)).toBe(0); // never infinite damage
   });
 });

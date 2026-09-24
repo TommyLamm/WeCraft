@@ -113,3 +113,13 @@ export function tickVitals(v: Vitals, dtSec: number): Vitals {
 export function isDead(v: Vitals): boolean {
   return v.hp <= 0;
 }
+
+/** Damage taken from a fall of `distance` blocks: `max(0, floor(distance − 3))`
+ *  — the first 3 blocks are exempt (plan 9.1), then 1 hp per block. `distance`
+ *  is measured from the apex of the airborne span (peak y minus landing y, so
+ *  a jump's up-phase nets ~0). Negative, NaN and non-finite distances are 0
+ *  (repo NaN-guard norm — never deals infinite damage). */
+export function fallDamage(distance: number): number {
+  if (!Number.isFinite(distance) || distance <= 0) return 0;
+  return Math.max(0, Math.floor(distance - 3));
+}
