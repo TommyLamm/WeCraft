@@ -3889,6 +3889,12 @@ git commit -m "feat: game state machine and full play loop"
 - Modify: `src/world/mesher.ts`（替換 `meshChunk` 內的 quad 產生）
 - Test: `src/world/mesher.test.ts`（新增案例）
 
+**Deviations (Task 18):**
+- **Decision: `wontfix: greedy-uv`** — measured FIRST (task brief decision gate), before Steps 1–3. Step 4 took the `FPS ≥ 55` branch → Step 5 downgrade route per plan 務實決策 (line 4128): face-culling mesher kept (already one draw call per chunk), greedy + texture array deferred to phase 2. Steps 1–3 (greedy tests + implementation) skipped entirely.
+- Mesh bench (temporary vite-node script, seed 1337, view distance 10: 529 chunks generated sync, 441 meshed): avg **12.48 ms/chunk** (p50 13.72, p95 15.98, min 6.13, max 17.30); gen 1966.7 ms total; mesh 5504.9 ms total; 780,315 quads (avg 1769.4/chunk). Node v24.11.1. Bench script was temp — deleted pre-commit; numbers recorded here as the commit message's "measure meshing" record.
+- Browser FPS (real Chrome headed, RTX 5070 Ti via ANGLE/D3D11 — not SwiftShader, viewport 1920×1080 @ dpr 1, fresh profile → defaults = view distance 10 / seed 1337, pointer-locked at spawn 0.5/89/0.5, F3: `Chunks: 529`): playing-state samples over 12 s avg **133.4 fps, min 131** (in-game F3 readout: 138 fps); title-with-world-loaded avg 133.4; load phase (gen+mesh in flight) avg 133, min 130 — stable ~131–138 = display-refresh-bound, gate (≥ 55) met ~2.4×, draw/vertex bottleneck never approached so the `< 55` branch was not triggered.
+- Zero code changes: `src/world/mesher.ts`, `src/world/mesher.test.ts`, `ChunkMeshData`, `bakeAtlasUvs` untouched. Plan's greedy Step 1 tests intentionally NOT added (they gate the greedy branch only; adding them over the face mesher would be meaningless). `npm test` remains 133.
+
 - [ ] **Step 1: 新增失敗測試**
 
 ```ts
