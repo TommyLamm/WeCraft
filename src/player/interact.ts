@@ -6,6 +6,7 @@ import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import { spawnDrop, dropItemFor, type DropEntity } from '../world/drops';
+import { damageMob, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
  *  of adding straight to the inventory: survival only — creative spawns nothing
@@ -78,6 +79,139 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
   }
   // hand or plain item: rock needs a pickaxe; logs/no-tool blocks take a hand
   return required === 'pickaxe' ? 0.5 : 1;
+}
+
+// ---- Melee combat (Task 9) ----
+
+/** Melee damage dealt per hit with `heldItem` (a hotbar item id; null = bare
+ *  hand) — the settled Task 9 table: swords 4 (wooden) / 5 (stone), pickaxes 2,
+ *  axes 3, everything else (hand, apple, stick, blocks) 1. Pure and item-only
+ *  like `toolSpeed`; combat applies in both game modes (mobs exist regardless). */
+export function toolDamage(heldItem: ItemId | null): number {
+  switch (heldItem) {
+    case 'wooden_sword':
+      return 4;
+    case 'stone_sword':
+      return 5;
+    case 'wooden_axe':
+    case 'stone_axe':
+      return 3;
+    case 'wooden_pickaxe':
+    case 'stone_pickaxe':
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+/** Settled mob hitbox for the ray test: centred on `pos` in X/Z (±0.35),
+ *  y from the feet up 1.8 blocks. */
+const MOB_HALF_WIDTH = 0.35;
+const MOB_HITBOX_HEIGHT = 1.8;
+
+/** Parametric ray vs AABB (slab method): entry `t` of the first intersection
+ *  at or after the origin, or null when the box is missed or lies entirely
+ *  behind the origin. A ray starting inside the box returns 0 (point-blank
+ *  hits register). `dir` must be normalized by the caller — `t` is then
+ *  measured in world blocks. */
+function rayBoxEntry(
+  origin: { x: number; y: number; z: number },
+  dir: { x: number; y: number; z: number },
+  min: { x: number; y: number; z: number },
+  max: { x: number; y: number; z: number },
+): number | null {
+  let tMin = -Infinity; // latest slab entry
+  let tMax = Infinity; // earliest slab exit
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const o = origin[axis];
+    const d = dir[axis];
+    if (d === 0) {
+      if (o < min[axis] || o > max[axis]) return null; // parallel: never crosses this slab
+      continue;
+    }
+    let t1 = (min[axis] - o) / d;
+    let t2 = (max[axis] - o) / d;
+    if (t1 > t2) [t1, t2] = [t2, t1]; // enter/exit order regardless of direction
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null; // slabs don't overlap → no intersection
+  }
+  if (tMax < 0) return null; // box entirely behind the ray origin
+  return Math.max(tMin, 0); // 0 = origin inside the box
+}
+
+/** The id of the NEAREST mob whose hitbox the ray crosses within `reach`
+ *  (distance along the normalized look direction), or null on a miss.
+ *  Pure: the input list is untouched, and NaN/zero directions or
+ *  non-finite reach never hit (repo NaN-guard norm). Main.ts also calls
+ *  this directly to keep digging suppressed while a mob sits under the
+ *  crosshair (attack cooldown running); `attackMob` uses it internally. */
+export function hitMobId(
+  mobs: readonly Mob[],
+  eyePos: { x: number; y: number; z: number },
+  lookDir: { x: number; y: number; z: number },
+  reach: number,
+): number | null {
+  if (!Number.isFinite(reach) || reach <= 0) return null;
+  if (![eyePos.x, eyePos.y, eyePos.z, lookDir.x, lookDir.y, lookDir.z].every(Number.isFinite)) {
+    return null;
+  }
+  const len = Math.hypot(lookDir.x, lookDir.y, lookDir.z);
+  if (len === 0) return null;
+  const dir = { x: lookDir.x / len, y: lookDir.y / len, z: lookDir.z / len };
+
+  let bestT = Infinity;
+  let bestId: number | null = null;
+  for (const m of mobs) {
+    if (![m.pos.x, m.pos.y, m.pos.z].every(Number.isFinite)) continue;
+    const t = rayBoxEntry(
+      eyePos,
+      dir,
+      { x: m.pos.x - MOB_HALF_WIDTH, y: m.pos.y, z: m.pos.z - MOB_HALF_WIDTH },
+      { x: m.pos.x + MOB_HALF_WIDTH, y: m.pos.y + MOB_HITBOX_HEIGHT, z: m.pos.z + MOB_HALF_WIDTH },
+    );
+    if (t === null || t > reach) continue;
+    if (t < bestT) {
+      bestT = t;
+      bestId = m.id; // strict < → first in list wins an exact tie
+    }
+  }
+  return bestId;
+}
+
+/** Result of one swing: the mob list with the hit mob's damage + knockback
+ *  applied, and the hit mob's `id` for the renderer's flash (null on a miss).
+ *  Miss → the SAME array reference (spawnBlockDrop contract style) with
+ *  `hitId: null`. A killed mob (hp ≤ 0) stays in the list — the caller
+ *  filters `isDead` and emits `mobs-changed` (settled). */
+export interface AttackResult {
+  mobs: Mob[];
+  hitId: number | null;
+}
+
+/** One melee attack: find the nearest mob under `lookDir` within `reach`
+ *  (same origin/dir/reach main uses for the block raycast), apply `damage`
+ *  plus a knockback impulse along `knockDir` (pass the look direction —
+ *  `damageMob` normalizes over XZ and ignores y). Pure: new mob objects,
+ *  the input array is never mutated; non-finite damage is a no-op inside
+ *  `damageMob`. */
+export function attackMob(
+  mobs: Mob[],
+  eyePos: { x: number; y: number; z: number },
+  lookDir: { x: number; y: number; z: number },
+  reach: number,
+  damage: number,
+  knockDir: { x: number; y?: number; z: number },
+): AttackResult {
+  const hitId = hitMobId(mobs, eyePos, lookDir, reach);
+  if (hitId === null) return { mobs, hitId: null }; // miss → same ref
+  let applied = false;
+  const next = mobs.map((m) => {
+    if (applied || m.id !== hitId) return m; // untouched mobs keep their refs
+    applied = true;
+    return damageMob(m, damage, knockDir);
+  });
+  return { mobs: next, hitId };
 }
 
 /** Per-frame contract: call update(blockId, hit, dt, speed?) before isDone(blockId)

@@ -7,8 +7,12 @@ import {
   spawnBlockDrop,
   toolSpeed,
   digStep,
+  toolDamage,
+  hitMobId,
+  attackMob,
 } from './interact';
 import { BLOCK, getBlockDef } from '../world/blocks';
+import { createMob, isDead, KNOCKBACK_SPEED, type Mob } from '../world/mobs';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
@@ -277,5 +281,149 @@ describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => 
     expect(second).toHaveLength(2);
     expect(second[0]).toBe(first[0]); // existing entities kept as-is
     expect(second[1].id).not.toBe(second[0].id);
+  });
+});
+
+describe('toolDamage (Task 9 melee damage table)', () => {
+  it('bare hand deals 1', () => {
+    expect(toolDamage(null)).toBe(1);
+  });
+
+  it('swords: wooden 4, stone 5', () => {
+    expect(toolDamage('wooden_sword')).toBe(4);
+    expect(toolDamage('stone_sword')).toBe(5);
+  });
+
+  it('pickaxes deal 2 (both tiers)', () => {
+    expect(toolDamage('wooden_pickaxe')).toBe(2);
+    expect(toolDamage('stone_pickaxe')).toBe(2);
+  });
+
+  it('axes deal 3 (both tiers)', () => {
+    expect(toolDamage('wooden_axe')).toBe(3);
+    expect(toolDamage('stone_axe')).toBe(3);
+  });
+
+  it('non-weapons (apple, stick, blocks) fall back to 1', () => {
+    expect(toolDamage('apple')).toBe(1);
+    expect(toolDamage('stick')).toBe(1);
+    expect(toolDamage('dirt')).toBe(1);
+  });
+});
+
+describe('hitMobId / attackMob (Task 9 ray → mob hitbox)', () => {
+  // Ray marches -z at eye height; mob boxes are ±0.35 in X/Z, y..y+1.8.
+  const eye = { x: 0, y: 1, z: 0 };
+  const FWD = { x: 0, y: 0, z: -1 };
+  const REACH = 4.5;
+
+  it('hits a mob directly ahead within reach', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    expect(hitMobId([m], eye, FWD, REACH)).toBe(m.id);
+  });
+
+  it('hits from the side and from behind (box entry along +x / +z)', () => {
+    const side = createMob('zombie', { x: 3, y: 0, z: 0 });
+    expect(hitMobId([side], eye, { x: 1, y: 0, z: 0 }, REACH)).toBe(side.id);
+    const back = createMob('skeleton', { x: 0, y: 0, z: 3 });
+    expect(hitMobId([back], eye, { x: 0, y: 0, z: 1 }, REACH)).toBe(back.id);
+  });
+
+  it('hits when the eye starts inside the hitbox (entry clamped to t=0)', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    expect(hitMobId([m], { x: 0, y: 1, z: -3 }, FWD, REACH)).toBe(m.id);
+  });
+
+  it('misses when the ray passes beside the box', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    expect(hitMobId([m], { x: 0, y: 3, z: 0 }, FWD, REACH)).toBeNull(); // above the 1.8-tall box
+    expect(hitMobId([m], { x: 2, y: 1, z: 0 }, FWD, REACH)).toBeNull(); // 1.65 blocks to the side
+  });
+
+  it('misses when the mob is behind the ray origin', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: 3 });
+    expect(hitMobId([m], eye, FWD, REACH)).toBeNull();
+  });
+
+  it('misses beyond reach, hits within reach', () => {
+    const far = createMob('zombie', { x: 0, y: 0, z: -10 }); // entry t ≈ 9.65
+    expect(hitMobId([far], eye, FWD, REACH)).toBeNull();
+    const near = createMob('zombie', { x: 0, y: 0, z: -4 }); // entry t ≈ 3.65
+    expect(hitMobId([near], eye, FWD, REACH)).toBe(near.id);
+  });
+
+  it('picks the closest mob when two line up', () => {
+    const near = createMob('zombie', { x: 0, y: 0, z: -3 });
+    const far = createMob('zombie', { x: 0, y: 0, z: -4.5 });
+    expect(hitMobId([far, near], eye, FWD, REACH)).toBe(near.id);
+  });
+
+  it('guards: empty list, zero/NaN direction, non-finite reach', () => {
+    expect(hitMobId([], eye, FWD, REACH)).toBeNull();
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    expect(hitMobId([m], eye, { x: 0, y: 0, z: 0 }, REACH)).toBeNull();
+    expect(hitMobId([m], eye, { x: Number.NaN, y: 0, z: -1 }, REACH)).toBeNull();
+    expect(hitMobId([m], eye, FWD, Number.NaN)).toBeNull();
+    expect(hitMobId([m], eye, FWD, -1)).toBeNull();
+  });
+
+  it('attackMob applies toolDamage to the hit mob and returns a new array', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    const input: Mob[] = [m];
+    const res = attackMob(input, eye, FWD, REACH, 4, FWD);
+    expect(res.hitId).toBe(m.id);
+    expect(res.mobs).not.toBe(input);
+    expect(res.mobs[0].hp).toBe(16);
+    expect(input[0].hp).toBe(20); // input never mutated
+  });
+
+  it('attackMob on a miss returns the SAME array ref with hitId null', () => {
+    const input: Mob[] = [createMob('zombie', { x: 0, y: 0, z: -3 })];
+    const res = attackMob(input, { x: 0, y: 3, z: 0 }, FWD, REACH, 4, FWD);
+    expect(res.hitId).toBeNull();
+    expect(res.mobs).toBe(input);
+    expect(input[0].hp).toBe(20);
+  });
+
+  it('the closest of two mobs takes the damage; the farther keeps its hp and ref', () => {
+    const near = createMob('zombie', { x: 0, y: 0, z: -3 });
+    const far = createMob('zombie', { x: 0, y: 0, z: -4.5 });
+    const res = attackMob([far, near], eye, FWD, REACH, 5, FWD);
+    expect(res.hitId).toBe(near.id);
+    expect(res.mobs[0]).toBe(far); // untouched → same ref
+    expect(res.mobs[0].hp).toBe(20);
+    expect(res.mobs[1].hp).toBe(15);
+  });
+
+  it('leaves a killed mob in the array (caller filters via isDead)', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    const res = attackMob([m], eye, FWD, REACH, 25, FWD);
+    expect(res.mobs[0].hp).toBe(0);
+    expect(isDead(res.mobs[0])).toBe(true);
+    expect(res.mobs).toHaveLength(1); // removal is the caller's job (main.ts)
+    expect(res.mobs.filter((x) => !isDead(x))).toHaveLength(0);
+  });
+
+  it('knockback pushes along the look direction (XZ normalized)', () => {
+    const m = createMob('zombie', { x: 3, y: 0, z: 0 });
+    const dir = { x: 1, y: 0, z: 0 };
+    const res = attackMob([m], eye, dir, REACH, 1, dir);
+    expect(res.mobs[0].kbVel.x).toBeCloseTo(KNOCKBACK_SPEED, 5);
+    expect(res.mobs[0].kbVel.z).toBeCloseTo(0, 5);
+    // diagonal aim: the ray is normalized per-axis for the hit, while
+    // damageMob normalizes the knockback over XZ and ignores the y component
+    const m2 = createMob('zombie', { x: 1.5, y: 0, z: -1.5 });
+    const diag = { x: 1, y: 0.5, z: -1 };
+    const res2 = attackMob([m2], eye, diag, REACH, 1, diag);
+    expect(res2.hitId).toBe(m2.id);
+    expect(res2.mobs[0].kbVel.x).toBeCloseTo(KNOCKBACK_SPEED / Math.SQRT2, 5);
+    expect(res2.mobs[0].kbVel.z).toBeCloseTo(-KNOCKBACK_SPEED / Math.SQRT2, 5);
+  });
+
+  it('non-finite damage is a no-op (hp preserved, still a hit)', () => {
+    const m = createMob('zombie', { x: 0, y: 0, z: -3 });
+    const res = attackMob([m], eye, FWD, REACH, Number.NaN, FWD);
+    expect(res.hitId).toBe(m.id);
+    expect(res.mobs[0].hp).toBe(20);
   });
 });

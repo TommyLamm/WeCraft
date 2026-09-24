@@ -12,8 +12,18 @@ import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { createVitals, damage, type Vitals } from './player/survival';
-import { DigProgress, placeTarget, canPlaceAt, spawnBlockDrop, toolSpeed, digStep } from './player/interact';
+import { createVitals, damage, exhaust, tickVitals, isDead as isPlayerDead, type Vitals } from './player/survival';
+import {
+  DigProgress,
+  placeTarget,
+  canPlaceAt,
+  spawnBlockDrop,
+  toolSpeed,
+  digStep,
+  toolDamage,
+  hitMobId,
+  attackMob,
+} from './player/interact';
 import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
 import {
   stepMobs,
@@ -37,7 +47,8 @@ import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { generateChunk, surfaceHeight } from './world/terrain';
 
-type GameState = 'title' | 'playing' | 'paused' | 'inventory';
+// 'dead' (Task 9): frozen world, no overlay — Task 10 adds the death screen.
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'dead';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -80,6 +91,18 @@ let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
 
+// ---- Combat / vitals tuning (Task 9) ----
+// Repeat hits on a held LMB are gated by a 0.6 s cooldown — without it the
+// per-frame attack dispatch would deal ~60 hits/s; while the cooldown runs a
+// mob under the crosshair also blocks digging (attack takes precedence).
+const ATTACK_COOLDOWN_SEC = 0.6;
+/** Exhaustion rates (settled 9.5): sprint drains 0.05/s, one jump costs 0.15
+ *  at its ground-launch edge; plain walking costs nothing. */
+const SPRINT_EXHAUST_PER_SEC = 0.05;
+const JUMP_EXHAUST = 0.15;
+/** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
+let attackCd = 0;
+
 // ---- 物品掉落（Task 7）----
 // Pure entities stepped each frame while playing; survival breaks spawn them
 // (spawnBlockDrop), proximity picks them up (pickable + pickup).
@@ -105,19 +128,45 @@ uiRoot.appendChild(vitalsEl);
 
 /** Current vitals — null while in creative mode (the whole `.vitals` bar hides).
  *  Boot mode comes from settings; the mode-changed handler (Task 5) and damage
- *  sources (Task 9) update it later through `setVitals`. */
-let vitals: Vitals | null = inventory.mode === 'survival' ? createVitals() : null;
+ *  sources (Task 9) update it through `setVitals` (starts null so the first
+ *  setVitals call below is a visible transition that repaints + emits). */
+let vitals: Vitals | null = null;
 
-/** Single update path: store vitals, repaint the HUD, hide the bar when null. */
+/** Single vitals mutation path: store `next`, repaint the HUD, hide the bar
+ *  when null — and (Task 9) emit `vitals-changed` whenever a HUD-visible value
+ *  changed, i.e. an integer hp or hunger value moved. Saturation-first
+ *  exhaustion and the regen/starve accumulators are invisible in the HUD, so
+ *  those are carried silently — this is what keeps the per-frame tick from
+ *  spamming the bus (~4×/s worst case, damage/regen/starve emit immediately
+ *  because their hp integers move). Creative never reaches the emit (next is
+ *  null). The emit re-enters the consumer below with identical integers → its
+ *  visible gate stops the recursion after one hop. */
 function setVitals(next: Vitals | null): void {
+  const prev = vitals;
   vitals = next;
+  if (!next) {
+    renderVitals(vitalsEl, null);
+    vitalsEl.style.display = 'none';
+    return;
+  }
+  const visible =
+    !prev ||
+    Math.floor(prev.hp) !== Math.floor(next.hp) ||
+    Math.floor(prev.hunger) !== Math.floor(next.hunger);
+  if (!visible) return; // nothing HUD-visible changed → no repaint, no emit
   renderVitals(vitalsEl, next);
-  vitalsEl.style.display = next ? '' : 'none';
+  vitalsEl.style.display = '';
+  bus.emit('vitals-changed', {
+    hp: next.hp,
+    maxHp: next.maxHp,
+    hunger: next.hunger,
+    maxHunger: next.maxHunger,
+  });
 }
 
-setVitals(vitals); // initial paint (shown when booting into survival, hidden in creative)
+setVitals(inventory.mode === 'survival' ? createVitals() : null); // initial paint (hidden in creative)
 
-// No producer yet (Task 9) — this is the single vitals-changed → HUD path.
+// Single vitals-changed → HUD path (producer: setVitals above, Task 9).
 bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
   if (!vitals) return; // creative: nothing to update
   setVitals({ ...vitals, hp, maxHp, hunger, maxHunger });
@@ -196,9 +245,9 @@ function spawnTick(): void {
 }
 
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
- *  Task 4 `setVitals` path (creative → vitals null → no-op), shoot spawns an
- *  Arrow entity. `vitals-changed` stays unemitted here — no consumer yet
- *  (Task 9 owns the mirror); setVitals already repaints the HUD. */
+ *  `setVitals` path (creative → vitals null → no-op), which emits
+ *  `vitals-changed` when an integer hp/hunger value moves (Task 9 producer);
+ *  shoot spawns an Arrow entity. */
 function applyMobEvent(ev: MobEvent): void {
   if (ev.type === 'shoot') {
     arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
@@ -345,6 +394,15 @@ function setState(next: GameState): void {
         bus.emit('mode-changed', { mode: next });
       },
     });
+  } else if (next === 'dead') {
+    // Task 10 adds the death screen + respawn flow — here only the state
+    // transition: overlays were cleared above, the pointer unlocks (the
+    // lock-change handler pauses only from 'playing', so this can't bounce
+    // into the pause menu), and every later frame skips the `playing` block →
+    // movement, physics and mob AI freeze. The current frame finishes its tail
+    // (harmless: a survival dig needs many frames and further damage is
+    // blocked by the vitals guard).
+    document.exitPointerLock?.();
   } else if (next === 'inventory') {
     inv.open(
       hotbar,
@@ -428,7 +486,11 @@ gs.renderer.setAnimationLoop(() => {
     gs.setDayNight(sunDirection(clock.t), skyColors(clock.t));
     if (phase !== prevPhase) bus.emit('time-changed', { phase, t: clock.t });
 
-    // 移動
+    // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
+    // onGround; water swim-strikes and active flight aren't discrete jumps,
+    // so neither launches the 0.15-exhaust jump charge.
+    const jumpStarted =
+      input.state.jump && player.onGround && !player.flying && !player.inWater;
     stepPlayer(player, input.state, world, dt);
 
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
@@ -469,6 +531,26 @@ gs.renderer.setAnimationLoop(() => {
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
 
+    // ---- 生存值（Task 9）：sprint/jump exhaustion + regen/starve tick ----
+    // Mob/arrow damage already went through setVitals above (each emits
+    // `vitals-changed` on an integer hp move); here one commit per frame
+    // carries sprint/jump exhaustion and the tickVitals accumulators — again
+    // emitting only when an integer hp/hunger value actually changed. The
+    // death transition is checked right after (Task 10 owns the screen).
+    if (vitals) {
+      let v = vitals;
+      const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
+      if (input.state.sprint && moving && !player.flying && !player.inWater) {
+        v = exhaust(v, dt * SPRINT_EXHAUST_PER_SEC); // 0.05 exhaustion/s while sprinting
+      }
+      if (jumpStarted) v = exhaust(v, JUMP_EXHAUST); // 0.15 once per ground launch
+      v = tickVitals(v, dt); // regen (hunger ≥ 18) / starve: 1 hp per 4 s
+      setVitals(v); // repaint + emit only on an integer change (see setVitals)
+      if (isPlayerDead(v) && state === 'playing') {
+        setState('dead'); // freeze only — Task 10 adds death screen + respawn
+      }
+    }
+
     // spawn tick: every 5 s → night + cap + surface (8.5)
     spawnAcc += dt;
     if (spawnAcc >= SPAWN_INTERVAL_SEC) {
@@ -502,9 +584,43 @@ gs.renderer.setAnimationLoop(() => {
       ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
       : eye;
     // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
-    const hit = raycast(world, rayOrigin, dir, reachFor(currentMode) + (thirdPerson ? back : 0));
+    const reach = reachFor(currentMode) + (thirdPerson ? back : 0);
+    const hit = raycast(world, rayOrigin, dir, reach);
 
-    if (hit && input.state.dig) {
+    // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
+    // Same origin/dir/reach as the block raycast above; works in BOTH modes
+    // (mobs exist regardless of mode once spawned). The 0.6 s cooldown paces
+    // repeat hits and — while it runs — keeps a mob under the crosshair from
+    // being dug through to the block behind it (attackMob/hitMobId are pure;
+    // kill removal + mobs-changed follow the Task 8 filter pattern).
+    attackCd = Math.max(0, attackCd - dt);
+    let attacking = false;
+    if (input.state.dig) {
+      if (attackCd > 0) {
+        attacking = hitMobId(mobs, rayOrigin, dir, reach) !== null; // query only, no damage
+      } else {
+        const heldStack = hotbar[selected];
+        const atk = attackMob(
+          mobs,
+          rayOrigin,
+          dir,
+          reach,
+          toolDamage(heldStack?.item ?? null),
+          dir, // knockback along the look direction (damageMob normalizes XZ)
+        );
+        if (atk.hitId !== null) {
+          attacking = true;
+          mobs = atk.mobs;
+          attackCd = ATTACK_COOLDOWN_SEC;
+          mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
+          const beforeKill = mobs.length;
+          mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
+          if (mobs.length !== beforeKill) bus.emit('mobs-changed', { count: mobs.length });
+        }
+      }
+    }
+
+    if (hit && input.state.dig && !attacking) {
       const id = world.getBlock(hit.x, hit.y, hit.z);
       // digStep owns the mode branch (creative ignores `speed` → instant break;
       // survival is timed × toolSpeed) — no mode check needed here (review #4)
@@ -578,8 +694,9 @@ gs.renderer.setAnimationLoop(() => {
     refreshQueues();
     processQueues();
   } else {
-    // paused | inventory: keep the frozen world view behind the overlay (plan's
-    // single else ran the orbit here too — that would yank the camera on pause)
+    // paused | inventory | dead: keep the frozen world view (plan's single
+    // else ran the orbit here too — that would yank the camera on pause).
+    // 'dead' has no overlay yet — Task 10 adds the death screen.
     hud.setDebug(null);
   }
 
