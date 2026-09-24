@@ -9,10 +9,13 @@ import { raycast } from './world/raycast';
 import { BLOCK, HOTBAR_DEFAULT } from './world/blocks';
 import { blockFromItem, stackFromBlock, stackName } from './core/items';
 import { createInventoryModel } from './core/inventory';
+import { createBus, type GameEvent } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
+import { createVitals, type Vitals } from './player/survival';
 import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop } from './player/interact';
 import { createHud } from './ui/hud';
+import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
 import { createInventory } from './ui/inventory';
 import { loadSettings } from './core/settings';
@@ -32,6 +35,13 @@ const hud = createHud(uiRoot);
 const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
 
+// ---- 遊戲事件匯流排（shapes from Task 2's GameEvent; producers land in Task 5/9）----
+/** `GameEvent` union → payload map keyed by event type (the tag lives on the key). */
+type GameEvents = {
+  [K in GameEvent['type']]: Omit<Extract<GameEvent, { type: K }>, 'type'>;
+};
+const bus = createBus<GameEvents>();
+
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
 // Stack-based model owns the hotbar slots; `hotbar` is the live reference the
@@ -46,6 +56,32 @@ let showDebug = false;
 let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- 生存 HUD（Task 4）----
+// .vitals 容器：same programmatic markup pattern as hud/menus/inventory
+const vitalsEl = document.createElement('div');
+vitalsEl.className = 'vitals';
+uiRoot.appendChild(vitalsEl);
+
+/** Current vitals — null in creative mode (the whole `.vitals` bar hides).
+ *  Default mode today is creative; the mode toggle (Task 5) and damage
+ *  sources (Task 9) update it later through `setVitals`. */
+let vitals: Vitals | null = inventory.mode === 'survival' ? createVitals() : null;
+
+/** Single update path: store vitals, repaint the HUD, hide the bar when null. */
+function setVitals(next: Vitals | null): void {
+  vitals = next;
+  renderVitals(vitalsEl, next);
+  vitalsEl.style.display = next ? '' : 'none';
+}
+
+setVitals(vitals); // initial paint (hidden until Task 5 switches to survival)
+
+// No producer yet (Task 9) — this is the single vitals-changed → HUD path.
+bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
+  if (!vitals) return; // creative: nothing to update
+  setVitals({ ...vitals, hp, maxHp, hunger, maxHunger });
+});
 
 function applyRenderDistanceFog(): void {
   const fog = gs.scene.fog;

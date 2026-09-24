@@ -196,3 +196,26 @@
   min-width: 0;
   width: 100%;
 }
+
+/* Survival vitals HUD: hearts left, hunger right, above the hotbar (Task 4). */
+.vitals {
+  position: fixed;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 364px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.vitals .hearts,
+.vitals .hunger {
+  display: flex;
+  gap: 1px;
+}
+.heart,
+.hunger-icon {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
