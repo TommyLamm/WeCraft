@@ -29,8 +29,14 @@ export interface DayNightColors {
   sunIntensity: number;
 }
 
-/** One full day/night cycle length, in seconds (settings clamp: 60–3600). */
+/** Shared default day length in seconds (imported by `settings.ts` so the
+ *  600 lives in exactly one place). Both `createClock` and the settings clamp
+ *  accept positive values only, clamped to [MIN, MAX] below. */
 export const DEFAULT_DAY_LENGTH_SEC = 600;
+/** Sane day-length bounds shared by `createClock` and `settings.dayLengthSec`
+ *  (60 s = fastest cycle, e.g. browser checks; 3600 s = slowest). */
+export const MIN_DAY_LENGTH_SEC = 60;
+export const MAX_DAY_LENGTH_SEC = 3600;
 
 const DAY_SKY = 0x87ceeb;
 const NIGHT_SKY = 0x0a0e1a;
@@ -62,11 +68,12 @@ export function lerpColor(a: number, b: number, f: number): number {
 }
 
 /** Fresh clock starting mid-morning (`t = 0.25`). Non-positive or non-finite
- *  `dayLengthSec` falls back to {@link DEFAULT_DAY_LENGTH_SEC}. */
+ *  `dayLengthSec` falls back to {@link DEFAULT_DAY_LENGTH_SEC}; positive values
+ *  clamp to [MIN, MAX] — same range as `settings.dayLengthSec`. */
 export function createClock(dayLengthSec: number = DEFAULT_DAY_LENGTH_SEC): Clock {
   const len =
     Number.isFinite(dayLengthSec) && dayLengthSec > 0
-      ? dayLengthSec
+      ? Math.min(MAX_DAY_LENGTH_SEC, Math.max(MIN_DAY_LENGTH_SEC, dayLengthSec))
       : DEFAULT_DAY_LENGTH_SEC;
   return { t: 0.25, dayLengthSec: len };
 }

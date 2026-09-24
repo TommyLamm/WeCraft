@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './settings';
+import { DEFAULT_DAY_LENGTH_SEC } from './daynight';
 
 beforeEach(() => {
   localStorage.clear();
@@ -86,9 +87,10 @@ describe('settings', () => {
   });
 
   describe('dayLengthSec (Task 6)', () => {
-    it('defaults to 600', () => {
-      expect(DEFAULT_SETTINGS.dayLengthSec).toBe(600);
-      expect(loadSettings().dayLengthSec).toBe(600);
+    it('defaults to the shared 600 s constant', () => {
+      expect(DEFAULT_DAY_LENGTH_SEC).toBe(600);
+      expect(DEFAULT_SETTINGS.dayLengthSec).toBe(DEFAULT_DAY_LENGTH_SEC);
+      expect(loadSettings().dayLengthSec).toBe(DEFAULT_DAY_LENGTH_SEC);
     });
 
     it('persists and reloads', () => {
@@ -102,17 +104,17 @@ describe('settings', () => {
       expect(saveSettings({ dayLengthSec: 100000 }).dayLengthSec).toBe(3600);
     });
 
-    it('falls back to 600 for non-finite or non-number stored values', () => {
+    it('falls back to the default for non-finite or non-number stored values', () => {
       localStorage.setItem(
         'wecraft.settings',
         JSON.stringify({ dayLengthSec: 'fast' }),
       );
-      expect(loadSettings().dayLengthSec).toBe(600);
+      expect(loadSettings().dayLengthSec).toBe(DEFAULT_DAY_LENGTH_SEC);
       localStorage.setItem(
         'wecraft.settings',
         JSON.stringify({ dayLengthSec: null }),
       );
-      expect(loadSettings().dayLengthSec).toBe(600);
+      expect(loadSettings().dayLengthSec).toBe(DEFAULT_DAY_LENGTH_SEC);
     });
   });
 });

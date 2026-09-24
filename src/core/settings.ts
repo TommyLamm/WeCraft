@@ -1,4 +1,5 @@
 import type { GameMode } from './inventory';
+import { DEFAULT_DAY_LENGTH_SEC, MIN_DAY_LENGTH_SEC, MAX_DAY_LENGTH_SEC } from './daynight';
 
 export interface Settings {
   seed: number;
@@ -17,7 +18,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   sensitivity: 1.0,
   volume: 0.8,
   mode: 'survival',
-  dayLengthSec: 600,
+  dayLengthSec: DEFAULT_DAY_LENGTH_SEC,
 });
 
 const KEY = 'wecraft.settings';
@@ -34,8 +35,12 @@ function clampSettings(s: Settings): Settings {
     volume: Math.min(1, Math.max(0, finite(s.volume, DEFAULT_SETTINGS.volume))),
     // anything that isn't exactly 'creative' falls back to the default mode
     mode: s.mode === 'creative' ? 'creative' : 'survival',
-    // 60–3600 s: fast enough for testing (60), sane floor against degenerate values
-    dayLengthSec: Math.min(3600, Math.max(60, finite(s.dayLengthSec, DEFAULT_SETTINGS.dayLengthSec))),
+    // 60–3600 s (shared bounds with createClock): fast enough for testing (60),
+    // sane floor against degenerate values; non-finite → DEFAULT_DAY_LENGTH_SEC
+    dayLengthSec: Math.min(
+      MAX_DAY_LENGTH_SEC,
+      Math.max(MIN_DAY_LENGTH_SEC, finite(s.dayLengthSec, DEFAULT_DAY_LENGTH_SEC)),
+    ),
   };
 }
 
