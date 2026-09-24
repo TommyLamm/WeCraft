@@ -147,6 +147,30 @@ describe('inventory model — slots', () => {
     expect(inv.slots.length).toBe(2);
   });
 
+  it('setSlot clears the slot for counts below 1', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    inv.setSlot(0, { item: 'dirt', count: 0 });
+    expect(inv.slots[0]).toBeNull();
+    inv.setSlot(0, { item: 'dirt', count: -5 });
+    expect(inv.slots[0]).toBeNull();
+  });
+
+  it('setSlot clamps the count to maxStack and floors non-integers', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    inv.setSlot(0, { item: 'grass', count: 999 });
+    expect(inv.slots[0]).toEqual({ item: 'grass', count: 64 });
+    inv.setSlot(1, { item: 'dirt', count: 2.7 });
+    expect(inv.slots[1]).toEqual({ item: 'dirt', count: 2 });
+  });
+
+  it('setSlot stores a copy — mutating the caller object afterward has no effect', () => {
+    const inv = createInventoryModel(empty(1), 'survival');
+    const stack: ItemStack = { item: 'dirt', count: 5 };
+    inv.setSlot(0, stack);
+    stack.count = 99;
+    expect(inv.slots[0]).toEqual({ item: 'dirt', count: 5 });
+  });
+
   it('copies initial slots instead of aliasing the caller array', () => {
     const initial: Array<ItemStack | null> = [{ item: 'dirt', count: 1 }];
     const inv = createInventoryModel(initial, 'survival');

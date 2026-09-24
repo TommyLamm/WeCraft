@@ -64,6 +64,21 @@ describe('ui smoke', () => {
     hud.dispose();
   });
 
+  it('setHotbar re-renders when the same stack object mutates in place (model merge)', () => {
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    const list = stacksOf(HOTBAR_DEFAULT);
+    const dirt: ItemStack = { item: 'dirt', count: 60 };
+    list[0] = dirt;
+    hud.setHotbar(list, 0);
+    const badges = () => [...root.querySelectorAll('.ui-slot .count')].map((e) => e.textContent);
+    expect(badges()[0]).toBe('60');
+    dirt.count = 61; // inventory model mutates stacks in place — same array, same object
+    hud.setHotbar(list, 0);
+    expect(badges()[0]).toBe('61');
+    hud.dispose();
+  });
+
   it('dispose clears hud DOM', () => {
     const root = document.getElementById('ui-root')!;
     const hud = createHud(root);

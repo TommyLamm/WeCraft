@@ -10,7 +10,6 @@ export type GameEvent =
   | { type: 'mobs-changed'; count: number }
   | { type: 'drops-changed' };
 
-
 export interface Bus<Events extends Record<string, unknown>> {
   on<K extends keyof Events>(type: K, fn: (payload: Events[K]) => void): Unsubscribe;
   emit<K extends keyof Events>(type: K, payload: Events[K]): void;

@@ -4,7 +4,7 @@ import { ICON_PX, getContext2d, itemIcon } from './icons';
 
 export interface Hud {
   root: HTMLElement;
-  setHotbar(slots: Array<ItemStack | null>, selected: number): void;
+  setHotbar(slots: ReadonlyArray<ItemStack | null>, selected: number): void;
   setSelected(index: number): void;
   setDebug(lines: string[] | null): void;
   showItemName(name: string | null): void;
@@ -70,7 +70,9 @@ export function createHud(uiRoot: HTMLElement): Hud {
         const stack = list[i] ?? null;
         s.classList.toggle('selected', i === selected);
         if (sameStack(slotStacks[i], stack)) continue;
-        slotStacks[i] = stack;
+        // snapshot: the model mutates stacks in place — caching the live object
+        // would make the diff compare it to itself and skip the redraw
+        slotStacks[i] = stack ? { ...stack } : null;
         const canvas = s.querySelector('canvas');
         if (canvas) drawSlotIcon(canvas, stack);
         const badge = s.querySelector('.count');

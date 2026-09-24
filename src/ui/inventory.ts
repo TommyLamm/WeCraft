@@ -5,7 +5,7 @@ import { itemIcon } from './icons';
 
 export interface InventoryUi {
   open(
-    hotbar: Array<ItemStack | null>,
+    hotbar: ReadonlyArray<ItemStack | null>,
     selected: number,
     onPick: (slot: number, stack: ItemStack) => void,
     onClose?: () => void,
