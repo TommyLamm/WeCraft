@@ -25,9 +25,10 @@
   width: 20px;
   height: 2px;
 }
-/* Hide crosshair under any full-screen overlay (title/pause/settings/inventory).
-   Fallback: browsers without :has() keep the crosshair visible (cosmetic only). */
-#ui-root:has(.ui-overlay) .ui-crosshair {
+/* Hide crosshair under any full-screen overlay (title/pause/settings/inventory,
+   death). Fallback: browsers without :has() keep the crosshair visible
+   (cosmetic only). */
+#ui-root:has(.ui-overlay, .death-screen) .ui-crosshair {
   display: none;
 }
 
@@ -142,6 +143,27 @@
   color: rgba(255, 255, 255, 0.75);
   text-shadow: 1px 1px 0 #000;
 }
+/* Death screen (Task 10): full-viewport red-tinted overlay above the HUD,
+   centered title + Respawn button (reuses the .ui-btn menu style). */
+.death-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: rgba(120, 0, 0, 0.55);
+}
+.death-screen .death-title {
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+}
+
 .ui-inventory {
   position: absolute;
   left: 50%;

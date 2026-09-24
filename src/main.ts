@@ -43,12 +43,13 @@ import { createHud } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
+import { createDeathScreen } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { generateChunk, surfaceHeight } from './world/terrain';
 
-// 'dead' (Task 9): frozen world, no overlay — Task 10 adds the death screen.
+// 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'dead';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -66,6 +67,8 @@ const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
 const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
+// Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
+const deathScreen = createDeathScreen(uiRoot);
 
 // ---- 遊戲事件匯流排 ----
 // `GameEvents` payload-map type lives in core/bus.ts next to the GameEvent union
@@ -377,6 +380,7 @@ function setState(next: GameState): void {
   state = next;
   menus.hideAll();
   inv.close();
+  deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   if (next === 'title') {
     menus.showTitle(startGame);
     document.exitPointerLock?.();
@@ -405,11 +409,15 @@ function setState(next: GameState): void {
       },
     });
   } else if (next === 'dead') {
-    // Task 10 adds the death screen + respawn flow — here only the state
-    // transition: overlays were cleared above, the pointer unlocks (the
-    // lock-change handler pauses only from 'playing', so this can't bounce
-    // into the pause menu), and every later frame skips the `playing` block →
-    // movement, physics and mob AI freeze. The current frame finishes its tail
+    // Death screen + respawn (Task 10). `player-died` fires ONCE per death:
+    // this transition is guarded at the call site by `state === 'playing'`
+    // (plus the vitals guard), and nothing else calls setState('dead').
+    bus.emit('player-died', {});
+    deathScreen.show(handleRespawn); // callback wiring (Decision A — death.ts is bus-free)
+    // Freeze behavior (Task 9) unchanged: the pointer unlocks (the lock-change
+    // handler pauses only from 'playing', so this can't bounce into the pause
+    // menu), and every later frame skips the `playing` block → movement,
+    // physics and mob AI freeze. The current frame finishes its tail
     // (harmless: a survival dig needs many frames and further damage is
     // blocked by the vitals guard).
     document.exitPointerLock?.();
@@ -446,6 +454,18 @@ function startGame(): void {
   resetPlayerToSpawn();
   setState('playing');
   relockCanvas();
+}
+
+/** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
+ *  Inventory is intentionally untouched (settled: death does NOT drop items),
+ *  and mobs frozen at death stay put (out of scope, settled). The overlay hides
+ *  before the transition — setState clears it again anyway (defensive). */
+function handleRespawn(): void {
+  setVitals(createVitals()); // hp 0 → 20 / hunger refilled — emits vitals-changed via the integer gate
+  resetPlayerToSpawn(); // pos/vel/fallState/attackCd → spawn; inventory untouched
+  deathScreen.hide();
+  setState('playing'); // resumes the world (playing block + render tail)
+  relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
 }
 
 // pointer lock 釋放 → 暫停；inventory 開啟時主動解鎖，保持背包開著
@@ -589,7 +609,7 @@ gs.renderer.setAnimationLoop(() => {
       v = tickVitals(v, dt); // regen (hunger ≥ 18) / starve: 1 hp per 4 s
       setVitals(v); // repaint + emit only on an integer change (see setVitals)
       if (isPlayerDead(v) && state === 'playing') {
-        setState('dead'); // freeze only — Task 10 adds death screen + respawn
+        setState('dead'); // death screen + player-died emit + freeze (Task 10)
       }
     }
 
@@ -750,7 +770,7 @@ gs.renderer.setAnimationLoop(() => {
   } else {
     // paused | inventory | dead: keep the frozen world view (plan's single
     // else ran the orbit here too — that would yank the camera on pause).
-    // 'dead' has no overlay yet — Task 10 adds the death screen.
+    // 'dead' renders the world behind the death-screen overlay (Task 10).
     hud.setDebug(null);
   }
 
