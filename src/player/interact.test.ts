@@ -6,6 +6,7 @@ import {
   placeTarget,
   collectBlockDrop,
   toolSpeed,
+  digStep,
 } from './interact';
 import { BLOCK, getBlockDef } from '../world/blocks';
 import { World } from '../world/world';
@@ -103,7 +104,7 @@ describe('toolSpeed (Task 5 survival mining table)', () => {
     expect(toolSpeed(BLOCK.IRON_ORE, pick)).toBe(2);
   });
 
-  it('bare hand on pickaxe-blocks is 0.5× (plan: "0.5× other tools/hand")', () => {
+  it('bare hand on pickaxe-blocks is 0.5× (hand = wrong tool for rock)', () => {
     expect(toolSpeed(BLOCK.STONE, null)).toBe(0.5);
     expect(toolSpeed(BLOCK.IRON_ORE, null)).toBe(0.5);
     // a plain block item in hand behaves like a bare hand
@@ -140,6 +141,50 @@ describe('toolSpeed (Task 5 survival mining table)', () => {
     expect(toolSpeed(BLOCK.BEDROCK, pick)).toBe(1);
     expect(toolSpeed(BLOCK.WATER, null)).toBe(1);
     expect(toolSpeed(BLOCK.WATER, axe)).toBe(1);
+  });
+});
+
+describe('digStep (Task 5 creative instant break)', () => {
+  const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
+
+  it('creative breaks in one step with no progress accumulation', () => {
+    const d = new DigProgress();
+    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, 1)).toBe(true);
+    expect(d.progress).toBe(0); // the timer never runs in creative
+  });
+
+  it('creative resets any leftover survival progress', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, hit, 1, 1); // 50% from a survival dig
+    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, 1)).toBe(true);
+    expect(d.progress).toBe(0);
+  });
+
+  it('creative still respects the unbreakable list (bedrock, water)', () => {
+    const d = new DigProgress();
+    expect(digStep('creative', d, BLOCK.BEDROCK, hit, 1, 1)).toBe(false);
+    expect(digStep('creative', d, BLOCK.WATER, hit, 1, 1)).toBe(false);
+  });
+
+  it('survival is false until the timed progress completes', () => {
+    const d = new DigProgress();
+    // dirt = 0.6s: 0.1s gets there nowhere
+    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.1, 1)).toBe(false);
+    expect(d.progress).toBeGreaterThan(0);
+    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.55, 1)).toBe(true); // 0.1 + 0.55 > 0.6
+  });
+
+  it('survival applies the tool speed multiplier', () => {
+    const d = new DigProgress();
+    // stone = 2s: two 0.5s steps at 2× → 50% then done
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.5, 2)).toBe(false);
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.5, 2)).toBe(true);
+  });
+
+  it('survival bedrock never breaks (unbreakable list unchanged)', () => {
+    const d = new DigProgress();
+    expect(digStep('survival', d, BLOCK.BEDROCK, hit, 100, 2)).toBe(false);
+    expect(d.progress).toBe(0);
   });
 });
 

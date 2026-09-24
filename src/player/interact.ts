@@ -4,7 +4,7 @@ import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import { itemFromBlock, type ItemId, type ItemStack } from '../core/items';
-import type { InventoryModel } from '../core/inventory';
+import type { GameMode, InventoryModel } from '../core/inventory';
 
 /** Mined-block drop: adds 1× the block's item via inventory.add — survival only,
  *  creative skips (infinite supply no-ops inside the model). Returns overflow
@@ -50,8 +50,10 @@ function requiredTool(blockId: number): ToolCategory | null {
  *    with anything in hand;
  *  - matching tool (pickaxe on the stone family, axe on logs) → 2×;
  *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
- *  - bare hand / non-tool item: 0.5× on pickaxe blocks (plan: "0.5× other
- *    tools/hand"), 1× on logs (punchable) and on no-tool blocks;
+ *  - bare hand / non-tool item: treated like the wrong tool on pickaxe blocks
+ *    (0.5× — hand is the wrong tool for rock, Minecraft-like; our chosen reading,
+ *    since the plan text only says "hand 1×" generally and is ambiguous here),
+ *    1× on logs (punchable) and on no-tool blocks;
  *  - swords are the documented "wrong tool" case: 0.5× on required blocks,
  *    1× elsewhere. */
 export function toolSpeed(blockId: number, held: ItemStack | null): number {
@@ -71,7 +73,7 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
 /** Per-frame contract: call update(blockId, hit, dt, speed?) before isDone(blockId)
  *  each frame with the same target; isDone assumes progress belongs to the current
  *  target key. `speed` multiplies the progress rate (survival passes
- *  `toolSpeed(...)`; default 1 = the Phase 1 rate, which is what creative uses). */
+ *  `toolSpeed(...)`; default 1 = the base Phase 1 rate). */
 export class DigProgress {
   private key = '';
   progress = 0;
@@ -100,6 +102,30 @@ export class DigProgress {
     this.key = '';
     this.progress = 0;
   }
+}
+
+/** One frame of digging → does the target break now?
+ *
+ *  Creative (plan 5.5 "creative keeps instant dig"): breaks on the first step —
+ *  no progress ever accumulates (`dig` is reset so no timer leaks across a mode
+ *  switch). The unbreakable list (bedrock/water, hardness Infinity) still never
+ *  breaks, in either mode. Survival: drives the timed `DigProgress` with `speed`
+ *  (from `toolSpeed`) and reports `isDone`. */
+export function digStep(
+  mode: GameMode,
+  dig: DigProgress,
+  blockId: number,
+  hit: RayHit,
+  dt: number,
+  speed: number,
+): boolean {
+  if (!Number.isFinite(getBreakTime(blockId))) return false; // unbreakable: never, both modes
+  if (mode === 'creative') {
+    dig.reset(); // instant break: no timer in creative
+    return true;
+  }
+  dig.update(blockId, hit, dt, speed);
+  return dig.isDone(blockId);
 }
 
 export function placeTarget(hit: RayHit): { x: number; y: number; z: number } {

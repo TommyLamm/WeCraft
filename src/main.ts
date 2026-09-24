@@ -13,7 +13,7 @@ import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 import { createVitals, type Vitals } from './player/survival';
-import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop, toolSpeed } from './player/interact';
+import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop, toolSpeed, digStep } from './player/interact';
 import { createHud } from './ui/hud';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
@@ -381,13 +381,13 @@ gs.renderer.setAnimationLoop(() => {
 
     if (hit && input.state.dig) {
       const id = world.getBlock(hit.x, hit.y, hit.z);
-      // survival: progress rate × toolSpeed (hand 1×, right tool 2×, wrong 0.5×);
-      // creative: keeps the Phase 1 rate (toolSpeed is survival-only, Task 5)
+      // survival: timed dig, rate × toolSpeed; creative: instant break (plan 5.5).
+      // The break decision lives in digStep (unit-tested in interact.test.ts);
+      // break side-effects below stay identical for both modes.
       const speed = currentMode === 'survival' ? toolSpeed(id, hotbar[selected]) : 1;
-      dig.update(id, hit, dt, speed);
-      if (dig.isDone(id)) {
+      if (digStep(currentMode, dig, id, hit, dt, speed)) {
         world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
-        collectBlockDrop(id, inventory); // creative (today): no-op; survival adds 1×
+        collectBlockDrop(id, inventory); // creative: no-op; survival adds 1× (drops land in Task 7)
         hud.setHotbar(hotbar, selected); // reflect the drop (no-op diff in creative)
         dig.reset();
       }
