@@ -1,5 +1,5 @@
 import './style.css';
-import { createGameScene, createDropRenderer } from './render/scene';
+import { createGameScene, createDropRenderer, createMobRenderer } from './render/scene';
 import { ChunkRenderer } from './render/chunk-renderer';
 import { drawAtlas } from './render/textures';
 import { World, chunkKey } from './world/world';
@@ -12,9 +12,25 @@ import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { createVitals, type Vitals } from './player/survival';
+import { createVitals, damage, type Vitals } from './player/survival';
 import { DigProgress, placeTarget, canPlaceAt, spawnBlockDrop, toolSpeed, digStep } from './player/interact';
 import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
+import {
+  createMob,
+  stepMobs,
+  stepArrows,
+  spawnArrow,
+  findSpawnPos,
+  chooseSpawnKind,
+  isDead,
+  xzDistance,
+  MAX_MOBS,
+  SPAWN_INTERVAL_SEC,
+  DESPAWN_DISTANCE,
+  type Mob,
+  type Arrow,
+  type MobEvent,
+} from './world/mobs';
 import { createHud } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
@@ -34,6 +50,8 @@ const world = new World();
 const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
 // Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
+// Task 8: mobs + arrows — blocky humanoids and oriented boxes
+const mobRenderer = createMobRenderer(gs.scene);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -69,6 +87,13 @@ const dig = new DigProgress();
 // Pure entities stepped each frame while playing; survival breaks spawn them
 // (spawnBlockDrop), proximity picks them up (pickable + pickup).
 let drops: DropEntity[] = [];
+
+// ---- 生物与箭矢（Task 8）----
+// Pure mob AI (world/mobs.ts) stepped each frame while playing; night spawns
+// them on the surface, distance despawns them, death removes them (no loot).
+let mobs: Mob[] = [];
+let arrows: Arrow[] = [];
+let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
@@ -156,6 +181,49 @@ function spawnPoint(): { x: number; y: number; z: number } {
     world.isSolid(0, Math.floor(yy + 1.7), 0);
   while (y < CHUNK_HEIGHT - 3 && blocked(y)) y++;
   return { x: 0.5, y, z: 0.5 };
+}
+
+// ---- Task 8: mob spawning + event application ----
+
+/** Feet position on the surface of a column (column scan — settled over a
+ *  DDA raycast): topmost non-bedrock solid block, +1. Because the scan runs
+ *  top-down, everything above it was already seen as air, so the 2-block mob
+ *  body always fits. Null when the column is ungenerated or only bedrock —
+ *  the spawn tick then just skips this cycle. */
+function surfaceYAt(wx: number, wz: number): number | null {
+  const x = Math.floor(wx);
+  const z = Math.floor(wz);
+  for (let y = CHUNK_HEIGHT - 2; y >= 1; y--) {
+    if (!world.isSolid(x, y, z)) continue;
+    return world.getBlock(x, y, z) === BLOCK.BEDROCK ? null : y + 1;
+  }
+  return null;
+}
+
+/** Every 5 s while playing at night with room under the cap: pick a candidate
+ *  XZ 12–24 blocks out (pure `findSpawnPos`), resolve its surface Y and drop
+ *  one mob there. `phaseOf` night check only — no per-block light engine this
+ *  phase (plan 8.5). Count changes are announced by the caller. */
+function spawnTick(): void {
+  if (phaseOf(clock.t) !== 'night') return;
+  if (mobs.length >= MAX_MOBS) return;
+  const spot = findSpawnPos(player.position);
+  const y = surfaceYAt(spot.x, spot.z);
+  if (y === null) return;
+  mobs = [...mobs, createMob(chooseSpawnKind(), { x: spot.x, y, z: spot.z })];
+}
+
+/** Apply one mob event at the vitals/arrow layer: damage goes through the
+ *  Task 4 `setVitals` path (creative → vitals null → no-op), shoot spawns an
+ *  Arrow entity. `vitals-changed` stays unemitted here — no consumer yet
+ *  (Task 9 owns the mirror); setVitals already repaints the HUD. */
+function applyMobEvent(ev: MobEvent): void {
+  if (ev.type === 'shoot') {
+    arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
+    return;
+  }
+  if (!vitals) return; // creative (or dead) — nothing to hurt
+  setVitals(damage(vitals, ev.amount));
 }
 
 function refreshQueues(): void {
@@ -406,6 +474,28 @@ gs.renderer.setAnimationLoop(() => {
       }
     }
 
+    // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
+    const mobsBefore = mobs.length;
+    const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
+    const stepped = stepMobs(mobs, { playerPos: player.position, isSolidAt, dt });
+    mobs = stepped.mobs;
+    for (const ev of stepped.events) applyMobEvent(ev);
+    const shot = stepArrows(arrows, dt, isSolidAt, player.position);
+    arrows = shot.arrows;
+    for (const ev of shot.events) applyMobEvent(ev);
+    // dead mobs vanish (no loot this phase); distance despawn past 48 blocks
+    mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
+    if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
+
+    // spawn tick: every 5 s → night + cap + surface (8.5)
+    spawnAcc += dt;
+    if (spawnAcc >= SPAWN_INTERVAL_SEC) {
+      spawnAcc = 0;
+      const before = mobs.length;
+      spawnTick();
+      if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
+    }
+
     // 相機（first-person eye；F5 加 third-person offset）
     const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
     gs.camera.position.set(eye.x, eye.y, eye.z);
@@ -512,5 +602,7 @@ gs.renderer.setAnimationLoop(() => {
   }
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
+  mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
+  mobRenderer.syncArrows(arrows);
   gs.renderer.render(gs.scene, gs.camera);
 });

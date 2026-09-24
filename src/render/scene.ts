@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Vec3, DayNightColors } from '../core/daynight';
 import type { ItemId } from '../core/items';
 import type { DropEntity } from '../world/drops';
+import type { Mob, MobKind, Arrow } from '../world/mobs';
 
 export interface GameScene {
   scene: THREE.Scene;
@@ -141,6 +142,205 @@ export function createDropRenderer(
       materials.clear();
       for (const tex of textures.values()) tex.dispose();
       textures.clear();
+    },
+  };
+}
+
+// ---- Task 8: mobs → blocky humanoids + arrows ----
+
+/** Per-kind flat palette (spec §5 pixel look: untextured boxes, flat colors —
+ *  MeshLambertMaterial so the Task 6 scene lights shade them). Zombie: green
+ *  head, blue body/legs, teal arms; skeleton: white-gray with darker limbs. */
+const MOB_PALETTE: Record<MobKind, { head: number; body: number; legs: number; arms: number }> = {
+  zombie: { head: 0x6a9a5a, body: 0x3d5a80, legs: 0x3a4f7a, arms: 0x5a8f7a },
+  skeleton: { head: 0xd8d8d0, body: 0xd8d8d0, legs: 0xb0b0a8, arms: 0xc4c4bc },
+};
+
+/** Seconds a `flashMob` hit stays white. */
+const FLASH_SEC = 0.1;
+/** Limb swing amplitude (radians) and how fast the walk phase advances
+ *  (phase += horizontal speed · dt · 4 → zombie 3.2 b/s ≈ 2 swings/s). */
+const SWING_AMPLITUDE = 0.6;
+const WALK_FREQ = 4;
+
+interface MobParts {
+  kind: MobKind;
+  group: THREE.Group;
+  legL: THREE.Group;
+  legR: THREE.Group;
+  armL: THREE.Group;
+  armR: THREE.Group;
+  /** Flat-color materials of THIS mob (cloned per mob so a hit flash lights
+   *  only the mob that was struck). */
+  materials: THREE.MeshLambertMaterial[];
+  phase: number; // accumulated walk phase
+  swing: number; // current limb swing (decays to 0 when stopped)
+  flash: number; // seconds left of the white hit flash
+}
+
+/** Reconciled renderer for mobs and arrows (one Group of BoxGeometry limbs per
+ *  mob, one small oriented box per arrow). Follows the DropRenderer pattern:
+ *  id-keyed cache, rebuilt when an id is reused for a different kind, full
+ *  `dispose()` detaching everything and freeing GPU resources. */
+export interface MobRenderer {
+  /** Create/move/reorient/animate mobs to match `mobs` — cheap for the ≤8 mob
+   *  cap, so the loop calls it every frame. `dt` advances walk cycles and
+   *  burns down hit flashes (non-finite dt → 0, no NaN in phases). */
+  syncMobs(mobs: readonly Mob[], dt: number): void;
+  /** Create/move/remove arrow boxes to match `arrows`, oriented along velocity. */
+  syncArrows(arrows: readonly Arrow[]): void;
+  /** White hit flash for 0.1 s on the given mob (no-op for unknown ids). */
+  flashMob(id: number): void;
+  /** Remove every group/mesh and free geometries/materials. */
+  dispose(): void;
+}
+
+export function createMobRenderer(scene: THREE.Scene): MobRenderer {
+  // shared unit geometries (kind-independent) — freed on dispose()
+  const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+  const bodyGeo = new THREE.BoxGeometry(0.5, 0.75, 0.25);
+  const limbGeo = new THREE.BoxGeometry(0.25, 0.75, 0.25);
+  const arrowGeo = new THREE.BoxGeometry(0.1, 0.1, 0.5);
+  const arrowMat = new THREE.MeshLambertMaterial({ color: 0x4a4a4a });
+  const solids = [headGeo, bodyGeo, limbGeo, arrowGeo];
+
+  const mobs = new Map<number, MobParts>();
+  const arrows = new Map<number, THREE.Mesh>();
+
+  /** A limb: pivot Group at the joint with the box hanging down from it, so
+   *  `pivot.rotation.x` swings it naturally. */
+  function limb(geom: THREE.BufferGeometry, mat: THREE.Material, x: number, pivotY: number, name: string): THREE.Group {
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.set(x, pivotY, 0);
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.y = -0.375; // hang the 0.75-long box below the joint
+    pivot.add(mesh);
+    return pivot;
+  }
+
+  function buildMob(kind: MobKind): MobParts {
+    const p = MOB_PALETTE[kind];
+    const mat = (hex: number): THREE.MeshLambertMaterial => new THREE.MeshLambertMaterial({ color: hex });
+    const headMat = mat(p.head);
+    const bodyMat = mat(p.body);
+    const legMat = mat(p.legs);
+    const armMat = mat(p.arms);
+    const materials = [headMat, bodyMat, legMat, armMat];
+
+    const group = new THREE.Group();
+    group.name = `mob:${kind}`;
+    group.scale.setScalar(0.9); // 2.0 blocks tall × 0.9 ≈ the player's 1.8 hitbox
+
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.name = 'head';
+    head.position.y = 1.75; // spans 1.5–2.0, atop the body
+    group.add(head);
+
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.name = 'body';
+    body.position.y = 1.125; // spans 0.75–1.5
+    group.add(body);
+
+    const legL = limb(limbGeo, legMat, 0.125, 0.75, 'legL'); // hip pivot, spans 0–0.75
+    const legR = limb(limbGeo, legMat, -0.125, 0.75, 'legR');
+    const armL = limb(limbGeo, armMat, 0.375, 1.5, 'armL'); // shoulder pivot, spans 0.75–1.5
+    const armR = limb(limbGeo, armMat, -0.375, 1.5, 'armR');
+    group.add(legL, legR, armL, armR);
+
+    return { kind, group, legL, legR, armL, armR, materials, phase: 0, swing: 0, flash: 0 };
+  }
+
+  function removeMob(id: number): void {
+    const entry = mobs.get(id);
+    if (!entry) return;
+    scene.remove(entry.group);
+    for (const m of entry.materials) m.dispose(); // per-mob materials only
+    mobs.delete(id);
+  }
+
+  return {
+    syncMobs(list, dt) {
+      const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+      const live = new Set<number>();
+      for (const mob of list) {
+        live.add(mob.id);
+        let entry = mobs.get(mob.id);
+        // same id reused for a different kind → rebuild (drops Important #1)
+        if (entry && entry.kind !== mob.kind) {
+          removeMob(mob.id);
+          entry = undefined;
+        }
+        if (!entry) {
+          entry = buildMob(mob.kind);
+          mobs.set(mob.id, entry);
+          scene.add(entry.group);
+        }
+
+        entry.group.position.set(mob.pos.x, mob.pos.y, mob.pos.z);
+        const hSpeed = Math.hypot(mob.vel.x, mob.vel.z);
+        if (hSpeed > 0.01) entry.group.rotation.y = Math.atan2(mob.vel.x, mob.vel.z);
+
+        // walk cycle: advance the phase with horizontal speed, otherwise decay
+        // the swing back to neutral (a stopped mob settles, not mid-stride)
+        if (hSpeed > 0.01 && step > 0) {
+          entry.phase += hSpeed * step * WALK_FREQ;
+          entry.swing = Math.sin(entry.phase) * SWING_AMPLITUDE;
+        } else if (step > 0) {
+          entry.swing *= Math.pow(0.01, step); // ≈0 after ~1 s at rest
+          if (Math.abs(entry.swing) < 1e-4) {
+            entry.swing = 0;
+            entry.phase = 0;
+          }
+        }
+        entry.legL.rotation.x = entry.swing;
+        entry.legR.rotation.x = -entry.swing;
+        entry.armL.rotation.x = -entry.swing;
+        entry.armR.rotation.x = entry.swing;
+
+        // hit flash: white emissive for FLASH_SEC, then back to flat color
+        entry.flash = Math.max(0, entry.flash - step);
+        const emissive = entry.flash > 0 ? 0xffffff : 0x000000;
+        for (const m of entry.materials) m.emissive.setHex(emissive);
+      }
+      for (const id of [...mobs.keys()]) if (!live.has(id)) removeMob(id);
+    },
+
+    syncArrows(list) {
+      const live = new Set<number>();
+      for (const a of list) {
+        live.add(a.id);
+        let mesh = arrows.get(a.id);
+        if (!mesh) {
+          mesh = new THREE.Mesh(arrowGeo, arrowMat);
+          arrows.set(a.id, mesh);
+          scene.add(mesh);
+        }
+        mesh.position.set(a.pos.x, a.pos.y, a.pos.z);
+        const speed = Math.hypot(a.vel.x, a.vel.y, a.vel.z);
+        if (speed > 1e-6) {
+          // box depth is along +Z, so point +Z down the velocity vector
+          mesh.lookAt(a.pos.x + a.vel.x, a.pos.y + a.vel.y, a.pos.z + a.vel.z);
+        }
+      }
+      for (const [id, mesh] of arrows) {
+        if (live.has(id)) continue;
+        scene.remove(mesh);
+        arrows.delete(id); // shared geometry/material stay cached
+      }
+    },
+
+    flashMob(id) {
+      const entry = mobs.get(id);
+      if (entry) entry.flash = FLASH_SEC;
+    },
+
+    dispose() {
+      for (const id of [...mobs.keys()]) removeMob(id);
+      for (const mesh of arrows.values()) scene.remove(mesh);
+      arrows.clear();
+      for (const geom of solids) geom.dispose();
+      arrowMat.dispose();
     },
   };
 }
