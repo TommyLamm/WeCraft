@@ -13,6 +13,7 @@ import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 import { createVitals, damage, exhaust, tickVitals, isDead as isPlayerDead, fallDamage, type Vitals } from './player/survival';
+import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
   placeTarget,
@@ -106,9 +107,11 @@ const JUMP_EXHAUST = 0.15;
 /** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
 let attackCd = 0;
 /** Apex (peak y) of the current airborne span for fall damage (plan 9.1) —
- *  null while grounded/flying/in water; physics.ts exposes only `onGround`,
- *  so the peak is tracked here (see the fall-damage block in the game loop). */
-let fallStartY: number | null = null;
+ *  pure lifecycle in player/fallstate.ts: advanced every frame by `updateFall`
+ *  from a PRE-physics y capture, and reset via `resetFall()` on respawn (a
+ *  stale apex surviving into a new session would one-shot kill the spawn fall
+ *  — review Critical #1). */
+let fallState: FallState = resetFall();
 
 // ---- 物品掉落（Task 7）----
 // Pure entities stepped each frame while playing; survival breaks spawn them
@@ -431,6 +434,12 @@ function setState(next: GameState): void {
 function resetPlayerToSpawn(): void {
   const sp = spawnPoint();
   player = createPlayer(sp.x, sp.y, sp.z);
+  // Session-scoped state (review Critical #1 + Minor #5): a stale apex from
+  // quitting mid-fall would turn the fresh spawn's drop into a one-shot kill
+  // (max(staleApex, y)), and a carried attackCd would swallow the next
+  // session's first swing.
+  fallState = resetFall();
+  attackCd = 0;
 }
 
 function startGame(): void {
@@ -498,30 +507,32 @@ gs.renderer.setAnimationLoop(() => {
     // so neither launches the 0.15-exhaust jump charge.
     const jumpStarted =
       input.state.jump && player.onGround && !player.flying && !player.inWater;
+    // Pre-physics capture (review Important #2): the fall apex must keep the
+    // EXACT pre-fall y — reading it after stepPlayer had already lost g·dt² ≈
+    // 0.009 on the first airborne frame, which made every integer-height fall
+    // deal 1 less than spec (floor(D−ε−3) = D−4).
+    const preStepY = player.position.y;
     stepPlayer(player, input.state, world, dt);
 
-    // ---- Fall damage (plan 9.1) ----
-    // physics.ts exposes only `onGround` — no built-in fall distance — so the
-    // airborne apex is tracked here: airborne → remember the peak y; landing →
-    // fallDamage(peak − y), charged in survival only (creative is exempt;
-    // vitals is null there too, the mode guard keeps the intent explicit).
-    // Plan 9.1 "landing on water/ground decides resetFall": water contact and
-    // flight clear the apex WITHOUT damage; hops under 3 blocks are absorbed
-    // by fallDamage itself. A kill is picked up by the death check in the
-    // vitals block below.
-    if (player.flying || player.inWater) {
-      fallStartY = null; // not a fall — clear the apex
-    } else if (player.onGround) {
-      if (fallStartY !== null) {
-        const amount = fallDamage(fallStartY - player.position.y);
-        fallStartY = null;
-        if (currentMode === 'survival' && amount > 0 && vitals) {
-          setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
-        }
-      }
-    } else {
-      // airborne: track the peak (a jump's up-phase nets ~0 on landing)
-      fallStartY = Math.max(fallStartY ?? player.position.y, player.position.y);
+    // ---- Fall damage (plan 9.1) — apex lifecycle in player/fallstate.ts ----
+    // Contract: airborne → track the peak; grounded landing → distance = peak −
+    // landed y; water/flight clear the apex WITHOUT damage (plan 9.1
+    // "landing on water/ground decides resetFall"); hops under 3 blocks are
+    // absorbed by fallDamage itself. Charged in survival only (creative is
+    // exempt; vitals is null there too — the mode guard keeps the intent
+    // explicit). A kill is picked up by the death check in the vitals block.
+    const fall = updateFall(
+      fallState,
+      preStepY,
+      player.position.y,
+      player.onGround,
+      player.flying,
+      player.inWater,
+    );
+    fallState = fall.fall;
+    if (fall.distance !== null && currentMode === 'survival' && vitals) {
+      const amount = fallDamage(fall.distance);
+      if (amount > 0) setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
     }
 
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
@@ -582,146 +593,152 @@ gs.renderer.setAnimationLoop(() => {
       }
     }
 
-    // spawn tick: every 5 s → night + cap + surface (8.5)
-    spawnAcc += dt;
-    if (spawnAcc >= SPAWN_INTERVAL_SEC) {
-      spawnAcc = 0;
-      const before = mobs.length;
-      spawnTick();
-      if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
-    }
+    // Review Minor #6: a death this frame must skip the rest of the playing
+    // tail (spawn tick / attack / dig / place) — the shared render tail below
+    // the state chain still runs, so the world freezes behind the (Task 10)
+    // death screen instead of processing one more gameplay frame.
+    if (state === 'playing') {
+      // spawn tick: every 5 s → night + cap + surface (8.5)
+      spawnAcc += dt;
+      if (spawnAcc >= SPAWN_INTERVAL_SEC) {
+        spawnAcc = 0;
+        const before = mobs.length;
+        spawnTick();
+        if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
+      }
 
-    // 相機（first-person eye；F5 加 third-person offset）
-    const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
-    gs.camera.position.set(eye.x, eye.y, eye.z);
-    gs.camera.rotation.order = 'YXZ';
-    gs.camera.rotation.y = player.yaw;
-    gs.camera.rotation.x = player.pitch;
-    gs.camera.rotation.z = 0; // defensive: never let residue become roll
-    const back = 4;
-    if (thirdPerson) {
-      gs.camera.position.x -= Math.sin(player.yaw) * back;
-      gs.camera.position.z -= Math.cos(player.yaw) * back;
-      gs.camera.position.y += 0.5;
-    }
+      // 相機（first-person eye；F5 加 third-person offset）
+      const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
+      gs.camera.position.set(eye.x, eye.y, eye.z);
+      gs.camera.rotation.order = 'YXZ';
+      gs.camera.rotation.y = player.yaw;
+      gs.camera.rotation.x = player.pitch;
+      gs.camera.rotation.z = 0; // defensive: never let residue become roll
+      const back = 4;
+      if (thirdPerson) {
+        gs.camera.position.x -= Math.sin(player.yaw) * back;
+        gs.camera.position.z -= Math.cos(player.yaw) * back;
+        gs.camera.position.y += 0.5;
+      }
 
-    // 挖掘/放置：crosshair tracks the camera ray — in third person origin must be
-    // camera.position (not the eye) with reach extended by the back-offset
-    const dir = { x: 0, y: 0, z: 0 };
-    dir.x = -Math.sin(player.yaw) * Math.cos(player.pitch);
-    dir.y = Math.sin(player.pitch);
-    dir.z = -Math.cos(player.yaw) * Math.cos(player.pitch);
-    const rayOrigin = thirdPerson
-      ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
-      : eye;
-    // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
-    const reach = reachFor(currentMode) + (thirdPerson ? back : 0);
-    const hit = raycast(world, rayOrigin, dir, reach);
-    // Melee reach (plan: "ray hits mob within 3.5 blocks") is its own constant —
-    // the block reach above still governs dig/place. The third-person camera
-    // back-offset is added with the same offset logic as block reach, so the
-    // effective reach from the eye stays 3.5 in both views.
-    const meleeReach = MELEE_REACH + (thirdPerson ? back : 0);
+      // 挖掘/放置：crosshair tracks the camera ray — in third person origin must be
+      // camera.position (not the eye) with reach extended by the back-offset
+      const dir = { x: 0, y: 0, z: 0 };
+      dir.x = -Math.sin(player.yaw) * Math.cos(player.pitch);
+      dir.y = Math.sin(player.pitch);
+      dir.z = -Math.cos(player.yaw) * Math.cos(player.pitch);
+      const rayOrigin = thirdPerson
+        ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
+        : eye;
+      // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
+      const reach = reachFor(currentMode) + (thirdPerson ? back : 0);
+      const hit = raycast(world, rayOrigin, dir, reach);
+      // Melee reach (plan: "ray hits mob within 3.5 blocks") is its own constant —
+      // the block reach above still governs dig/place. The third-person camera
+      // back-offset is added with the same offset logic as block reach, so the
+      // effective reach from the eye stays 3.5 in both views.
+      const meleeReach = MELEE_REACH + (thirdPerson ? back : 0);
 
-    // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
-    // Same origin/dir as the block raycast above, but the 3.5-block melee
-    // reach; works in BOTH modes (mobs exist regardless of mode once spawned).
-    // The 0.6 s cooldown paces repeat hits and — while it runs — keeps a mob
-    // under the crosshair from being dug through to the block behind it
-    // (attackMob/hitMobId are pure; kill removal + mobs-changed follow the
-    // Task 8 filter pattern).
-    attackCd = Math.max(0, attackCd - dt);
-    let attacking = false;
-    if (input.state.dig) {
-      if (attackCd > 0) {
-        attacking = hitMobId(mobs, rayOrigin, dir, meleeReach) !== null; // query only, no damage
-      } else {
-        const heldStack = hotbar[selected];
-        const atk = attackMob(
-          mobs,
-          rayOrigin,
-          dir,
-          meleeReach,
-          toolDamage(heldStack?.item ?? null),
-          dir, // knockback along the look direction (damageMob normalizes XZ)
-        );
-        if (atk.hitId !== null) {
-          attacking = true;
-          mobs = atk.mobs;
-          attackCd = ATTACK_COOLDOWN_SEC;
-          mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
-          const beforeKill = mobs.length;
-          mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
-          if (mobs.length !== beforeKill) bus.emit('mobs-changed', { count: mobs.length });
+      // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
+      // Same origin/dir as the block raycast above, but the 3.5-block melee
+      // reach; works in BOTH modes (mobs exist regardless of mode once spawned).
+      // The 0.6 s cooldown paces repeat hits and — while it runs — keeps a mob
+      // under the crosshair from being dug through to the block behind it
+      // (attackMob/hitMobId are pure; kill removal + mobs-changed follow the
+      // Task 8 filter pattern).
+      attackCd = Math.max(0, attackCd - dt);
+      let attacking = false;
+      if (input.state.dig) {
+        if (attackCd > 0) {
+          attacking = hitMobId(mobs, rayOrigin, dir, meleeReach) !== null; // query only, no damage
+        } else {
+          const heldStack = hotbar[selected];
+          const atk = attackMob(
+            mobs,
+            rayOrigin,
+            dir,
+            meleeReach,
+            toolDamage(heldStack?.item ?? null),
+            dir, // knockback along the look direction (damageMob normalizes XZ)
+          );
+          if (atk.hitId !== null) {
+            attacking = true;
+            mobs = atk.mobs;
+            attackCd = ATTACK_COOLDOWN_SEC;
+            mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
+            const beforeKill = mobs.length;
+            mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
+            if (mobs.length !== beforeKill) bus.emit('mobs-changed', { count: mobs.length });
+          }
         }
       }
-    }
 
-    if (hit && input.state.dig && !attacking) {
-      const id = world.getBlock(hit.x, hit.y, hit.z);
-      // digStep owns the mode branch (creative ignores `speed` → instant break;
-      // survival is timed × toolSpeed) — no mode check needed here (review #4)
-      const speed = toolSpeed(id, hotbar[selected]);
-      if (digStep(currentMode, dig, id, hit, dt, speed)) {
-        world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
-        // Task 7: the broken block becomes a world drop (survival only; creative
-        // spawns nothing). Inventory no longer changes here — pickups do that.
-        const spawned = spawnBlockDrop(drops, currentMode, id, {
-          x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
-        });
-        if (spawned.length !== drops.length) bus.emit('drops-changed', {});
-        drops = spawned;
-        dig.reset(); // post-break bookkeeping — clears survival progress after isDone
+      if (hit && input.state.dig && !attacking) {
+        const id = world.getBlock(hit.x, hit.y, hit.z);
+        // digStep owns the mode branch (creative ignores `speed` → instant break;
+        // survival is timed × toolSpeed) — no mode check needed here (review #4)
+        const speed = toolSpeed(id, hotbar[selected]);
+        if (digStep(currentMode, dig, id, hit, dt, speed)) {
+          world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+          // Task 7: the broken block becomes a world drop (survival only; creative
+          // spawns nothing). Inventory no longer changes here — pickups do that.
+          const spawned = spawnBlockDrop(drops, currentMode, id, {
+            x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
+          });
+          if (spawned.length !== drops.length) bus.emit('drops-changed', {});
+          drops = spawned;
+          dig.reset(); // post-break bookkeeping — clears survival progress after isDone
+        }
+      } else {
+        dig.reset();
       }
-    } else {
-      dig.reset();
-    }
 
-    // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
-    const wantPlace = input.consumePlace();
-    if (hit && wantPlace) {
-      const t = placeTarget(hit);
-      const held = hotbar[selected];
-      const placeId = held ? blockFromItem(held.item) : null;
-      if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-        world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+      // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
+      const wantPlace = input.consumePlace();
+      if (hit && wantPlace) {
+        const t = placeTarget(hit);
+        const held = hotbar[selected];
+        const placeId = held ? blockFromItem(held.item) : null;
+        if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
+          world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+        }
       }
-    }
 
-    // UI 脈衝
-    if (input.consumeToggleDebug()) showDebug = !showDebug;
-    if (input.consumeToggleView()) thirdPerson = !thirdPerson;
-    if (input.consumeToggleInventory()) {
-      setState('inventory');
-      document.exitPointerLock?.();
-    }
+      // UI 脈衝
+      if (input.consumeToggleDebug()) showDebug = !showDebug;
+      if (input.consumeToggleView()) thirdPerson = !thirdPerson;
+      if (input.consumeToggleInventory()) {
+        setState('inventory');
+        document.exitPointerLock?.();
+      }
 
-    const inSlot = input.state.slot;
-    if (inSlot !== selected) {
-      selected = inSlot;
-      hud.setSelected(selected);
-      const held = hotbar[selected];
-      hud.showItemName(held ? stackName(held.item) : null);
-      clearTimeout(itemNameTimer);
-      itemNameTimer = setTimeout(() => hud.showItemName(null), 1200);
-    }
+      const inSlot = input.state.slot;
+      if (inSlot !== selected) {
+        selected = inSlot;
+        hud.setSelected(selected);
+        const held = hotbar[selected];
+        hud.showItemName(held ? stackName(held.item) : null);
+        clearTimeout(itemNameTimer);
+        itemNameTimer = setTimeout(() => hud.showItemName(null), 1200);
+      }
 
-    if (showDebug) {
-      const p = player.position;
-      hud.setDebug([
-        `WeCraft (dev)  ${fps} fps`,
-        `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
-        `Block: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`,
-        `Chunks: ${world.chunks.size}`,
-        `Seed: ${settings.seed}`,
-        `Mode: ${currentMode}${player.flying ? ' (flying)' : ''}`,
-      ]);
-    } else {
-      hud.setDebug(null);
-    }
+      if (showDebug) {
+        const p = player.position;
+        hud.setDebug([
+          `WeCraft (dev)  ${fps} fps`,
+          `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
+          `Block: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`,
+          `Chunks: ${world.chunks.size}`,
+          `Seed: ${settings.seed}`,
+          `Mode: ${currentMode}${player.flying ? ' (flying)' : ''}`,
+        ]);
+      } else {
+        hud.setDebug(null);
+      }
 
-    refreshQueues();
-    processQueues();
+      refreshQueues();
+      processQueues();
+    }
   } else if (state === 'title') {
     hud.setDebug(null);
     // 標題畫面：慢速環繞出生點（y=96 / lookAt 82 per Task 11 deviation — plan's 75 sits inside terrain）

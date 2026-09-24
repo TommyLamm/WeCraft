@@ -84,9 +84,12 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
 // ---- Melee combat (Task 9) ----
 
 /** Melee damage dealt per hit with `heldItem` (a hotbar item id; null = bare
- *  hand) — the settled Task 9 table: swords 4 (wooden) / 5 (stone), pickaxes 2,
- *  axes 3, everything else (hand, apple, stick, blocks) 1. Pure and item-only
- *  like `toolSpeed`; combat applies in both game modes (mobs exist regardless). */
+ *  hand): swords 4 (wooden) / 5 (stone), pickaxes 2, axes 3. Bare hand (and
+ *  apple/stick/blocks): the plan's damage table says 2, this ships 1 — the
+ *  Task 9 call was Minecraft parity (fist = 1), recorded here honestly since
+ *  the plan text still reads 2 (the plan doc itself is orchestrator-owned and
+ *  was not edited). Pure and item-only like `toolSpeed`; combat applies in
+ *  both game modes (mobs exist regardless). */
 export function toolDamage(heldItem: ItemId | null): number {
   switch (heldItem) {
     case 'wooden_sword':
