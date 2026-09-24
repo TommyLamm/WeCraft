@@ -67,6 +67,16 @@
   font-size: 10px;
   color: rgba(255, 255, 255, 0.5);
 }
+.ui-slot .count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
 .ui-item-name {
   position: absolute;
   left: 50%;

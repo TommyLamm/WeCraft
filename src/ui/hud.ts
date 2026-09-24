@@ -1,10 +1,10 @@
 import '../ui/ui.css';
-import type { BlockId } from '../world/blocks';
-import { ICON_PX, getContext2d, getBlockIcon } from './icons';
+import type { ItemStack } from '../core/items';
+import { ICON_PX, getContext2d, itemIcon } from './icons';
 
 export interface Hud {
   root: HTMLElement;
-  setHotbar(slots: BlockId[], selected: number): void;
+  setHotbar(slots: Array<ItemStack | null>, selected: number): void;
   setSelected(index: number): void;
   setDebug(lines: string[] | null): void;
   showItemName(name: string | null): void;
@@ -25,7 +25,9 @@ export function createHud(uiRoot: HTMLElement): Hud {
     num.className = 'num';
     num.textContent = String(i + 1);
     const icon = document.createElement('canvas');
-    s.append(num, icon);
+    const count = document.createElement('span');
+    count.className = 'count';
+    s.append(num, icon, count);
     hotbar.appendChild(s);
     slots.push(s);
   }
@@ -39,30 +41,41 @@ export function createHud(uiRoot: HTMLElement): Hud {
 
   uiRoot.append(crosshair, hotbar, itemName, debug);
 
-  const slotBlocks: Array<BlockId | undefined> = new Array(9).fill(undefined);
+  const slotStacks: Array<ItemStack | null> = new Array(9).fill(null);
   let lastDebug: string | null = null; // null = hidden
 
-  const drawSlotIcon = (canvas: HTMLCanvasElement, id: BlockId) => {
+  const sameStack = (
+    a: ItemStack | null | undefined,
+    b: ItemStack | null | undefined,
+  ): boolean => {
+    if (!a || !b) return !a && !b;
+    return a.item === b.item && a.count === b.count;
+  };
+
+  const drawSlotIcon = (canvas: HTMLCanvasElement, stack: ItemStack | null) => {
     const ctx = getContext2d(canvas);
     if (!ctx) return; // jsdom has no 2d context; browser draws icons
     canvas.width = ICON_PX;
     canvas.height = ICON_PX;
+    if (!stack) return; // empty slot: resizing above already cleared the canvas
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(getBlockIcon(id), 0, 0);
+    ctx.drawImage(itemIcon(stack.item), 0, 0);
   };
 
   return {
     root: uiRoot,
     setHotbar(list, selected) {
-      list.forEach((id, i) => {
+      for (let i = 0; i < slots.length; i++) {
         const s = slots[i];
-        if (!s) return;
+        const stack = list[i] ?? null;
         s.classList.toggle('selected', i === selected);
-        if (slotBlocks[i] === id) return;
-        slotBlocks[i] = id;
+        if (sameStack(slotStacks[i], stack)) continue;
+        slotStacks[i] = stack;
         const canvas = s.querySelector('canvas');
-        if (canvas) drawSlotIcon(canvas, id);
-      });
+        if (canvas) drawSlotIcon(canvas, stack);
+        const badge = s.querySelector('.count');
+        if (badge) badge.textContent = stack && stack.count > 1 ? String(stack.count) : '';
+      }
     },
     setSelected(index) {
       slots.forEach((s, i) => s.classList.toggle('selected', i === index));

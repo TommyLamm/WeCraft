@@ -2,8 +2,18 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHud } from './hud';
 import { createMenus } from './menus';
 import { createInventory } from './inventory';
-import { HOTBAR_DEFAULT, PLACEABLE, BLOCK } from '../world/blocks';
+import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
+import { itemFromBlock, maxStack, type ItemStack } from '../core/items';
 import { loadSettings } from '../core/settings';
+
+/** Build the stack form of a block list (every placeable block has an item). */
+function stacksOf(blocks: BlockId[]): Array<ItemStack | null> {
+  return blocks.map((b) => {
+    const item = itemFromBlock(b);
+    return item ? { item, count: maxStack(item) } : null;
+  });
+}
+const DEFAULT_STACKS = stacksOf(HOTBAR_DEFAULT);
 
 beforeEach(() => {
   localStorage.clear();
@@ -23,7 +33,7 @@ describe('ui smoke', () => {
   it('createHud builds hotbar with 9 slots', () => {
     const root = document.getElementById('ui-root')!;
     const hud = createHud(root);
-    hud.setHotbar(HOTBAR_DEFAULT, 0);
+    hud.setHotbar(DEFAULT_STACKS, 0);
     expect(root.querySelectorAll('.ui-slot').length).toBe(9);
     expect(root.querySelectorAll('.ui-slot.selected').length).toBe(1);
     hud.dispose();
@@ -32,10 +42,10 @@ describe('ui smoke', () => {
   it('setHotbar re-renders when a slot block changes', () => {
     const root = document.getElementById('ui-root')!;
     const hud = createHud(root);
-    hud.setHotbar(HOTBAR_DEFAULT, 0);
+    hud.setHotbar(DEFAULT_STACKS, 0);
     expect(root.querySelectorAll('.ui-slot').length).toBe(9);
-    const next = [...HOTBAR_DEFAULT];
-    next[0] = BLOCK.BEDROCK;
+    const next = stacksOf(HOTBAR_DEFAULT);
+    next[0] = { item: itemFromBlock(BLOCK.BEDROCK)!, count: 64 };
     hud.setHotbar(next, 0);
     expect(root.querySelectorAll('.ui-slot').length).toBe(9);
     expect(root.querySelectorAll('.ui-slot.selected').length).toBe(1);
@@ -44,10 +54,23 @@ describe('ui smoke', () => {
     hud.dispose();
   });
 
+  it('setHotbar renders stack counts (only when > 1)', () => {
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    const next = stacksOf(HOTBAR_DEFAULT);
+    next[0] = { item: 'grass', count: 64 };
+    next[1] = { item: 'dirt', count: 1 };
+    hud.setHotbar(next, 0);
+    const badges = [...root.querySelectorAll('.ui-slot .count')].map((e) => e.textContent);
+    expect(badges[0]).toBe('64');
+    expect(badges[1]).toBe('');
+    hud.dispose();
+  });
+
   it('dispose clears hud DOM', () => {
     const root = document.getElementById('ui-root')!;
     const hud = createHud(root);
-    hud.setHotbar(HOTBAR_DEFAULT, 0);
+    hud.setHotbar(DEFAULT_STACKS, 0);
     expect(root.querySelectorAll('*').length).toBeGreaterThan(0);
     hud.dispose();
     expect(root.querySelectorAll('*').length).toBe(0);
@@ -66,7 +89,7 @@ describe('ui smoke', () => {
   it('inventory open/close', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
-    inv.open(HOTBAR_DEFAULT, 0, () => {});
+    inv.open(DEFAULT_STACKS, 0, () => {});
     expect(inv.isOpen()).toBe(true);
     expect(root.querySelector('.ui-inv-backdrop')).not.toBeNull();
     inv.close();
@@ -91,16 +114,17 @@ describe('hud debug overlay', () => {
 });
 
 describe('inventory pick', () => {
-  it('clicking a placeable calls onPick with selected slot', () => {
+  it('clicking a placeable calls onPick with a full stack for the selected slot', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
     const onPick = vi.fn();
-    inv.open(HOTBAR_DEFAULT, 2, onPick);
+    inv.open(DEFAULT_STACKS, 2, onPick);
     const slot = root.querySelector('.ui-inv-grid .ui-slot') as HTMLElement;
     expect(slot).not.toBeNull();
     expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(PLACEABLE.length);
     slot.click();
-    expect(onPick).toHaveBeenCalledWith(2, PLACEABLE[0]);
+    const picked = itemFromBlock(PLACEABLE[0])!;
+    expect(onPick).toHaveBeenCalledWith(2, { item: picked, count: maxStack(picked) });
     inv.close();
   });
 });
@@ -110,7 +134,7 @@ describe('inventory backdrop close', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
     const onClose = vi.fn();
-    inv.open(HOTBAR_DEFAULT, 0, () => {}, onClose);
+    inv.open(DEFAULT_STACKS, 0, () => {}, onClose);
     const panel = root.querySelector('.ui-inventory') as HTMLElement;
     panel.click();
     expect(onClose).not.toHaveBeenCalled();

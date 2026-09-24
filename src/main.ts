@@ -6,7 +6,8 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast } from './world/raycast';
-import { BLOCK, getBlockDef, HOTBAR_DEFAULT, type BlockId } from './world/blocks';
+import { BLOCK, HOTBAR_DEFAULT, type BlockId } from './world/blocks';
+import { blockFromItem, itemFromBlock, maxStack, stackName, type ItemStack } from './core/items';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 import { DigProgress, placeTarget, canPlaceAt } from './player/interact';
@@ -32,7 +33,10 @@ const inv = createInventory(uiRoot);
 
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
-const hotbar: BlockId[] = [...HOTBAR_DEFAULT];
+const hotbar: Array<ItemStack | null> = HOTBAR_DEFAULT.map((b) => {
+  const item = itemFromBlock(b);
+  return item ? { item, count: maxStack(item) } : null; // creative: full stacks, never consumed
+});
 let selected = 0;
 let showDebug = false;
 let thirdPerson = false;
@@ -206,8 +210,8 @@ function setState(next: GameState): void {
     inv.open(
       hotbar,
       selected,
-      (slot, id) => {
-        hotbar[slot] = id;
+      (slot, stack) => {
+        hotbar[slot] = stack;
         hud.setHotbar(hotbar, selected);
       },
       // backdrop click closes: E can only fire while pointer-locked, and opening
@@ -321,8 +325,11 @@ gs.renderer.setAnimationLoop(() => {
     const wantPlace = input.consumePlace();
     if (hit && wantPlace) {
       const t = placeTarget(hit);
-      if (canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-        world.setBlock(t.x, t.y, t.z, hotbar[selected]);
+      const held = hotbar[selected];
+      const placeId = held ? blockFromItem(held.item) : null;
+      if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
+        // blockFromItem only ever yields ids taken from the block table
+        world.setBlock(t.x, t.y, t.z, placeId as BlockId);
       }
     }
 
@@ -338,7 +345,8 @@ gs.renderer.setAnimationLoop(() => {
     if (inSlot !== selected) {
       selected = inSlot;
       hud.setSelected(selected);
-      hud.showItemName(getBlockDef(hotbar[selected]).name);
+      const held = hotbar[selected];
+      hud.showItemName(held ? stackName(held.item) : null);
       clearTimeout(itemNameTimer);
       itemNameTimer = setTimeout(() => hud.showItemName(null), 1200);
     }
