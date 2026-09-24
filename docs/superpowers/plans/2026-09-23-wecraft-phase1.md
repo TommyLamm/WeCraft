@@ -12,7 +12,7 @@
 
 **範圍：** 本計畫 = spec「第一期」。血量飢餓、日夜、怪物、合成、死亡畫面（第二期）與 AO、雲、音效、粒子（第三期）**不在本計畫**。
 
-**Spec 落差備註：** spec 寫「512×512 貼圖圖集」+「貪婪網格化」。Task 11 的 `bakeAtlasUvs` 把 mesher 的 0..1 uv 烘成圖集座標（防滲色 inset）；Task 18 把面剔除 mesher 升級為貪婪網格化。圖集全程由程序生成。
+**Spec 落差備註：** spec 寫「512×512 貼圖圖集」+「貪婪網格化」。Task 11 的 `bakeAtlasUvs` 把 mesher 的 0..1 uv 烘成圖集座標（防滲色 inset）；Task 18 原定把面剔除 mesher 升級為貪婪網格化（已 wontfix：擲至第二期 greedy + texture array，見 Task 18 Deviations）。圖集全程由程序生成。
 
 ---
 
@@ -35,7 +35,7 @@ F:\Desktop\WeCraft\
     │   ├── world.ts            區塊集合、全域 get/setBlock、dirty
     │   ├── terrain.ts          程序地形（Worker 與主執行緒共用）
     │   ├── raycast.ts          voxel DDA
-    │   ├── mesher.ts           面剔除網格化（Task 18 升級貪婪）
+    │   ├── mesher.ts           面剔除網格化（原定 Task 18 升級貪婪；已 wontfix 擲至第二期，見 Task 18 Deviations）
     │   ├── worker.ts           Web Worker 入口
     │   └── worker-client.ts    佇列 + 崩潰降級
     ├── player/
@@ -3890,12 +3890,13 @@ git commit -m "feat: game state machine and full play loop"
 - Test: `src/world/mesher.test.ts`（新增案例）
 
 **Deviations (Task 18):**
-- **Decision: `wontfix: greedy-uv`** — measured FIRST (task brief decision gate), before Steps 1–3. Step 4 took the `FPS ≥ 55` branch → Step 5 downgrade route per plan 務實決策 (line 4128): face-culling mesher kept (already one draw call per chunk), greedy + texture array deferred to phase 2. Steps 1–3 (greedy tests + implementation) skipped entirely.
+- **Decision: `wontfix: greedy-uv`** — measured FIRST (task brief decision gate), before Steps 1–3. Step 4 took the `FPS ≥ 55` branch → Step 5 downgrade route per plan 「Task 18 務實決策段」: face-culling mesher kept (already one draw call per chunk), greedy + texture array deferred to phase 2. Steps 1–3 (greedy tests + implementation) skipped entirely.
 - Mesh bench (temporary vite-node script, seed 1337, view distance 10: 529 chunks generated sync, 441 meshed): avg **12.48 ms/chunk** (p50 13.72, p95 15.98, min 6.13, max 17.30); gen 1966.7 ms total; mesh 5504.9 ms total; 780,315 quads (avg 1769.4/chunk). Node v24.11.1. Bench script was temp — deleted pre-commit; numbers recorded here as the commit message's "measure meshing" record.
 - Browser FPS (real Chrome headed, RTX 5070 Ti via ANGLE/D3D11 — not SwiftShader, viewport 1920×1080 @ dpr 1, fresh profile → defaults = view distance 10 / seed 1337, pointer-locked at spawn 0.5/89/0.5, F3: `Chunks: 529`): playing-state samples over 12 s avg **133.4 fps, min 131** (in-game F3 readout: 138 fps); title-with-world-loaded avg 133.4; load phase (gen+mesh in flight) avg 133, min 130 — stable ~131–138 = display-refresh-bound, gate (≥ 55) met ~2.4×, draw/vertex bottleneck never approached so the `< 55` branch was not triggered.
 - Zero code changes: `src/world/mesher.ts`, `src/world/mesher.test.ts`, `ChunkMeshData`, `bakeAtlasUvs` untouched. Plan's greedy Step 1 tests intentionally NOT added (they gate the greedy branch only; adding them over the face mesher would be meaningless). `npm test` remains 133.
+- Phase-2 motivation carried forward: greedy is deferred, not cancelled — mesh-time alone justifies it (12.48 ms/chunk × budgetMesh 2 ≈ 25 ms worst-case streaming frame, over the 16.7 ms budget), in addition to the draw/vertex counts. Note: load-phase min 130 fps suggests the browser benches faster than the vite-node bench — don't over-trust either number in isolation.
 
-- [ ] **Step 1: 新增失敗測試**
+- [ ] **Step 1: 新增失敗測試** （**SKIPPED — see Deviations above**）
 
 ```ts
 import { it, expect, describe } from 'vitest';
@@ -3936,12 +3937,12 @@ describe('greedy meshing', () => {
 });
 ```
 
-- [ ] **Step 2: 執行確認失敗**
+- [ ] **Step 2: 執行確認失敗** （**SKIPPED — see Deviations above**）
 
 Run: `npm test`
 Expected: FAIL（現行實作為 1 quad/面，`quadCount < 80` 可能恰好過 — 若通過，先看第二案例是否仍過；兩個都過代表沒換成貪婪，繼續 Step 3 後重跑確認 quad 數明顯下降，並在測試中加入 `expect(m.quadCount).toBeLessThanOrEqual(20)` 之類的嚴格斷言鎖住行為）
 
-- [ ] **Step 3: 替換 `meshChunk` 為貪婪版本**
+- [ ] **Step 3: 替換 `meshChunk` 為貪婪版本** （**SKIPPED — see Deviations above**）
 
 在 `src/world/mesher.ts` 加入 mask 貪婪合併（每軸每切片掃一次）：
 
