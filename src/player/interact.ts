@@ -3,16 +3,26 @@ import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
-import { itemFromBlock, type ItemId, type ItemStack } from '../core/items';
-import type { GameMode, InventoryModel } from '../core/inventory';
+import type { ItemId, ItemStack } from '../core/items';
+import type { GameMode } from '../core/inventory';
+import { spawnDrop, dropItemFor, type DropEntity } from '../world/drops';
 
-/** Mined-block drop: adds 1× the block's item via inventory.add — survival only,
- *  creative skips (infinite supply no-ops inside the model). Returns overflow
- *  that did not fit; 0 when nothing was added. */
-export function collectBlockDrop(blockId: number, inventory: InventoryModel): number {
-  const item = itemFromBlock(blockId);
-  if (!item) return 0; // air/water: no item form
-  return inventory.addItem(item, 1);
+/** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
+ *  of adding straight to the inventory: survival only — creative spawns nothing
+ *  (infinite supply). Air/water have no item form and spawn nothing too.
+ *  Drop mapping via `dropItemFor` (coal_ore → coal; iron_ore stays iron_ore —
+ *  smelting-free). Pickup is proximity-based (main loop + `pickable`/`pickup`).
+ *  Returns the new drops array — unchanged (same ref) when nothing spawns. */
+export function spawnBlockDrop(
+  drops: DropEntity[],
+  mode: GameMode,
+  blockId: number,
+  pos: { x: number; y: number; z: number },
+): DropEntity[] {
+  if (mode === 'creative') return drops;
+  const item = dropItemFor(blockId);
+  if (!item) return drops;
+  return spawnDrop(drops, item, 1, pos);
 }
 
 export function getBreakTime(blockId: number): number {

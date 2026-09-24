@@ -1,5 +1,5 @@
 import './style.css';
-import { createGameScene } from './render/scene';
+import { createGameScene, createDropRenderer } from './render/scene';
 import { ChunkRenderer } from './render/chunk-renderer';
 import { drawAtlas } from './render/textures';
 import { World, chunkKey } from './world/world';
@@ -13,8 +13,10 @@ import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 import { createVitals, type Vitals } from './player/survival';
-import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop, toolSpeed, digStep } from './player/interact';
+import { DigProgress, placeTarget, canPlaceAt, spawnBlockDrop, toolSpeed, digStep } from './player/interact';
+import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
 import { createHud } from './ui/hud';
+import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
 import { createInventory } from './ui/inventory';
@@ -30,6 +32,8 @@ const gs = createGameScene(canvas);
 const settings = loadSettings();
 const world = new World();
 const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
+// Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
+const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -60,6 +64,11 @@ let showDebug = false;
 let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- 物品掉落（Task 7）----
+// Pure entities stepped each frame while playing; survival breaks spawn them
+// (spawnBlockDrop), proximity picks them up (pickable + pickup).
+let drops: DropEntity[] = [];
 
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
@@ -372,6 +381,25 @@ gs.renderer.setAnimationLoop(() => {
     // 移動
     stepPlayer(player, input.state, world, dt);
 
+    // ---- 物品掉落（Task 7）：physics → proximity pickup ----
+    const dropsBefore = drops.length;
+    drops = stepDrops(drops, dt, (x, y, z) => world.isSolid(x, y, z)); // water ≠ solid → falls through
+    if (drops.length !== dropsBefore) bus.emit('drops-changed', {}); // a drop despawned (300 s)
+    const near = pickable(drops, player.position);
+    let pickedUp = false;
+    // back-to-front: removing index i must not shift the ones still to process
+    for (let i = near.length - 1; i >= 0; i--) {
+      const idx = near[i];
+      const countBefore = drops[idx]?.count ?? 0;
+      const res = pickup(drops, idx, inventory);
+      drops = res.drops;
+      if (res.overflow < countBefore) pickedUp = true; // at least 1 item entered the inventory
+    }
+    if (pickedUp) {
+      hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
+      bus.emit('drops-changed', {});
+    }
+
     // 相機（first-person eye；F5 加 third-person offset）
     const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
     gs.camera.position.set(eye.x, eye.y, eye.z);
@@ -405,8 +433,13 @@ gs.renderer.setAnimationLoop(() => {
       const speed = toolSpeed(id, hotbar[selected]);
       if (digStep(currentMode, dig, id, hit, dt, speed)) {
         world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
-        collectBlockDrop(id, inventory); // creative: no-op; survival adds 1× (drops land in Task 7)
-        hud.setHotbar(hotbar, selected); // reflect the drop (no-op diff in creative)
+        // Task 7: the broken block becomes a world drop (survival only; creative
+        // spawns nothing). Inventory no longer changes here — pickups do that.
+        const spawned = spawnBlockDrop(drops, currentMode, id, {
+          x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
+        });
+        if (spawned.length !== drops.length) bus.emit('drops-changed', {});
+        drops = spawned;
         dig.reset(); // post-break bookkeeping — clears survival progress after isDone
       }
     } else {
@@ -472,5 +505,6 @@ gs.renderer.setAnimationLoop(() => {
     hud.setDebug(null);
   }
 
+  dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   gs.renderer.render(gs.scene, gs.camera);
 });

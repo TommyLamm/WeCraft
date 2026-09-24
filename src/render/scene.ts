@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { Vec3, DayNightColors } from '../core/daynight';
+import type { ItemId } from '../core/items';
+import type { DropEntity } from '../world/drops';
 
 export interface GameScene {
   scene: THREE.Scene;
@@ -61,6 +63,78 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
     },
     dispose() {
       renderer.dispose();
+    },
+  };
+}
+
+// ---- Task 7: item drops → billboard sprites ----
+
+/** One THREE.Sprite per drop entity, reconciled against the drops array.
+ *  Icons come from the injected `iconFor` factory (main.ts passes
+ *  `itemIcon` from ui/icons — render/ never imports ui itself); the icon
+ *  canvas is turned into a cached per-item CanvasTexture (NearestFilter, like
+ *  the chunk atlas), so block and non-block items render uniformly. */
+export interface DropRenderer {
+  /** Create/move/remove sprites to match `drops` — cheap for <50 drops, so the
+   *  loop calls it every frame. Sprites billboard by themselves; a gentle
+   *  vertical bob (sin of the drop's age) sells "loose item on the ground". */
+  syncDrops(drops: readonly DropEntity[]): void;
+  /** Remove every sprite and free textures/materials. */
+  dispose(): void;
+}
+
+export function createDropRenderer(
+  scene: THREE.Scene,
+  iconFor: (item: ItemId) => HTMLCanvasElement,
+): DropRenderer {
+  const textures = new Map<ItemId, THREE.Texture>();
+  const materials = new Map<ItemId, THREE.SpriteMaterial>();
+  const sprites = new Map<number, THREE.Sprite>();
+
+  function materialFor(item: ItemId): THREE.SpriteMaterial {
+    const cached = materials.get(item);
+    if (cached) return cached;
+    const tex = new THREE.CanvasTexture(iconFor(item));
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.SRGBColorSpace; // match the chunk-atlas convention
+    textures.set(item, tex);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.1 });
+    materials.set(item, mat);
+    return mat;
+  }
+
+  return {
+    syncDrops(drops) {
+      const live = new Set<number>();
+      for (const d of drops) {
+        live.add(d.id);
+        let sprite = sprites.get(d.id);
+        if (!sprite) {
+          sprite = new THREE.Sprite(materialFor(d.item));
+          sprite.scale.set(0.4, 0.4, 1); // ~½ block item
+          sprites.set(d.id, sprite);
+          scene.add(sprite);
+        }
+        // Sprite is centre-anchored: lift by half the scale so a grounded drop
+        // sits ON the block top instead of half-sunk into it.
+        const bob = Math.sin(d.age * 3) * 0.05;
+        sprite.position.set(d.pos.x, d.pos.y + 0.2 + bob, d.pos.z);
+      }
+      for (const [id, sprite] of sprites) {
+        if (live.has(id)) continue;
+        scene.remove(sprite);
+        sprites.delete(id); // material/texture stay cached for item reuse
+      }
+    },
+    dispose() {
+      for (const sprite of sprites.values()) scene.remove(sprite);
+      sprites.clear();
+      for (const mat of materials.values()) mat.dispose();
+      materials.clear();
+      for (const tex of textures.values()) tex.dispose();
+      textures.clear();
     },
   };
 }

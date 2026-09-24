@@ -4,7 +4,7 @@ import {
   DigProgress,
   canPlaceAt,
   placeTarget,
-  collectBlockDrop,
+  spawnBlockDrop,
   toolSpeed,
   digStep,
 } from './interact';
@@ -13,7 +13,6 @@ import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
 import { PLAYER_HEIGHT } from './physics';
-import { createInventoryModel } from '../core/inventory';
 
 describe('getBreakTime', () => {
   it('dirt faster than stone', () => {
@@ -235,31 +234,42 @@ describe('canPlaceAt', () => {
   });
 });
 
-describe('collectBlockDrop', () => {
-  it('adds 1× the block item in survival', () => {
-    const inv = createInventoryModel([null, null], 'survival');
-    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(0);
-    expect(inv.slots[0]).toEqual({ item: 'stone', count: 1 });
-    expect(collectBlockDrop(BLOCK.DIRT, inv)).toBe(0);
-    expect(inv.slots[1]).toEqual({ item: 'dirt', count: 1 });
+describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => {
+  const at = { x: 5.5, y: 70.5, z: 5.5 }; // block centre = break pos + 0.5
+
+  it('survival spawns 1× the block item at the given position', () => {
+    const drops = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toMatchObject({
+      item: 'stone',
+      count: 1,
+      pos: at,
+      pickupDelay: 0.5,
+      age: 0,
+    });
   });
 
-  it('skips adding in creative (infinite supply)', () => {
-    const inv = createInventoryModel([null], 'creative');
-    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(0);
-    expect(inv.slots[0]).toBeNull();
+  it('spawns nothing in creative (infinite supply, no world drops)', () => {
+    expect(spawnBlockDrop([], 'creative', BLOCK.STONE, at)).toHaveLength(0);
+    expect(spawnBlockDrop([], 'creative', BLOCK.DIRT, at)).toHaveLength(0);
   });
 
   it('adds nothing for blocks without an item form (air, water)', () => {
-    const inv = createInventoryModel([null], 'survival');
-    expect(collectBlockDrop(BLOCK.AIR, inv)).toBe(0);
-    expect(collectBlockDrop(BLOCK.WATER, inv)).toBe(0);
-    expect(inv.slots[0]).toBeNull();
+    expect(spawnBlockDrop([], 'survival', BLOCK.AIR, at)).toHaveLength(0);
+    expect(spawnBlockDrop([], 'survival', BLOCK.WATER, at)).toHaveLength(0);
   });
 
-  it('returns overflow when the inventory is full', () => {
-    const inv = createInventoryModel([{ item: 'stone', count: 64 }], 'survival');
-    expect(collectBlockDrop(BLOCK.STONE, inv)).toBe(1);
-    expect(inv.countItem('stone')).toBe(64);
+  it('coal_ore drops coal; iron_ore stays iron_ore (smelting-free)', () => {
+    expect(spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at)[0].item).toBe('coal');
+    expect(spawnBlockDrop([], 'survival', BLOCK.IRON_ORE, at)[0].item).toBe('iron_ore');
+  });
+
+  it('appends to existing drops without mutating the input array', () => {
+    const first = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
+    const second = spawnBlockDrop(first, 'survival', BLOCK.DIRT, at);
+    expect(first).toHaveLength(1); // input untouched
+    expect(second).toHaveLength(2);
+    expect(second[0]).toBe(first[0]); // existing entities kept as-is
+    expect(second[1].id).not.toBe(second[0].id);
   });
 });
