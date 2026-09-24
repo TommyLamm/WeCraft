@@ -116,6 +116,12 @@ export function createDropRenderer(
           sprite.scale.set(0.4, 0.4, 1); // ~½ block item
           sprites.set(d.id, sprite);
           scene.add(sprite);
+        } else if (sprite.material !== materialFor(d.item)) {
+          // Important #1: spawnDrop's max+1 reuses a removed id when pickup/
+          // despawn ran earlier in the SAME frame — no empty sync intervenes,
+          // so without this refresh the sprite would show the old item's icon.
+          // materialFor is a Map hit when cached → cheap per frame.
+          sprite.material = materialFor(d.item);
         }
         // Sprite is centre-anchored: lift by half the scale so a grounded drop
         // sits ON the block top instead of half-sunk into it.

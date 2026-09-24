@@ -385,19 +385,25 @@ gs.renderer.setAnimationLoop(() => {
     const dropsBefore = drops.length;
     drops = stepDrops(drops, dt, (x, y, z) => world.isSolid(x, y, z)); // water ≠ solid → falls through
     if (drops.length !== dropsBefore) bus.emit('drops-changed', {}); // a drop despawned (300 s)
-    const near = pickable(drops, player.position);
-    let pickedUp = false;
-    // back-to-front: removing index i must not shift the ones still to process
-    for (let i = near.length - 1; i >= 0; i--) {
-      const idx = near[i];
-      const countBefore = drops[idx]?.count ?? 0;
-      const res = pickup(drops, idx, inventory);
-      drops = res.drops;
-      if (res.overflow < countBefore) pickedUp = true; // at least 1 item entered the inventory
-    }
-    if (pickedUp) {
-      hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
-      bus.emit('drops-changed', {});
+    // Creative guard (review Minor #6): creative never SPAWNS drops, but after a
+    // mid-game survival→creative switch ground drops exist — and addItem's
+    // creative no-op (0) would read as "fully taken", silently deleting them.
+    // Skipping the attempt keeps them lying around for a switch back.
+    if (currentMode !== 'creative') {
+      const near = pickable(drops, player.position);
+      let pickedUp = false;
+      // back-to-front: removing index i must not shift the ones still to process
+      for (let i = near.length - 1; i >= 0; i--) {
+        const idx = near[i];
+        const countBefore = drops[idx]?.count ?? 0;
+        const res = pickup(drops, idx, inventory);
+        drops = res.drops;
+        if (res.overflow < countBefore) pickedUp = true; // at least 1 item entered the inventory
+      }
+      if (pickedUp) {
+        hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
+        bus.emit('drops-changed', {});
+      }
     }
 
     // 相機（first-person eye；F5 加 third-person offset）

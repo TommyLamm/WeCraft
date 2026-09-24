@@ -250,13 +250,19 @@ describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => 
   });
 
   it('spawns nothing in creative (infinite supply, no world drops)', () => {
-    expect(spawnBlockDrop([], 'creative', BLOCK.STONE, at)).toHaveLength(0);
-    expect(spawnBlockDrop([], 'creative', BLOCK.DIRT, at)).toHaveLength(0);
+    // Assert against a NON-empty array: a `return []` bug here would wipe every
+    // live drop on each creative break — same-ref is the real contract.
+    const existing = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
+    expect(spawnBlockDrop(existing, 'creative', BLOCK.STONE, at)).toBe(existing);
+    expect(spawnBlockDrop(existing, 'creative', BLOCK.DIRT, at)).toBe(existing);
+    expect(existing).toHaveLength(1); // input left intact
   });
 
   it('adds nothing for blocks without an item form (air, water)', () => {
-    expect(spawnBlockDrop([], 'survival', BLOCK.AIR, at)).toHaveLength(0);
-    expect(spawnBlockDrop([], 'survival', BLOCK.WATER, at)).toHaveLength(0);
+    const existing = spawnBlockDrop([], 'survival', BLOCK.DIRT, at);
+    expect(spawnBlockDrop(existing, 'survival', BLOCK.AIR, at)).toBe(existing);
+    expect(spawnBlockDrop(existing, 'survival', BLOCK.WATER, at)).toBe(existing);
+    expect(existing).toHaveLength(1);
   });
 
   it('coal_ore drops coal; iron_ore stays iron_ore (smelting-free)', () => {

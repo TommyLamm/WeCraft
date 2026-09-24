@@ -71,12 +71,15 @@ describe('spawnDrop', () => {
   });
 
   it('pops upward with a small random horizontal velocity', () => {
+    let sawSpread = false; // teeth: P(all 25 draws within ±0.5) = (1/3)^25 ≈ 1e-12
     for (let i = 0; i < 25; i++) {
       const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 });
       expect(d.vel.y).toBe(3); // pop up
       expect(Math.abs(d.vel.x)).toBeLessThanOrEqual(1.5);
       expect(Math.abs(d.vel.z)).toBeLessThanOrEqual(1.5);
+      if (Math.abs(d.vel.x) > 0.5) sawSpread = true;
     }
+    expect(sawSpread).toBe(true); // the range is actually used, not stuck near 0
   });
 });
 

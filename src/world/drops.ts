@@ -4,7 +4,8 @@ import { BLOCK } from './blocks';
 
 // ---- Tuning constants (Task 7) ----
 
-/** Downward acceleration, blocks/s². */
+/** Downward acceleration, blocks/s² — Minecraft-like: dropped items fall
+ *  slower than players do (player physics uses 32). */
 export const GRAVITY = 20;
 /** Seconds a fresh drop ignores pickup — lets the block-break pop land first. */
 export const SPAWN_PICKUP_DELAY = 0.5;
@@ -87,8 +88,9 @@ export function spawnDrop(
  *
  *  `isSolidAt(x, y, z)` is injected (no World import): pass the same notion of
  *  "solid" the player physics uses — water is NOT solid, so drops fall through.
- *  Horizontal block collision is intentionally not modelled: the drag stops a
- *  pop within ~½ block, well short of typical walls. */
+ *  Horizontal block collision is intentionally not modelled: drag caps a pop's
+ *  total travel at ≈0.65 blocks, so drops usually settle right near the break
+ *  face — an occasional partial clip into a wall is cosmetic. */
 export function stepDrops(
   drops: readonly DropEntity[],
   dt: number,
@@ -173,9 +175,10 @@ export function pickable(
  *  - otherwise            → partial: the entity stays with `count = overflow`.
  *
  *  Returns `{ drops, overflow }` with a NEW array in every branch (invalid
- *  index → no-op, overflow 0). Creative note: `addItem` no-ops returning 0
- *  there, which reads as "fully taken" — acceptable because creative never
- *  spawns drops (see spawnBlockDrop). */
+ *  index → no-op, overflow 0). Creative caveat: `addItem` no-ops returning 0
+ *  there, which reads as "fully taken" and WOULD delete ground drops — so
+ *  main.ts never attempts pickup while creative (guard at the call site),
+ *  keeping drops intact across a mid-game survival→creative switch. */
 export function pickup(
   drops: readonly DropEntity[],
   idx: number,
