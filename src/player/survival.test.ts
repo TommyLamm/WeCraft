@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createVitals, damage, heal, eat, exhaust, starve, tickVitals, isDead } from './survival';
 import type { Vitals } from './survival';
 
-/** Convenience: full vitals with tweaks applied via the pure ops themselves. */
+/** Hand-built fixture: full vitals with a patch applied directly — bypasses
+ *  the op clamps by design (e.g. can seed a dead or starving state). */
 const at = (patch: Partial<Vitals>): Vitals => ({ ...createVitals(), ...patch });
 
 describe('createVitals', () => {
@@ -34,6 +35,14 @@ describe('damage / heal', () => {
   it('damage with zero or negative amount is a no-op', () => {
     expect(damage(createVitals(), 0).hp).toBe(20);
     expect(damage(createVitals(), -5).hp).toBe(20);
+    const v = createVitals();
+    expect(damage(v, -5)).not.toBe(v); // still a fresh copy, never the input itself
+  });
+
+  it('damage with NaN amount is a no-op — hp never becomes NaN', () => {
+    const v = damage(createVitals(), NaN);
+    expect(v.hp).toBe(20);
+    expect(isDead(v)).toBe(false);
   });
 
   it('damage returns a new object without touching the input', () => {
@@ -48,6 +57,7 @@ describe('damage / heal', () => {
     expect(heal(at({ hp: 18 }), 5).hp).toBe(20); // clamped, not 23
     expect(heal(at({ hp: 20 }), 5).hp).toBe(20); // heal at full is a no-op
     expect(heal(at({ hp: 10 }), -5).hp).toBe(10); // negative amount no-op
+    expect(heal(at({ hp: 10 }), NaN).hp).toBe(10); // NaN amount no-op
   });
 });
 
@@ -64,6 +74,19 @@ describe('eat / starve', () => {
     expect(eat(at({ saturation: 19 }), 0, 5).saturation).toBe(20); // capped, not 24
   });
 
+  it('eat with zero/negative/non-finite food or sat is a no-op for that stat', () => {
+    const v = at({ hunger: 10, saturation: 5 });
+    expect(eat(v, -30, 0).hunger).toBe(10); // never hunger -10
+    expect(eat(v, 0, -10).saturation).toBe(5); // never saturation -5
+    expect(eat(v, NaN, 0).hunger).toBe(10);
+    expect(eat(v, 0, NaN).saturation).toBe(5);
+  });
+
+  it('eat keeps hunger integral (floors the result); saturation stays fractional', () => {
+    expect(eat(at({ hunger: 10 }), 1.5, 0).hunger).toBe(11); // floor(11.5)
+    expect(eat(at({ hunger: 10, saturation: 5 }), 6, 2.5).saturation).toBe(7.5); // fractional kept
+  });
+
   it('eat returns a new object without touching the input', () => {
     const v = at({ hunger: 10, saturation: 0 });
     const next = eat(v, 6, 2.5);
@@ -78,6 +101,17 @@ describe('eat / starve', () => {
     const dead = starve(at({ hunger: 0 }), 1);
     expect(dead.hunger).toBe(0);
     expect(dead.hp).toBe(20); // hp decay lives in tickVitals, not here
+  });
+
+  it('starve with zero/negative/non-finite amount is a no-op', () => {
+    const v = at({ hunger: 10 });
+    expect(starve(v, 0).hunger).toBe(10);
+    expect(starve(v, -5).hunger).toBe(10);
+    expect(starve(v, NaN).hunger).toBe(10);
+  });
+
+  it('starve keeps hunger integral (floors the result)', () => {
+    expect(starve(at({ hunger: 20 }), 0.5).hunger).toBe(19); // floor(19.5), not 19.5
   });
 });
 
@@ -101,10 +135,12 @@ describe('exhaust', () => {
     expect(v.hp).toBe(20); // exhaust alone never damages hp
   });
 
-  it('zero or negative amount is a no-op', () => {
-    const v = exhaust(at({ saturation: 5, hunger: 20 }), 0);
-    expect(v.saturation).toBe(5);
-    expect(v.hunger).toBe(20);
+  it('zero, negative or non-finite amount is a no-op', () => {
+    for (const amount of [0, -3, NaN]) {
+      const v = exhaust(at({ saturation: 5, hunger: 20 }), amount);
+      expect(v.saturation).toBe(5);
+      expect(v.hunger).toBe(20);
+    }
   });
 });
 
@@ -142,6 +178,14 @@ describe('tickVitals — regen', () => {
     const v = tickVitals(at({ hp: 10, hunger: 20 }), 9.5);
     expect(v.hp).toBe(12); // +2
     expect(v.regenAcc).toBeCloseTo(1.5, 5); // remainder carried
+  });
+
+  it('regen never revives a dead player (hp 0 stays 0)', () => {
+    const dead = damage(createVitals(), 99);
+    expect(dead.hp).toBe(0);
+    const v = tickVitals(dead, 8); // would be +2 hp without the hp > 0 guard
+    expect(v.hp).toBe(0);
+    expect(v.regenAcc).toBe(0);
   });
 });
 
@@ -198,6 +242,24 @@ describe('tickVitals — general', () => {
     expect(next).not.toBe(v);
     expect(v.hp).toBe(10);
     expect(v.regenAcc).toBe(0);
+  });
+
+  it('zero or negative dt moves no accumulator but resets still run', () => {
+    const banked = tickVitals(at({ hp: 10 }), 3.9); // 3.9 s banked
+    expect(tickVitals(banked, 0).regenAcc).toBeCloseTo(3.9, 5);
+    expect(tickVitals(banked, -5).regenAcc).toBeCloseTo(3.9, 5);
+    expect(tickVitals(banked, -5).hp).toBe(10);
+    // condition lost → the reset branch must still fire on a non-positive dt
+    const hungry = { ...banked, hunger: 17 };
+    expect(tickVitals(hungry, -1).regenAcc).toBe(0);
+  });
+
+  it('NaN dt is treated as 0 — accumulators never become NaN', () => {
+    const banked = tickVitals(at({ hp: 10 }), 3.9);
+    const v = tickVitals(banked, NaN);
+    expect(v.hp).toBe(10);
+    expect(v.regenAcc).toBeCloseTo(3.9, 5); // bank carried, not corrupted
+    expect(v.starveAcc).toBe(0);
   });
 });
 
