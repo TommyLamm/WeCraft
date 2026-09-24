@@ -175,7 +175,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -186,7 +186,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
     menus.hideAll();
@@ -202,28 +202,35 @@ describe('pause menu', () => {
       });
     });
     menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode });
-    btnByText(root, 'Game Mode: Survival').click();
+    btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
-    btnByText(root, 'Game Mode: Creative').click();
+    btnByText(root, 'Mode: Creative').click();
     expect(onToggleMode).toHaveBeenCalledTimes(2);
-    expect(root.textContent).toContain('Game Mode: Survival');
+    expect(root.textContent).toContain('Mode: Survival');
     menus.hideAll();
   });
 
-  it('pause menu works without the optional onToggleMode callback', () => {
+  it('pause menu shows resume, quit and a wired mode toggle (required params)', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showPause({ onResume: () => {}, onQuit: () => {} });
-    btnByText(root, 'Game Mode: Survival').click(); // no callback wired → no throw
-    expect(menus.isVisible()).toBe(true);
+    const onResume = vi.fn();
+    const onQuit = vi.fn();
+    const onToggleMode = vi.fn();
+    menus.showPause({ onResume, onQuit, onToggleMode });
+    btnByText(root, '繼續遊戲').click();
+    btnByText(root, '回到標題').click();
+    btnByText(root, 'Mode: Survival').click();
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onQuit).toHaveBeenCalledTimes(1);
+    expect(onToggleMode).toHaveBeenCalledTimes(1);
     menus.hideAll();
   });
 
   it('settings sliders persist via saveSettings on change only', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showPause({ onResume: () => {}, onQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {} });
     btnByText(root, '設定').click();
     const ranges = [...root.querySelectorAll('input[type="range"]')] as HTMLInputElement[];
     expect(ranges.length).toBe(3);

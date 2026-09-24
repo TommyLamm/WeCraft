@@ -121,7 +121,7 @@ export function digStep(
 ): boolean {
   if (!Number.isFinite(getBreakTime(blockId))) return false; // unbreakable: never, both modes
   if (mode === 'creative') {
-    dig.reset(); // instant break: no timer in creative
+    dig.reset(); // mode-switch hygiene: drop leftover survival progress (creative never accumulates)
     return true;
   }
   dig.update(blockId, hit, dt, speed);

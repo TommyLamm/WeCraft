@@ -86,11 +86,15 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
   setVitals({ ...vitals, hp, maxHp, hunger, maxHunger });
 });
 
-// ---- Mode switch (Task 5): single application path for the mode-changed event.
-// Persistence happens at the emit site (the pause-menu callback in setState);
-// menus re-reads settings itself for its button/title labels.
+// ---- Mode switch (Task 5): THE single place mode state is persisted + applied
+// (consolidated per review Important #1 — a future emitter just emits and gets
+// saveSettings + in-memory settings.mode + inventory/refill/vitals for free).
+// The emit is synchronous, so menus' post-callback re-read of loadSettings
+// still sees the new value for its label.
 bus.on('mode-changed', ({ mode }) => {
   currentMode = mode;
+  settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
+  saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
   if (mode === 'creative') {
     // full hotbar refill: every block slot back to a full ×64 stack (matches hotbar init)
@@ -98,8 +102,11 @@ bus.on('mode-changed', ({ mode }) => {
     hud.setHotbar(hotbar, selected);
     setVitals(null); // hide the bar; Task 9 owns the vitals lifecycle
   } else {
-    // survival: vitals enabled — keep existing ones if present, else create fresh
-    setVitals(vitals ?? createVitals());
+    // survival: vitals enabled — always fresh here: creative entry set vitals to
+    // null and vitals-changed guards null, so there is nothing to preserve.
+    // A survival↔creative round-trip therefore resets HP/hunger to full
+    // (intentional for now; Task 9 may stash vitals on creative entry).
+    setVitals(createVitals());
   }
 });
 
@@ -265,12 +272,11 @@ function setState(next: GameState): void {
         resetPlayerToSpawn();
         setState('title');
       },
-      // mode toggle (Task 5): this callback owns persistence + the bus emit
-      // (Decision A — menus stays bus-free); the mode-changed handler above
-      // applies inventory/refill/vitals, menus re-renders its label from settings
+      // mode toggle (Task 5): emit only — the mode-changed handler above owns
+      // persistence + application (Decision A — menus stays bus-free); menus
+      // re-renders its label from settings after this callback returns
       onToggleMode: () => {
         const next: GameMode = currentMode === 'survival' ? 'creative' : 'survival';
-        saveSettings({ mode: next });
         bus.emit('mode-changed', { mode: next });
       },
     });
@@ -381,15 +387,14 @@ gs.renderer.setAnimationLoop(() => {
 
     if (hit && input.state.dig) {
       const id = world.getBlock(hit.x, hit.y, hit.z);
-      // survival: timed dig, rate × toolSpeed; creative: instant break (plan 5.5).
-      // The break decision lives in digStep (unit-tested in interact.test.ts);
-      // break side-effects below stay identical for both modes.
-      const speed = currentMode === 'survival' ? toolSpeed(id, hotbar[selected]) : 1;
+      // digStep owns the mode branch (creative ignores `speed` → instant break;
+      // survival is timed × toolSpeed) — no mode check needed here (review #4)
+      const speed = toolSpeed(id, hotbar[selected]);
       if (digStep(currentMode, dig, id, hit, dt, speed)) {
         world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
         collectBlockDrop(id, inventory); // creative: no-op; survival adds 1× (drops land in Task 7)
         hud.setHotbar(hotbar, selected); // reflect the drop (no-op diff in creative)
-        dig.reset();
+        dig.reset(); // post-break bookkeeping — clears survival progress after isDone
       }
     } else {
       dig.reset();

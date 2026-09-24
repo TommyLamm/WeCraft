@@ -5,14 +5,15 @@ export type MenuAction = 'play' | 'resume' | 'quit-to-title';
 
 export interface Menus {
   showTitle(onPlay: () => void): void;
-  /** `onToggleMode` is the mode toggle's callback — main.ts wires it to persist
-   *  settings + emit `mode-changed` (Decision A: ui modules never import the
-   *  bus). The label re-reads settings on every render, so it stays in sync
-   *  as long as the callback persists before returning. */
+  /** `onToggleMode` is required — a mode button that can't notify is a dead
+   *  control. main.ts wires it to emit `mode-changed` (Decision A: ui modules
+   *  never import the bus; the handler persists + applies). The label re-reads
+   *  settings on every render, so it stays in sync as long as the callback
+   *  persists before returning. */
   showPause(opts: {
     onResume: () => void;
     onQuit: () => void;
-    onToggleMode?: () => void;
+    onToggleMode: () => void;
   }): void;
   hideAll(): void;
   isVisible(): boolean;
@@ -101,7 +102,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
     return el;
   };
 
-  /** Current mode as shown in menus: `Mode: Survival` / `Game Mode: Creative`. */
+  /** Current mode as shown in menus (one wording everywhere): `Mode: Survival` / `Mode: Creative`. */
   const modeName = (): string =>
     loadSettings().mode === 'creative' ? 'Creative' : 'Survival';
 
@@ -139,10 +140,10 @@ export function createMenus(uiRoot: HTMLElement): Menus {
             onResume();
             relockCanvas();
           }),
-          // mode toggle (Task 5): notify only — main.ts persists + emits; the
-          // re-render re-reads settings so the label flips in place
-          btn(`Game Mode: ${modeName()}`, () => {
-            onToggleMode?.();
+          // mode toggle (Task 5): notify only — main.ts's mode-changed handler
+          // persists + applies; the re-render re-reads settings for the label
+          btn(`Mode: ${modeName()}`, () => {
+            onToggleMode();
             renderPause();
           }),
           btn('設定', () => {
