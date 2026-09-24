@@ -5,20 +5,20 @@ import { drawAtlas } from './render/textures';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
-import { raycast } from './world/raycast';
+import { raycast, reachFor } from './world/raycast';
 import { BLOCK, HOTBAR_DEFAULT } from './world/blocks';
 import { blockFromItem, stackFromBlock, stackName } from './core/items';
-import { createInventoryModel } from './core/inventory';
-import { createBus, type GameEvent } from './core/bus';
+import { createInventoryModel, type GameMode } from './core/inventory';
+import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 import { createVitals, type Vitals } from './player/survival';
-import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop } from './player/interact';
+import { DigProgress, placeTarget, canPlaceAt, collectBlockDrop, toolSpeed } from './player/interact';
 import { createHud } from './ui/hud';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
 import { createInventory } from './ui/inventory';
-import { loadSettings } from './core/settings';
+import { loadSettings, saveSettings } from './core/settings';
 import { generateChunk, surfaceHeight } from './world/terrain';
 
 type GameState = 'title' | 'playing' | 'paused' | 'inventory';
@@ -35,20 +35,23 @@ const hud = createHud(uiRoot);
 const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
 
-// ---- 遊戲事件匯流排（shapes from Task 2's GameEvent; producers land in Task 5/9）----
-/** `GameEvent` union → payload map keyed by event type (the tag lives on the key). */
-type GameEvents = {
-  [K in GameEvent['type']]: Omit<Extract<GameEvent, { type: K }>, 'type'>;
-};
+// ---- 遊戲事件匯流排 ----
+// `GameEvents` payload-map type lives in core/bus.ts next to the GameEvent union
+// (Task 5 decision A: pure type, no DOM/Three). The INSTANCE stays here at the
+// composition root — ui modules never import the bus; they take callbacks instead.
 const bus = createBus<GameEvents>();
 
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
+// Current game mode (Task 5): mirrors settings.mode at boot and follows the
+// pause-menu toggle via the mode-changed event below.
+let currentMode: GameMode = settings.mode;
 // Stack-based model owns the hotbar slots; `hotbar` is the live reference the
-// HUD/palette render. Creative: full stacks, addItem/removeItem no-op (Phase 1 behavior).
+// HUD/palette render. Mode comes from settings (default survival since Task 5);
+// creative add/remove no-op inside the model.
 const inventory = createInventoryModel(
   HOTBAR_DEFAULT.map((b) => stackFromBlock(b)),
-  'creative',
+  settings.mode,
 );
 const hotbar = inventory.slots;
 let selected = 0;
@@ -63,8 +66,8 @@ const vitalsEl = document.createElement('div');
 vitalsEl.className = 'vitals';
 uiRoot.appendChild(vitalsEl);
 
-/** Current vitals — null in creative mode (the whole `.vitals` bar hides).
- *  Default mode today is creative; the mode toggle (Task 5) and damage
+/** Current vitals — null while in creative mode (the whole `.vitals` bar hides).
+ *  Boot mode comes from settings; the mode-changed handler (Task 5) and damage
  *  sources (Task 9) update it later through `setVitals`. */
 let vitals: Vitals | null = inventory.mode === 'survival' ? createVitals() : null;
 
@@ -75,12 +78,29 @@ function setVitals(next: Vitals | null): void {
   vitalsEl.style.display = next ? '' : 'none';
 }
 
-setVitals(vitals); // initial paint (hidden until Task 5 switches to survival)
+setVitals(vitals); // initial paint (shown when booting into survival, hidden in creative)
 
 // No producer yet (Task 9) — this is the single vitals-changed → HUD path.
 bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
   if (!vitals) return; // creative: nothing to update
   setVitals({ ...vitals, hp, maxHp, hunger, maxHunger });
+});
+
+// ---- Mode switch (Task 5): single application path for the mode-changed event.
+// Persistence happens at the emit site (the pause-menu callback in setState);
+// menus re-reads settings itself for its button/title labels.
+bus.on('mode-changed', ({ mode }) => {
+  currentMode = mode;
+  inventory.setMode(mode);
+  if (mode === 'creative') {
+    // full hotbar refill: every block slot back to a full ×64 stack (matches hotbar init)
+    HOTBAR_DEFAULT.forEach((b, i) => inventory.setSlot(i, stackFromBlock(b)));
+    hud.setHotbar(hotbar, selected);
+    setVitals(null); // hide the bar; Task 9 owns the vitals lifecycle
+  } else {
+    // survival: vitals enabled — keep existing ones if present, else create fresh
+    setVitals(vitals ?? createVitals());
+  }
 });
 
 function applyRenderDistanceFog(): void {
@@ -245,6 +265,14 @@ function setState(next: GameState): void {
         resetPlayerToSpawn();
         setState('title');
       },
+      // mode toggle (Task 5): this callback owns persistence + the bus emit
+      // (Decision A — menus stays bus-free); the mode-changed handler above
+      // applies inventory/refill/vitals, menus re-renders its label from settings
+      onToggleMode: () => {
+        const next: GameMode = currentMode === 'survival' ? 'creative' : 'survival';
+        saveSettings({ mode: next });
+        bus.emit('mode-changed', { mode: next });
+      },
     });
   } else if (next === 'inventory') {
     inv.open(
@@ -348,11 +376,15 @@ gs.renderer.setAnimationLoop(() => {
     const rayOrigin = thirdPerson
       ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
       : eye;
-    const hit = raycast(world, rayOrigin, dir, thirdPerson ? 5 + back : 5);
+    // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
+    const hit = raycast(world, rayOrigin, dir, reachFor(currentMode) + (thirdPerson ? back : 0));
 
     if (hit && input.state.dig) {
       const id = world.getBlock(hit.x, hit.y, hit.z);
-      dig.update(id, hit, dt);
+      // survival: progress rate × toolSpeed (hand 1×, right tool 2×, wrong 0.5×);
+      // creative: keeps the Phase 1 rate (toolSpeed is survival-only, Task 5)
+      const speed = currentMode === 'survival' ? toolSpeed(id, hotbar[selected]) : 1;
+      dig.update(id, hit, dt, speed);
       if (dig.isDone(id)) {
         world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
         collectBlockDrop(id, inventory); // creative (today): no-op; survival adds 1×
@@ -400,7 +432,7 @@ gs.renderer.setAnimationLoop(() => {
         `Block: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`,
         `Chunks: ${world.chunks.size}`,
         `Seed: ${settings.seed}`,
-        `Mode: creative${player.flying ? ' (flying)' : ''}`,
+        `Mode: ${currentMode}${player.flying ? ' (flying)' : ''}`,
       ]);
     } else {
       hud.setDebug(null);

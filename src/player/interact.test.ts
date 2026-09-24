@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { getBreakTime, DigProgress, canPlaceAt, placeTarget, collectBlockDrop } from './interact';
+import {
+  getBreakTime,
+  DigProgress,
+  canPlaceAt,
+  placeTarget,
+  collectBlockDrop,
+  toolSpeed,
+} from './interact';
 import { BLOCK, getBlockDef } from '../world/blocks';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
@@ -52,12 +59,87 @@ describe('DigProgress', () => {
     expect(d.progress).toBeCloseTo(0.005, 5); // 重新起算，不是 0.5+
   });
 
+  it('speed multiplies the progress rate (survival tool speed)', () => {
+    const d = new DigProgress();
+    const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
+    d.update(BLOCK.STONE, hit, 0.5, 2); // 0.5s × 2× / 2s hardness = 50%
+    expect(d.progress).toBeCloseTo(0.5, 5);
+    d.update(BLOCK.STONE, hit, 0.5, 2); // another 50% → done
+    expect(d.progress).toBeCloseTo(1.0, 5);
+    expect(d.isDone(BLOCK.STONE)).toBe(true);
+  });
+
+  it('speed below 1 slows progress (wrong tool, 0.5×)', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1, 0.5);
+    expect(d.progress).toBeCloseTo(0.25, 5); // 1s × 0.5× / 2s hardness
+    expect(d.isDone(BLOCK.STONE)).toBe(false);
+  });
+
+  it('non-finite speed falls back to 1 (never poisons progress)', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1, Number.NaN);
+    expect(d.progress).toBeCloseTo(0.5, 5);
+  });
+
   it('isDone false before any update and for bedrock', () => {
     const d = new DigProgress();
     expect(d.isDone(BLOCK.STONE)).toBe(false);
     d.update(BLOCK.BEDROCK, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 100);
     expect(d.progress).toBe(0);
     expect(d.isDone(BLOCK.BEDROCK)).toBe(false);
+  });
+});
+
+describe('toolSpeed (Task 5 survival mining table)', () => {
+  const pick = { item: 'stone_pickaxe', count: 1 } as const;
+  const axe = { item: 'wooden_axe', count: 1 } as const;
+  const sword = { item: 'wooden_sword', count: 1 } as const;
+
+  it('matching pickaxe is 2× on stone-family blocks', () => {
+    expect(toolSpeed(BLOCK.STONE, pick)).toBe(2);
+    expect(toolSpeed(BLOCK.COBBLE, { item: 'wooden_pickaxe', count: 1 })).toBe(2);
+    expect(toolSpeed(BLOCK.COAL_ORE, pick)).toBe(2);
+    expect(toolSpeed(BLOCK.IRON_ORE, pick)).toBe(2);
+  });
+
+  it('bare hand on pickaxe-blocks is 0.5× (plan: "0.5× other tools/hand")', () => {
+    expect(toolSpeed(BLOCK.STONE, null)).toBe(0.5);
+    expect(toolSpeed(BLOCK.IRON_ORE, null)).toBe(0.5);
+    // a plain block item in hand behaves like a bare hand
+    expect(toolSpeed(BLOCK.STONE, { item: 'dirt', count: 1 })).toBe(0.5);
+  });
+
+  it('wrong tool on pickaxe-blocks is 0.5× (axe and sword both count)', () => {
+    expect(toolSpeed(BLOCK.STONE, axe)).toBe(0.5);
+    expect(toolSpeed(BLOCK.COBBLE, sword)).toBe(0.5);
+  });
+
+  it('matching axe is 2× on logs; bare hand stays 1× (logs are punchable)', () => {
+    expect(toolSpeed(BLOCK.LOG, axe)).toBe(2);
+    expect(toolSpeed(BLOCK.LOG, { item: 'stone_axe', count: 1 })).toBe(2);
+    expect(toolSpeed(BLOCK.LOG, null)).toBe(1);
+  });
+
+  it('wrong tool on logs is 0.5×', () => {
+    expect(toolSpeed(BLOCK.LOG, { item: 'stone_pickaxe', count: 1 })).toBe(0.5);
+    expect(toolSpeed(BLOCK.LOG, sword)).toBe(0.5);
+  });
+
+  it('no-tool blocks dig at 1× with anything (hand, tool, or sword)', () => {
+    expect(toolSpeed(BLOCK.DIRT, null)).toBe(1);
+    expect(toolSpeed(BLOCK.GRASS, sword)).toBe(1);
+    expect(toolSpeed(BLOCK.GLASS, axe)).toBe(1);
+    expect(toolSpeed(BLOCK.LEAVES, pick)).toBe(1);
+    expect(toolSpeed(BLOCK.PLANKS, null)).toBe(1);
+    expect(toolSpeed(BLOCK.SAND, { item: 'stone', count: 1 })).toBe(1);
+  });
+
+  it('unbreakable list (bedrock, water) unchanged at 1×', () => {
+    expect(toolSpeed(BLOCK.BEDROCK, null)).toBe(1);
+    expect(toolSpeed(BLOCK.BEDROCK, pick)).toBe(1);
+    expect(toolSpeed(BLOCK.WATER, null)).toBe(1);
+    expect(toolSpeed(BLOCK.WATER, axe)).toBe(1);
   });
 });
 

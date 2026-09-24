@@ -1,8 +1,12 @@
+import type { GameMode } from './inventory';
+
 export interface Settings {
   seed: number;
   renderDistance: number;
   sensitivity: number;
   volume: number;
+  /** Game mode (Task 5). Default survival — flips the Phase 1 creative default. */
+  mode: GameMode;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -10,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   renderDistance: 10,
   sensitivity: 1.0,
   volume: 0.8,
+  mode: 'survival',
 });
 
 const KEY = 'wecraft.settings';
@@ -24,6 +29,8 @@ function clampSettings(s: Settings): Settings {
     renderDistance: Math.min(16, Math.max(6, Math.round(finite(s.renderDistance, DEFAULT_SETTINGS.renderDistance)))),
     sensitivity: Math.min(3, Math.max(0.1, finite(s.sensitivity, DEFAULT_SETTINGS.sensitivity))),
     volume: Math.min(1, Math.max(0, finite(s.volume, DEFAULT_SETTINGS.volume))),
+    // anything that isn't exactly 'creative' falls back to the default mode
+    mode: s.mode === 'creative' ? 'creative' : 'survival',
   };
 }
 

@@ -48,6 +48,26 @@ describe('settings', () => {
     expect(Number.isFinite(s.sensitivity)).toBe(true);
   });
 
+  it('defaults mode to survival (Task 5)', () => {
+    expect(loadSettings().mode).toBe('survival');
+    expect(DEFAULT_SETTINGS.mode).toBe('survival');
+  });
+
+  it('persists and reloads mode', () => {
+    saveSettings({ mode: 'creative' });
+    expect(loadSettings().mode).toBe('creative');
+    saveSettings({ mode: 'survival' });
+    expect(loadSettings().mode).toBe('survival');
+  });
+
+  it('falls back to survival for an invalid stored mode', () => {
+    localStorage.setItem(
+      'wecraft.settings',
+      JSON.stringify({ mode: 'wandering-trader' }),
+    );
+    expect(loadSettings().mode).toBe('survival');
+  });
+
   it('still returns settings when localStorage.setItem throws', () => {
     const spy = vi
       .spyOn(Storage.prototype, 'setItem')

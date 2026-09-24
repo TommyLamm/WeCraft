@@ -10,6 +10,13 @@ export type GameEvent =
   | { type: 'mobs-changed'; count: number }
   | { type: 'drops-changed' };
 
+/** `GameEvent` union → payload map keyed by event type (the tag lives on the
+ *  key). Pure type — lives here next to the union (Task 5 decision A); the
+ *  bus INSTANCE stays at the composition root (main.ts), never in ui modules. */
+export type GameEvents = {
+  [K in GameEvent['type']]: Omit<Extract<GameEvent, { type: K }>, 'type'>;
+};
+
 export interface Bus<Events extends Record<string, unknown>> {
   on<K extends keyof Events>(type: K, fn: (payload: Events[K]) => void): Unsubscribe;
   emit<K extends keyof Events>(type: K, payload: Events[K]): void;

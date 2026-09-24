@@ -136,6 +136,12 @@
   background: linear-gradient(#7f8f9f, #6a7a8a);
   box-shadow: inset 0 0 0 2px #c0d0e0;
 }
+/* Title-screen mode display (Task 5): static text, not interactive */
+.ui-mode {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 1px 1px 0 #000;
+}
 .ui-inventory {
   position: absolute;
   left: 50%;

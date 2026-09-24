@@ -3,7 +3,7 @@ import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
-import { itemFromBlock } from '../core/items';
+import { itemFromBlock, type ItemId, type ItemStack } from '../core/items';
 import type { InventoryModel } from '../core/inventory';
 
 /** Mined-block drop: adds 1× the block's item via inventory.add — survival only,
@@ -19,12 +19,64 @@ export function getBreakTime(blockId: number): number {
   return getBlockDef(blockId).hardness;
 }
 
-/** Per-frame contract: call update(blockId, hit, dt) before isDone(blockId) each frame with the same target; isDone assumes progress belongs to the current target key. */
+// ---- Survival mining table (Task 5) ----
+
+type ToolCategory = 'pickaxe' | 'axe';
+
+/** Blocks mined fastest with a pickaxe (stone family). */
+const PICKAXE_BLOCKS: ReadonlySet<number> = new Set([
+  BLOCK.STONE, BLOCK.COBBLE, BLOCK.COAL_ORE, BLOCK.IRON_ORE,
+]);
+/** Blocks mined fastest with an axe. */
+const AXE_BLOCKS: ReadonlySet<number> = new Set([BLOCK.LOG]);
+
+const PICKAXES: ReadonlySet<ItemId> = new Set(['wooden_pickaxe', 'stone_pickaxe']);
+const AXES: ReadonlySet<ItemId> = new Set(['wooden_axe', 'stone_axe']);
+const SWORDS: ReadonlySet<ItemId> = new Set(['wooden_sword', 'stone_sword']);
+
+function requiredTool(blockId: number): ToolCategory | null {
+  if (PICKAXE_BLOCKS.has(blockId)) return 'pickaxe';
+  if (AXE_BLOCKS.has(blockId)) return 'axe';
+  return null;
+}
+
+/** Mining-speed multiplier for holding `held` (a hotbar stack; null = bare hand)
+ *  while digging `blockId`. Survival mode only — creative dig ignores it.
+ *
+ *  Table (Task 5), documented choices:
+ *  - unbreakable (bedrock/water, hardness Infinity) → 1× — the rate never
+ *    accumulates for them anyway (`DigProgress` guards on finite break time);
+ *  - no required tool (dirt, grass, sand, leaves, planks, glass, snow, …) → 1×
+ *    with anything in hand;
+ *  - matching tool (pickaxe on the stone family, axe on logs) → 2×;
+ *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
+ *  - bare hand / non-tool item: 0.5× on pickaxe blocks (plan: "0.5× other
+ *    tools/hand"), 1× on logs (punchable) and on no-tool blocks;
+ *  - swords are the documented "wrong tool" case: 0.5× on required blocks,
+ *    1× elsewhere. */
+export function toolSpeed(blockId: number, held: ItemStack | null): number {
+  if (!Number.isFinite(getBlockDef(blockId).hardness)) return 1; // bedrock/water unchanged
+  const required = requiredTool(blockId);
+  if (!required) return 1;
+  const item = held?.item ?? null;
+  if (item) {
+    const matches = required === 'pickaxe' ? PICKAXES.has(item) : AXES.has(item);
+    if (matches) return 2;
+    if (PICKAXES.has(item) || AXES.has(item) || SWORDS.has(item)) return 0.5; // wrong tool
+  }
+  // hand or plain item: rock needs a pickaxe; logs/no-tool blocks take a hand
+  return required === 'pickaxe' ? 0.5 : 1;
+}
+
+/** Per-frame contract: call update(blockId, hit, dt, speed?) before isDone(blockId)
+ *  each frame with the same target; isDone assumes progress belongs to the current
+ *  target key. `speed` multiplies the progress rate (survival passes
+ *  `toolSpeed(...)`; default 1 = the Phase 1 rate, which is what creative uses). */
 export class DigProgress {
   private key = '';
   progress = 0;
 
-  update(blockId: number, hit: RayHit, dt: number): void {
+  update(blockId: number, hit: RayHit, dt: number, speed = 1): void {
     const k = `${hit.x},${hit.y},${hit.z},${blockId}`;
     if (k !== this.key) {
       this.key = k;
@@ -32,7 +84,8 @@ export class DigProgress {
     }
     const time = getBreakTime(blockId);
     if (!isFinite(time)) return; // bedrock 永不累進
-    this.progress = Math.min(1, this.progress + dt / time);
+    const rate = Number.isFinite(speed) && speed > 0 ? speed : 1;
+    this.progress = Math.min(1, this.progress + (dt * rate) / time);
   }
 
   isDone(blockId: number): boolean {

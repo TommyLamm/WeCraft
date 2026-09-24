@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { raycast } from './raycast';
+import { raycast, reachFor } from './raycast';
 import { World } from './world';
 import { Chunk } from './chunk';
 import { BLOCK } from './blocks';
@@ -124,5 +124,33 @@ describe('raycast', () => {
     w.setBlock(0, 64, 0, BLOCK.STONE);
     const hit = raycast(w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: 0 }, 10);
     expect(hit).toBeNull();
+  });
+});
+
+describe('reachFor (Task 5)', () => {
+  it('creative reaches 5 blocks, survival 4.5', () => {
+    expect(reachFor('creative')).toBe(5);
+    expect(reachFor('survival')).toBe(4.5);
+  });
+
+  it('creative reach hits a block at t=5 that survival cannot reach', () => {
+    const w = setup();
+    // origin z = 0 → cell z = -6 is entered at exactly t = 5
+    w.setBlock(0, 64, -6, BLOCK.STONE);
+    const origin = { x: 0.5, y: 64.5, z: 0 };
+    const dir = { x: 0, y: 0, z: -1 };
+    expect(raycast(w, origin, dir, reachFor('survival'))).toBeNull();
+    const hit = raycast(w, origin, dir, reachFor('creative'));
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBe(-6);
+    expect(hit!.t).toBe(5);
+  });
+
+  it('survival reach still hits a block at t=4.5 (boundary is inclusive)', () => {
+    const w = setup();
+    w.setBlock(0, 64, -5, BLOCK.STONE); // from origin z = 0.5, cell z=-5 enters at t = 4.5
+    const hit = raycast(w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: -1 }, reachFor('survival'));
+    expect(hit).not.toBeNull();
+    expect(hit!.t).toBe(4.5);
   });
 });

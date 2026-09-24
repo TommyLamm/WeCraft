@@ -1,4 +1,5 @@
 import type { World } from './world';
+import type { GameMode } from '../core/inventory';
 
 export interface RayHit {
   x: number;
@@ -8,6 +9,13 @@ export interface RayHit {
   ny: number;
   nz: number;
   t: number;
+}
+
+/** Interaction reach in world blocks (Task 5): creative sees one block farther
+ *  than survival. Callers pass the result straight to `raycast` as `maxDist`
+ *  (third-person view adds the camera back-offset on top). */
+export function reachFor(mode: GameMode): number {
+  return mode === 'creative' ? 5 : 4.5;
 }
 
 /** DDA raycast. dir is normalized internally; maxDistance is euclidean world units. */

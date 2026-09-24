@@ -5,7 +5,15 @@ export type MenuAction = 'play' | 'resume' | 'quit-to-title';
 
 export interface Menus {
   showTitle(onPlay: () => void): void;
-  showPause(opts: { onResume: () => void; onQuit: () => void }): void;
+  /** `onToggleMode` is the mode toggle's callback — main.ts wires it to persist
+   *  settings + emit `mode-changed` (Decision A: ui modules never import the
+   *  bus). The label re-reads settings on every render, so it stays in sync
+   *  as long as the callback persists before returning. */
+  showPause(opts: {
+    onResume: () => void;
+    onQuit: () => void;
+    onToggleMode?: () => void;
+  }): void;
   hideAll(): void;
   isVisible(): boolean;
 }
@@ -93,6 +101,17 @@ export function createMenus(uiRoot: HTMLElement): Menus {
     return el;
   };
 
+  /** Current mode as shown in menus: `Mode: Survival` / `Game Mode: Creative`. */
+  const modeName = (): string =>
+    loadSettings().mode === 'creative' ? 'Creative' : 'Survival';
+
+  const modeLine = (className: string): HTMLElement => {
+    const el = document.createElement('div');
+    el.className = className;
+    el.textContent = `Mode: ${modeName()}`;
+    return el;
+  };
+
   return {
     showTitle(onPlay) {
       clear();
@@ -101,10 +120,10 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       const logo = document.createElement('div');
       logo.className = 'ui-logo';
       logo.textContent = 'WeCraft';
-      el.append(logo, btn('單人遊戲', onPlay));
+      el.append(logo, btn('單人遊戲', onPlay), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
     },
-    showPause({ onResume, onQuit }) {
+    showPause({ onResume, onQuit, onToggleMode }) {
       clear();
       const renderPause = () => {
         clear();
@@ -119,6 +138,12 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           btn('繼續遊戲', () => {
             onResume();
             relockCanvas();
+          }),
+          // mode toggle (Task 5): notify only — main.ts persists + emits; the
+          // re-render re-reads settings so the label flips in place
+          btn(`Game Mode: ${modeName()}`, () => {
+            onToggleMode?.();
+            renderPause();
           }),
           btn('設定', () => {
             clear();

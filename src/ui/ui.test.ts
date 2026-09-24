@@ -4,7 +4,7 @@ import { createMenus } from './menus';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
 import { itemFromBlock, maxStack, stackFromBlock, type ItemStack } from '../core/items';
-import { loadSettings } from '../core/settings';
+import { loadSettings, saveSettings } from '../core/settings';
 
 /** Build the stack form of a block list (every placeable block has an item). */
 function stacksOf(blocks: BlockId[]): Array<ItemStack | null> {
@@ -98,6 +98,18 @@ describe('ui smoke', () => {
     expect(menus.isVisible()).toBe(false);
   });
 
+  it('title screen shows the current mode (Task 5)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showTitle(() => {});
+    expect(root.textContent).toContain('Mode: Survival'); // default mode
+    menus.hideAll();
+    saveSettings({ mode: 'creative' });
+    menus.showTitle(() => {});
+    expect(root.textContent).toContain('Mode: Creative');
+    menus.hideAll();
+  });
+
   it('inventory open/close', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
@@ -177,6 +189,34 @@ describe('pause menu', () => {
     menus.showPause({ onResume: () => {}, onQuit });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
+    menus.hideAll();
+  });
+
+  it('toggle button shows current mode and calls onToggleMode (Task 5)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // realistic wiring: main.ts persists via saveSettings inside the callback
+    const onToggleMode = vi.fn(() => {
+      saveSettings({
+        mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
+      });
+    });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode });
+    btnByText(root, 'Game Mode: Survival').click();
+    expect(onToggleMode).toHaveBeenCalledTimes(1);
+    // pause re-renders from settings → label flips without reopening the menu
+    btnByText(root, 'Game Mode: Creative').click();
+    expect(onToggleMode).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain('Game Mode: Survival');
+    menus.hideAll();
+  });
+
+  it('pause menu works without the optional onToggleMode callback', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ onResume: () => {}, onQuit: () => {} });
+    btnByText(root, 'Game Mode: Survival').click(); // no callback wired → no throw
+    expect(menus.isVisible()).toBe(true);
     menus.hideAll();
   });
 
