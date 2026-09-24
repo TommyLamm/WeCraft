@@ -19,6 +19,7 @@ import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
 import { createInventory } from './ui/inventory';
 import { loadSettings, saveSettings } from './core/settings';
+import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { generateChunk, surfaceHeight } from './world/terrain';
 
 type GameState = 'title' | 'playing' | 'paused' | 'inventory';
@@ -59,6 +60,11 @@ let showDebug = false;
 let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- 晝夜循環（Task 6）----
+// Clock only advances while playing; sky/light refresh every frame (cheap math),
+// `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
+let clock: Clock = createClock(settings.dayLengthSec);
 
 // ---- 生存 HUD（Task 4）----
 // .vitals 容器：same programmatic markup pattern as hud/menus/inventory
@@ -356,6 +362,13 @@ gs.renderer.setAnimationLoop(() => {
   }
 
   if (state === 'playing') {
+    // 晝夜：tick clock → 每幀刷新 sun/sky/fog（cheap），僅在 day↔night 翻轉時 emit
+    const prevPhase = phaseOf(clock.t);
+    clock = tickClock(clock, dt);
+    const phase = phaseOf(clock.t);
+    gs.setDayNight(sunDirection(clock.t), skyColors(clock.t));
+    if (phase !== prevPhase) bus.emit('time-changed', { phase, t: clock.t });
+
     // 移動
     stepPlayer(player, input.state, world, dt);
 

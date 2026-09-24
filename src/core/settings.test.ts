@@ -84,4 +84,35 @@ describe('settings', () => {
       warn.mockRestore();
     }
   });
+
+  describe('dayLengthSec (Task 6)', () => {
+    it('defaults to 600', () => {
+      expect(DEFAULT_SETTINGS.dayLengthSec).toBe(600);
+      expect(loadSettings().dayLengthSec).toBe(600);
+    });
+
+    it('persists and reloads', () => {
+      saveSettings({ dayLengthSec: 90 });
+      expect(loadSettings().dayLengthSec).toBe(90);
+    });
+
+    it('clamps to the sane range [60, 3600]', () => {
+      expect(saveSettings({ dayLengthSec: 10 }).dayLengthSec).toBe(60);
+      expect(saveSettings({ dayLengthSec: 0 }).dayLengthSec).toBe(60);
+      expect(saveSettings({ dayLengthSec: 100000 }).dayLengthSec).toBe(3600);
+    });
+
+    it('falls back to 600 for non-finite or non-number stored values', () => {
+      localStorage.setItem(
+        'wecraft.settings',
+        JSON.stringify({ dayLengthSec: 'fast' }),
+      );
+      expect(loadSettings().dayLengthSec).toBe(600);
+      localStorage.setItem(
+        'wecraft.settings',
+        JSON.stringify({ dayLengthSec: null }),
+      );
+      expect(loadSettings().dayLengthSec).toBe(600);
+    });
+  });
 });

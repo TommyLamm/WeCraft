@@ -7,6 +7,8 @@ export interface Settings {
   volume: number;
   /** Game mode (Task 5). Default survival — flips the Phase 1 creative default. */
   mode: GameMode;
+  /** Seconds per full day/night cycle (Task 6). Clamped 60–3600. */
+  dayLengthSec: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -15,6 +17,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   sensitivity: 1.0,
   volume: 0.8,
   mode: 'survival',
+  dayLengthSec: 600,
 });
 
 const KEY = 'wecraft.settings';
@@ -31,6 +34,8 @@ function clampSettings(s: Settings): Settings {
     volume: Math.min(1, Math.max(0, finite(s.volume, DEFAULT_SETTINGS.volume))),
     // anything that isn't exactly 'creative' falls back to the default mode
     mode: s.mode === 'creative' ? 'creative' : 'survival',
+    // 60–3600 s: fast enough for testing (60), sane floor against degenerate values
+    dayLengthSec: Math.min(3600, Math.max(60, finite(s.dayLengthSec, DEFAULT_SETTINGS.dayLengthSec))),
   };
 }
 
