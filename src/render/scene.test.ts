@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createDropRenderer, createMobRenderer, sunLightPosition } from './scene';
+import {
+  createDropRenderer,
+  createMobRenderer,
+  sunLightPosition,
+  createFogController,
+} from './scene';
 import { sunDirection } from '../core/daynight';
 import type { DropEntity } from '../world/drops';
 import { createMob, type Mob, type Arrow } from '../world/mobs';
@@ -318,5 +323,61 @@ describe('sunLightPosition', () => {
     // whole-world lighting side flip at mid brightness, twice per game day.
     const jump = Math.hypot(before.x - after.x, before.y - after.y, before.z - after.z);
     expect(jump).toBeLessThan(10);
+  });
+});
+
+// ---- Task 16: underwater fog composes with Task 6's day/night fog ----
+
+describe('createFogController', () => {
+  function sceneWithDayFog(): { scene: THREE.Scene; dayFog: THREE.Fog } {
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x87ceeb, 40, 140); // createGameScene's initial day fog
+    return { scene, dayFog: scene.fog };
+  }
+
+  it('entering water swaps the day Fog → FogExp2(0x1c4e8a, 0.09)', () => {
+    const { scene } = sceneWithDayFog();
+    const ctl = createFogController(scene);
+    ctl.setUnderwater(true);
+    expect(scene.fog).toBeInstanceOf(THREE.FogExp2);
+    expect(scene.fog!.color.getHex()).toBe(0x1c4e8a);
+    expect((scene.fog as THREE.FogExp2).density).toBeCloseTo(0.09, 12);
+  });
+
+  it('leaving water restores the SAME day fog object with the latest day/night color', () => {
+    const { scene, dayFog } = sceneWithDayFog();
+    const ctl = createFogController(scene);
+    ctl.setDayFogColor(0x123456); // day/night while surfaced
+    dayFog.far = 96; // main.ts's applyRenderDistanceFog mutates far in place
+    ctl.setUnderwater(true); // submerge
+    ctl.setDayFogColor(0x654321); // time keeps passing underwater…
+    expect(scene.fog).toBeInstanceOf(THREE.FogExp2); // …but the tint stays pinned
+    expect(scene.fog!.color.getHex()).toBe(0x1c4e8a);
+    ctl.setUnderwater(false); // surface
+    expect(scene.fog).toBe(dayFog); // the SAME persistent object comes back
+    expect((scene.fog as THREE.Fog).color.getHex()).toBe(0x654321); // latest day color
+    expect((scene.fog as THREE.Fog).far).toBe(96); // render-distance far survives too
+  });
+
+  it('repeated toggles reuse the two fog objects (no per-frame allocation)', () => {
+    const { scene, dayFog } = sceneWithDayFog();
+    const ctl = createFogController(scene);
+    ctl.setUnderwater(true);
+    const underwaterFog = scene.fog;
+    ctl.setUnderwater(false);
+    ctl.setUnderwater(true);
+    expect(scene.fog).toBe(underwaterFog); // same FogExp2 instance re-used
+    ctl.setUnderwater(false);
+    expect(scene.fog).toBe(dayFog);
+  });
+
+  it('installs a default linear day fog when the scene has none', () => {
+    const scene = new THREE.Scene(); // fog: null
+    const ctl = createFogController(scene);
+    expect(scene.fog).toBeInstanceOf(THREE.Fog);
+    ctl.setUnderwater(true);
+    ctl.setUnderwater(false);
+    expect(scene.fog).toBeInstanceOf(THREE.Fog);
+    expect((scene.fog as THREE.Fog).far).toBe(140);
   });
 });

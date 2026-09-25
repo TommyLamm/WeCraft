@@ -12,6 +12,10 @@ export interface GameScene {
   /** Apply the day/night state (Task 6): sun light direction + intensity,
    *  ambient intensity, background and fog color from `skyColors(t)`. */
   setDayNight(sunDir: Vec3, colors: DayNightColors): void;
+  /** Task 16: while `inside` (camera in a water block) the fog is a deep-blue
+   *  FogExp2; on exit the day/night fog from `setDayNight` is restored — the
+   *  two compose regardless of call order (see `createFogController`). */
+  setUnderwater(inside: boolean): void;
   dispose(): void;
 }
 
@@ -34,14 +38,74 @@ export function sunLightPosition(sunDir: Vec3, dist = 100): Vec3 {
   return { x: sunDir.x * dist, y: Math.abs(sunDir.y) * dist, z: sunDir.z * dist };
 }
 
+// ---- Task 16: underwater fog, composed with Task 6's day/night fog ----
+
+/** Initial (and default) day fog — `createGameScene`'s starting scene fog. */
+const DEFAULT_SKY_FOG = 0x87ceeb;
+const FOG_NEAR = 40;
+const FOG_FAR = 140;
+/** Fog while the camera is inside a water block: deep blue, dense FogExp2. */
+const UNDERWATER_FOG_COLOR = 0x1c4e8a;
+const UNDERWATER_FOG_DENSITY = 0.09;
+
+/** Fog ownership split between Task 6 (day/night color) and Task 16
+ *  (underwater tint), extracted from `createGameScene` so jsdom tests can
+ *  drive it without a WebGLRenderer. */
+export interface FogController {
+  /** Store the day/night fog color (Task 6's `skyColors.fog`): recolors the
+   *  day fog in place every frame — no allocation — and while submerged only
+   *  stores it, so the underwater tint isn't clobbered as time passes. */
+  setDayFogColor(hex: number): void;
+  /** Enter/leave the underwater FogExp2; exit restores the persistent day
+   *  fog object with the latest stored color. */
+  setUnderwater(inside: boolean): void;
+}
+
+/** Compose the day/night fog (Task 6) with the underwater tint (Task 16) on
+ *  one scene:
+ *
+ *  - The day fog is ONE persistent `THREE.Fog` adopted from the scene (or a
+ *    fresh default): `setDayNight` recolors it in place every frame, and
+ *    main.ts mutates its `far` for render distance — leaving the water
+ *    restores THIS object, so both survive an underwater round-trip.
+ *  - The underwater fog is likewise a single reused `FogExp2`
+ *    (0x1c4e8a @ 0.09): entering swaps `scene.fog` to it, exiting swaps back
+ *    — two object references, zero per-frame allocation.
+ *  - Because `scene.fog` is the FogExp2 while submerged, `setDayNight`'s
+ *    color writes go through `setDayFogColor` to the STORED day color instead
+ *    of the visible underwater one; composition is therefore order-free. */
+export function createFogController(scene: THREE.Scene): FogController {
+  let dayFog = scene.fog instanceof THREE.Fog ? scene.fog : null;
+  if (!dayFog) {
+    dayFog = new THREE.Fog(DEFAULT_SKY_FOG, FOG_NEAR, FOG_FAR);
+    scene.fog = dayFog;
+  }
+  const underwaterFog = new THREE.FogExp2(UNDERWATER_FOG_COLOR, UNDERWATER_FOG_DENSITY);
+  let underwater = false;
+
+  return {
+    setDayFogColor(hex) {
+      dayFog.color.setHex(hex); // stored regardless of submersion
+      if (!underwater) scene.fog = dayFog;
+    },
+    setUnderwater(inside) {
+      if (inside === underwater) return; // idempotent — called every frame
+      underwater = inside;
+      scene.fog = inside ? underwaterFog : dayFog;
+    },
+  };
+}
+
 export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb);
-  scene.fog = new THREE.Fog(0x87ceeb, 40, 140);
+  scene.background = new THREE.Color(DEFAULT_SKY_FOG);
+  scene.fog = new THREE.Fog(DEFAULT_SKY_FOG, FOG_NEAR, FOG_FAR);
+  // Task 16: day/night + underwater fog compose here (order-free — see JSDoc)
+  const fogCtl = createFogController(scene);
 
   // Task 6: sun + ambient lights here (Task 15 switched chunks to
   // MeshLambertMaterial, so terrain now reacts to both; sky/fog respond
@@ -81,7 +145,10 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
       sunLight.intensity = colors.sunIntensity;
       ambientLight.intensity = colors.ambient;
       if (scene.background instanceof THREE.Color) scene.background.setHex(colors.sky);
-      if (scene.fog) scene.fog.color.setHex(colors.fog);
+      fogCtl.setDayFogColor(colors.fog); // stored even while underwater
+    },
+    setUnderwater(inside) {
+      fogCtl.setUnderwater(inside);
     },
     dispose() {
       renderer.dispose();

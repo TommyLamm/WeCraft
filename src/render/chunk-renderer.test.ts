@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { ChunkRenderer, patchTextureArrayShader } from './chunk-renderer';
+import {
+  ChunkRenderer,
+  patchTextureArrayShader,
+  waterMaterialParams,
+  WATER_RENDER_ORDER,
+} from './chunk-renderer';
 import { drawAtlas } from './textures';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
@@ -84,6 +89,26 @@ describe('patchTextureArrayShader', () => {
   });
 });
 
+// ---- Task 16: translucent water pass (pure params) ----
+
+describe('waterMaterialParams', () => {
+  it('is the exact translucent-water contract', () => {
+    expect(waterMaterialParams()).toEqual({
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+      // DoubleSide: the surface top face's front points up — from underwater
+      // looking up you'd otherwise see only its culled back side
+      side: THREE.DoubleSide,
+    });
+  });
+
+  it('WATER_RENDER_ORDER is 3000 and draws after opaque geometry (default 0)', () => {
+    expect(WATER_RENDER_ORDER).toBe(3000);
+    expect(WATER_RENDER_ORDER).toBeGreaterThan(0); // opaque meshes keep three's default renderOrder 0
+  });
+});
+
 describe('ChunkRenderer', () => {
   it('material contract: Lambert + alphaTest 0.1 + texture array via onBeforeCompile', () => {
     const { scene, renderer } = setup();
@@ -114,33 +139,84 @@ describe('ChunkRenderer', () => {
     renderer.dispose();
   });
 
-  it('water-only chunk still gets a mesh (Task 16 seam: opaque material for now)', () => {
+  it('water-only chunk: water mesh visible with 6 quads; the opaque slot stays hidden', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 60, 5, BLOCK.WATER), 0, 0);
-    expect(scene.children).toHaveLength(1); // water must not vanish
-    const geom = (scene.children[0] as THREE.Mesh).geometry;
-    expect(geom.getAttribute('position').count).toBe(6 * 4); // 6 water quads
+    expect(scene.children).toHaveLength(2); // per-chunk pair: opaque slot + water slot
+    const opaqueMesh = scene.children[0] as THREE.Mesh;
+    const waterMesh = scene.children[1] as THREE.Mesh;
+    expect(opaqueMesh.visible).toBe(false); // no opaque geometry → nothing to draw
+    expect(waterMesh.visible).toBe(true); // water must not vanish
+    expect(waterMesh.geometry.getAttribute('position').count).toBe(6 * 4); // 6 water quads
+    expect(waterMesh.renderOrder).toBe(WATER_RENDER_ORDER);
     renderer.dispose();
   });
 
-  it('mixed chunk: water indices rebase past the opaque vertex run', () => {
+  it('mixed chunk: water rides its own mesh with 0-based indices (no cross-mesh rebase)', () => {
     const { scene, renderer } = setup();
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     w.setBlock(5, 60, 5, BLOCK.WATER); // same chunk, not adjacent
     renderer.rebuild(w, 0, 0);
-    const geom = (scene.children[0] as THREE.Mesh).geometry;
-    const idx = Array.from(geom.getIndex()!.array as Uint32Array);
-    // Layout from buildChunkGeometry: opaque run first (stone 6 quads → 36
-    // indices over verts 0..23), then water rebased (water 6 quads → 36
-    // indices that MUST point at verts ≥ 24, not restart at 0 and draw the
-    // stone quads a second time).
-    expect(geom.getAttribute('position').count).toBe(48); // 12 quads × 4 verts
-    expect(idx).toHaveLength(72); // 12 quads × 6 indices
-    expect(Math.max(...idx)).toBeLessThan(48); // nothing reads past the buffer
-    expect(Math.max(...idx.slice(0, 36))).toBeLessThan(24); // opaque run in-bounds
-    const waterRun = idx.slice(36);
-    expect(Math.min(...waterRun)).toBeGreaterThanOrEqual(24); // ≥ opaque vertex count
-    expect(Math.max(...waterRun)).toBeLessThan(48); // …and still in-bounds
+    expect(scene.children).toHaveLength(2);
+    const opaqueMesh = scene.children[0] as THREE.Mesh;
+    const waterMesh = scene.children[1] as THREE.Mesh;
+
+    // The mesher emits each pass into its OWN fresh builder (emitQuad's
+    // vertBase = positions.length/3 starts at 0 there), so water indices are
+    // already 0-based relative to the water positions — with the Task 15
+    // concatenation gone, NO rebasing across passes happens (or is needed).
+    const opaqueIdx = Array.from(opaqueMesh.geometry.getIndex()!.array as Uint32Array);
+    const waterIdx = Array.from(waterMesh.geometry.getIndex()!.array as Uint32Array);
+    expect(opaqueMesh.geometry.getAttribute('position').count).toBe(24); // stone: 6 quads
+    expect(waterMesh.geometry.getAttribute('position').count).toBe(24); // water: 6 quads
+    expect(opaqueIdx).toHaveLength(36); // opaque run only
+    expect(waterIdx).toHaveLength(36); // water run only — no shared buffer
+    expect(Math.max(...opaqueIdx)).toBeLessThan(24); // opaque in-bounds in ITS buffer
+    expect(Math.max(...waterIdx)).toBeLessThan(24); // water in-bounds in ITS buffer
+    expect(Math.min(...waterIdx)).toBe(0); // starts at 0 — not rebased past opaque
+    expect(opaqueMesh.renderOrder).toBe(0); // opaque keeps three's default
+    expect(waterMesh.renderOrder).toBe(WATER_RENDER_ORDER);
+    renderer.dispose();
+  });
+
+  it('water material: transparent 0.62 / depthWrite off / DoubleSide / alphaTest 0, SHARED texture array', () => {
+    const { scene, renderer } = setup();
+    renderer.rebuild(worldWithBlock(5, 60, 5, BLOCK.WATER), 0, 0);
+    const opaqueMat = (scene.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    const waterMesh = scene.children[1] as THREE.Mesh;
+    const waterMat = waterMesh.material as THREE.MeshLambertMaterial;
+    expect(waterMat).toBeInstanceOf(THREE.MeshLambertMaterial);
+    expect(waterMat).not.toBe(opaqueMat); // separate materials per pass
+    expect(waterMat.transparent).toBe(true);
+    expect(waterMat.opacity).toBe(0.62);
+    expect(waterMat.depthWrite).toBe(false);
+    expect(waterMat.side).toBe(THREE.DoubleSide);
+    expect(waterMat.alphaTest).toBe(0); // transparency from opacity — no cutout discard
+    expect(waterMat.vertexColors).toBe(true); // mesher shades still drive brightness
+    expect(waterMat.map).toBeNull(); // array texture rides the custom mapArray uniform
+
+    // ONE DataArrayTexture: both passes patch the SAME instance into mapArray
+    // (no duplicate texture array built for water)
+    const s1 = fakeShader();
+    const s2 = fakeShader();
+    (opaqueMat.onBeforeCompile as (s: typeof s1) => void)(s1);
+    (waterMat.onBeforeCompile as (s: typeof s2) => void)(s2);
+    expect(s1.uniforms.mapArray.value).toBeInstanceOf(THREE.DataArrayTexture);
+    expect(s2.uniforms.mapArray.value).toBe(s1.uniforms.mapArray.value);
+    renderer.dispose();
+  });
+
+  it('chunk that loses its water: water mesh hidden (visible = false), opaque keeps rendering', () => {
+    const { scene, renderer } = setup();
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    w.setBlock(5, 60, 5, BLOCK.WATER);
+    renderer.rebuild(w, 0, 0);
+    expect((scene.children[1] as THREE.Mesh).visible).toBe(true);
+    w.setBlock(5, 60, 5, BLOCK.AIR);
+    renderer.rebuild(w, 0, 0);
+    expect(scene.children).toHaveLength(2); // pair persists while the chunk is live
+    expect((scene.children[0] as THREE.Mesh).visible).toBe(true);
+    expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // empty water geometry
     renderer.dispose();
   });
 
@@ -148,10 +224,10 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(1);
+    expect(scene.children).toHaveLength(2); // the chunk's opaque+water pair
     w.setBlock(5, 64, 5, BLOCK.AIR);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(0);
+    expect(scene.children).toHaveLength(0); // both passes empty → pair gone
     renderer.dispose();
   });
 
@@ -159,7 +235,7 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
     renderer.rebuild(worldWithBlock(20, 64, 5, BLOCK.STONE), 1, 0);
-    expect(scene.children).toHaveLength(2);
+    expect(scene.children).toHaveLength(4); // 2 chunks × the opaque+water pair
     renderer.dispose();
     expect(scene.children).toHaveLength(0);
   });

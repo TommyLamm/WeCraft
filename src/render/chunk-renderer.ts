@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { World } from '../world/world';
 import { chunkKey } from '../world/world';
-import { meshChunk, type ChunkMesh } from '../world/mesher';
+import { meshChunk, type MeshData } from '../world/mesher';
 import type { AtlasImage } from './textures';
 import { buildTextureArray } from './textures';
 
@@ -48,12 +48,30 @@ export function patchTextureArrayShader(
   shader.uniforms.mapArray = { value: mapArray };
 }
 
-function concat(a: Float32Array, b: Float32Array): Float32Array {
-  const out = new Float32Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
-  return out;
+/** Task 16: the translucent water pass contract, as a pure params fn so tests
+ *  can pin it without a material instance.
+ *
+ *  - `transparent` + `opacity: 0.62` — water is see-through; the tile's own
+ *    alpha (200/255 in the atlas) multiplies on top of it.
+ *  - `depthWrite: false` — water surfaces never occlude what's behind them
+ *    (depth TEST stays on, so opaque terrain still rejects water behind it).
+ *  - `side: DoubleSide` — the surface top face's front points up, so from
+ *    underwater looking up you'd otherwise see only its culled back side. */
+export function waterMaterialParams(): {
+  transparent: boolean;
+  opacity: number;
+  depthWrite: boolean;
+  side: THREE.Side;
+} {
+  return { transparent: true, opacity: 0.62, depthWrite: false, side: THREE.DoubleSide };
 }
+
+/** Task 16: water draws AFTER opaque geometry — three's default renderOrder
+ *  is 0, and the transparent pass also renders after the opaque pass. The
+ *  explicit 3000 pins water after other transparent objects too (e.g. drop
+ *  sprites at 0): sprites write depth first, then water depth-tests against
+ *  it, so a submerged sprite stays hidden behind the surface correctly. */
+export const WATER_RENDER_ORDER = 3000;
 
 /** Mesher shades are one float per vertex; vertexColors wants vec3. */
 function shadeColors(shades: Float32Array): Float32Array {
@@ -66,52 +84,52 @@ function shadeColors(shades: Float32Array): Float32Array {
   return out;
 }
 
-/** Build one BufferGeometry from a `ChunkMesh`. Returns null when the chunk
- *  has no visible faces at all.
- *
- *  Task 16: translucent water pass — water currently rides in the SAME mesh
- *  (same opaque Lambert material) so it never visually vanishes; the deferred
- *  pass splits it onto its own material using the mesher's `water` mesh. */
-function buildChunkGeometry(mesh: ChunkMesh): THREE.BufferGeometry | null {
-  const { opaque, water } = mesh;
-  if (opaque.quadCount === 0 && water.quadCount === 0) return null;
-
-  const indices = new Uint32Array(opaque.indices.length + water.indices.length);
-  indices.set(opaque.indices, 0);
-  const waterOffset = opaque.positions.length / 3;
-  for (let i = 0; i < water.indices.length; i++) {
-    indices[opaque.indices.length + i] = water.indices[i] + waterOffset;
-  }
+/** Build one BufferGeometry for ONE pass (opaque or water) of a `ChunkMesh`.
+ *  Returns null when that pass has no quads. Mesher indices are already
+ *  0-based within their pass — each pass is emitted into its own fresh
+ *  builder (emitQuad's vertBase starts at 0 there) — so no rebasing happens
+ *  here; the Task 15 concatenation that needed it is gone. */
+function buildMeshGeometry(data: MeshData): THREE.BufferGeometry | null {
+  if (data.quadCount === 0) return null;
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.BufferAttribute(concat(opaque.positions, water.positions), 3),
-  );
-  geometry.setAttribute(
-    'normal',
-    new THREE.BufferAttribute(concat(opaque.normals, water.normals), 3),
-  );
-  geometry.setAttribute('uv', new THREE.BufferAttribute(concat(opaque.uvs, water.uvs), 2));
-  geometry.setAttribute(
-    'texIndex',
-    new THREE.BufferAttribute(concat(opaque.texIndex, water.texIndex), 1),
-  );
-  geometry.setAttribute(
-    'color',
-    new THREE.BufferAttribute(
-      concat(shadeColors(opaque.shades), shadeColors(water.shades)),
-      3,
-    ),
-  );
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
+  geometry.setAttribute('texIndex', new THREE.BufferAttribute(data.texIndex, 1));
+  geometry.setAttribute('color', new THREE.BufferAttribute(shadeColors(data.shades), 3));
+  geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geometry.computeBoundingSphere();
   return geometry;
 }
 
+/** A chunk's render pair: BOTH meshes always exist while the chunk is live;
+ *  an empty pass is represented by `visible = false` behind a blank geometry
+ *  (nothing drawn, nothing in the way). */
+interface ChunkMeshes {
+  opaque: THREE.Mesh;
+  water: THREE.Mesh;
+}
+
+/** Point a pass's mesh at freshly built geometry; null means the pass is
+ *  empty → dispose the old buffers, hide the mesh behind a blank stand-in. */
+function applyGeometry(mesh: THREE.Mesh, geometry: THREE.BufferGeometry | null): void {
+  if (geometry) {
+    mesh.geometry.dispose();
+    mesh.geometry = geometry;
+    mesh.visible = true;
+  } else if (mesh.visible) {
+    mesh.geometry.dispose(); // frees the GPU buffers of the old water/opaque run
+    mesh.geometry = new THREE.BufferGeometry(); // blank stand-in for the empty pass
+    mesh.visible = false;
+  }
+  // else: already blank + hidden — nothing to rebuild
+}
+
 export class ChunkRenderer {
-  private meshes = new Map<string, THREE.Mesh>();
+  private chunks = new Map<string, ChunkMeshes>();
   private material: THREE.MeshLambertMaterial;
+  private waterMaterial: THREE.MeshLambertMaterial;
   private textureArray: THREE.DataArrayTexture;
 
   constructor(private scene: THREE.Scene, atlas: AtlasImage) {
@@ -127,55 +145,73 @@ export class ChunkRenderer {
     this.material.onBeforeCompile = (shader) => {
       patchTextureArrayShader(shader, this.textureArray);
     };
+    // Task 16: translucent water pass — SAME DataArrayTexture instance as the
+    // opaque pass (no second texture array), same onBeforeCompile patch.
+    // alphaTest 0: transparency comes from `opacity`, not cutout discard —
+    // water tiles are full tiles, nothing needs its pixels punched out.
+    this.waterMaterial = new THREE.MeshLambertMaterial({
+      ...waterMaterialParams(),
+      alphaTest: 0,
+      vertexColors: true,
+      fog: true,
+    });
+    this.waterMaterial.onBeforeCompile = (shader) => {
+      patchTextureArrayShader(shader, this.textureArray);
+    };
   }
 
   rebuild(world: World, cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
-    const old = this.meshes.get(key);
-    const geometry = buildChunkGeometry(meshChunk(world, cx, cz));
+    const mesh = meshChunk(world, cx, cz);
+    const opaqueGeometry = buildMeshGeometry(mesh.opaque);
+    const waterGeometry = buildMeshGeometry(mesh.water);
 
-    if (!geometry) {
-      if (old) {
-        this.scene.remove(old);
-        old.geometry.dispose();
-        this.meshes.delete(key);
-      }
+    if (!opaqueGeometry && !waterGeometry) {
+      this.remove(cx, cz); // nothing visible at all → chunk leaves the scene
       return;
     }
 
-    const mesh = new THREE.Mesh(geometry, this.material);
-    mesh.matrixAutoUpdate = false;
-    mesh.updateMatrix();
-
-    if (old) {
-      this.scene.remove(old);
-      old.geometry.dispose();
+    let pair = this.chunks.get(key);
+    if (!pair) {
+      pair = {
+        opaque: new THREE.Mesh(new THREE.BufferGeometry(), this.material),
+        water: new THREE.Mesh(new THREE.BufferGeometry(), this.waterMaterial),
+      };
+      for (const m of [pair.opaque, pair.water]) {
+        m.matrixAutoUpdate = false;
+        m.updateMatrix(); // positions are world-space; the matrix never changes
+      }
+      pair.water.renderOrder = WATER_RENDER_ORDER; // draw after opaque geometry
+      this.scene.add(pair.opaque, pair.water); // opaque first → stable children order
+      this.chunks.set(key, pair);
     }
-    this.scene.add(mesh);
-    this.meshes.set(key, mesh);
+    applyGeometry(pair.opaque, opaqueGeometry);
+    applyGeometry(pair.water, waterGeometry);
   }
 
   remove(cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
-    const mesh = this.meshes.get(key);
-    if (mesh) {
-      this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      this.meshes.delete(key);
-    }
+    const pair = this.chunks.get(key);
+    if (!pair) return;
+    this.scene.remove(pair.opaque, pair.water);
+    pair.opaque.geometry.dispose();
+    pair.water.geometry.dispose(); // per-chunk water geometry freed here
+    this.chunks.delete(key);
   }
 
   has(cx: number, cz: number): boolean {
-    return this.meshes.has(chunkKey(cx, cz));
+    return this.chunks.has(chunkKey(cx, cz));
   }
 
   dispose(): void {
-    for (const m of this.meshes.values()) {
-      this.scene.remove(m);
-      m.geometry.dispose();
+    for (const pair of this.chunks.values()) {
+      this.scene.remove(pair.opaque, pair.water);
+      pair.opaque.geometry.dispose();
+      pair.water.geometry.dispose();
     }
-    this.meshes.clear();
-    this.textureArray.dispose();
+    this.chunks.clear();
+    this.textureArray.dispose(); // ONE shared texture array (both passes)
     this.material.dispose();
+    this.waterMaterial.dispose();
   }
 }

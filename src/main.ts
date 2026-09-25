@@ -1232,6 +1232,15 @@ gs.renderer.setAnimationLoop(() => {
     hud.setDebug(null);
   }
 
+  // Task 16: camera-in-water → underwater fog (one cheap block lookup;
+  // runs every frame so quitting to title/saving while submerged restores
+  // the day fog too — getBlock floors the coords and yields AIR when out of
+  // range or outside loaded chunks)
+  const cam = gs.camera.position;
+  gs.setUnderwater(
+    world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER,
+  );
+
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
