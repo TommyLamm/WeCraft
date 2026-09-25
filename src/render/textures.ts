@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TILE_COUNT } from '../world/blocks';
 
 export const ATLAS_SIZE = 512;
 export const TILE_PX = 16;
@@ -6,8 +7,6 @@ export const TILES_PER_ROW = ATLAS_SIZE / TILE_PX; // 32
 
 /** Layers in the block texture array (one 16×16 slice per atlas tile). */
 export const ARRAY_LAYERS = 64;
-/** Tiles actually painted by `drawAtlas` — every other layer is debug magenta. */
-const DRAWN_TILES = 19;
 
 export function tileIndexAt(tx: number, ty: number): number {
   return ty * TILES_PER_ROW + tx;
@@ -173,7 +172,7 @@ export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataAr
     data[i + 2] = 255;
     data[i + 3] = 255;
   }
-  for (let tile = 0; tile < DRAWN_TILES; tile++) {
+  for (let tile = 0; tile < TILE_COUNT; tile++) { // past TILE_COUNT the magenta fill stays
     const tx = tile % TILES_PER_ROW;
     const ty = Math.floor(tile / TILES_PER_ROW);
     const base = tile * layerBytes;

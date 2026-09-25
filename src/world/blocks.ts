@@ -39,6 +39,12 @@ const T = {
   CRAFTING_TOP: 17, CRAFTING_SIDE: 18,
 } as const;
 
+/** Tiles `T` defines (0..TILE_COUNT-1) — `CRAFTING_SIDE` is the highest tile.
+ *  drawAtlas paints exactly these; the texture array fills every layer past
+ *  them with the magenta debug color, so adding a tile to T without drawing it
+ *  fails loudly instead of silently sampling magenta in-game. */
+export const TILE_COUNT = T.CRAFTING_SIDE + 1;
+
 const DEFS: Record<number, BlockDef> = {
   0: { id: 0, name: 'air', hardness: 0, solid: false, transparent: true, top: 0, side: 0, bottom: 0 },
   1: { id: 1, name: 'stone', hardness: 2.0, solid: true, transparent: false, top: T.STONE, side: T.STONE, bottom: T.STONE },

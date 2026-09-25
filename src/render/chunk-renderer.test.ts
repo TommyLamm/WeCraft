@@ -62,6 +62,26 @@ describe('patchTextureArrayShader', () => {
     // alphaTest runs AFTER the sample → glass/leaves cutouts keep working
     expect(shader.fragmentShader).toContain('#include <alphatest_fragment>');
   });
+
+  it('lands on the REAL THREE.ShaderLib.lambert sources (includes still exist)', () => {
+    // Guard against three renaming/moving the includes: our patch is a plain
+    // String.replace, so a rename would silently no-op — green tests, but flat
+    // untextured terrain at runtime. Note we patch a WRAPPER object, never
+    // THREE.ShaderLib itself (the source strings are shared).
+    const shader = {
+      uniforms: {} as Record<string, { value: unknown }>,
+      vertexShader: THREE.ShaderLib.lambert.vertexShader,
+      fragmentShader: THREE.ShaderLib.lambert.fragmentShader,
+    };
+    patchTextureArrayShader(shader, new THREE.DataArrayTexture());
+    expect(shader.vertexShader).toContain('attribute float texIndex;');
+    expect(shader.vertexShader).toContain('vTileUv = uv;'); // begin_vertex hook fired
+    expect(shader.fragmentShader).toContain('uniform sampler2DArray mapArray;');
+    expect(shader.fragmentShader).toContain(
+      'texture( mapArray, vec3( vTileUv, vTexIndex ) )',
+    );
+    expect(shader.fragmentShader).not.toContain('#include <map_fragment>');
+  });
 });
 
 describe('ChunkRenderer', () => {
@@ -100,6 +120,27 @@ describe('ChunkRenderer', () => {
     expect(scene.children).toHaveLength(1); // water must not vanish
     const geom = (scene.children[0] as THREE.Mesh).geometry;
     expect(geom.getAttribute('position').count).toBe(6 * 4); // 6 water quads
+    renderer.dispose();
+  });
+
+  it('mixed chunk: water indices rebase past the opaque vertex run', () => {
+    const { scene, renderer } = setup();
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    w.setBlock(5, 60, 5, BLOCK.WATER); // same chunk, not adjacent
+    renderer.rebuild(w, 0, 0);
+    const geom = (scene.children[0] as THREE.Mesh).geometry;
+    const idx = Array.from(geom.getIndex()!.array as Uint32Array);
+    // Layout from buildChunkGeometry: opaque run first (stone 6 quads → 36
+    // indices over verts 0..23), then water rebased (water 6 quads → 36
+    // indices that MUST point at verts ≥ 24, not restart at 0 and draw the
+    // stone quads a second time).
+    expect(geom.getAttribute('position').count).toBe(48); // 12 quads × 4 verts
+    expect(idx).toHaveLength(72); // 12 quads × 6 indices
+    expect(Math.max(...idx)).toBeLessThan(48); // nothing reads past the buffer
+    expect(Math.max(...idx.slice(0, 36))).toBeLessThan(24); // opaque run in-bounds
+    const waterRun = idx.slice(36);
+    expect(Math.min(...waterRun)).toBeGreaterThanOrEqual(24); // ≥ opaque vertex count
+    expect(Math.max(...waterRun)).toBeLessThan(48); // …and still in-bounds
     renderer.dispose();
   });
 

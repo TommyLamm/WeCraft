@@ -9,6 +9,7 @@ import {
   tileIndexAt,
   type AtlasImage,
 } from './textures';
+import { TILE_COUNT } from '../world/blocks';
 
 const GRASS_SIDE = 1;
 const STONE = 3;
@@ -229,7 +230,7 @@ describe('buildTextureArray', () => {
     // Every content tile: texture row r holds image row (15 − r), so the
     // mesher's v=1 (block top) samples image row 0 — same contract the old
     // CanvasTexture(flipY)+bakeAtlasUvs pair produced.
-    for (let tile = 0; tile < 19; tile++) {
+    for (let tile = 0; tile < TILE_COUNT; tile++) {
       const tx = tile % TILES_PER_ROW;
       const ty = Math.floor(tile / TILES_PER_ROW);
       for (const [x, y] of [[0, 0], [7, 3], [15, 15]] as const) {
@@ -263,11 +264,12 @@ describe('buildTextureArray', () => {
 
   it('drawn tiles keep their content; empty layers are opaque magenta #ff00ff', () => {
     const tex = buildTextureArray();
-    // tiles 0–18 are drawn in drawAtlas → content (glass tile 14 included)
+    // tiles 0..TILE_COUNT-1 are drawn in drawAtlas → content (glass tile 14 included)
     const glass = layerPixel(tex, 14, 0, 0); // border pixel, a=220
     expect(glass).not.toEqual(MAGENTA);
-    // tile 19+ never drawn → magenta debug fill (alphaTest-proof)
-    for (const layer of [19, 32, 47, 63]) {
+    // the first empty layer (TILE_COUNT) + deeper ones never drawn → magenta debug fill
+    // (alphaTest-proof)
+    for (const layer of [TILE_COUNT, 32, 47, 63]) {
       for (const [x, y] of [[0, 0], [8, 8], [15, 15]] as const) {
         expect(layerPixel(tex, layer, x, y), `layer ${layer} px ${x},${y}`).toEqual(MAGENTA);
       }

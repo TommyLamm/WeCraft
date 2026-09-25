@@ -60,9 +60,11 @@ const WATER_BIT = 1 << 24;
 
 /** Merge signature of one visible face: block id | tile<<8 | shade<<16 |
  *  water-bit. Faces merge only on an exact match — different block ids never
- *  merge even when they share a texture, and the face shade (this mesher's
- *  light term; it enters the key the way Phase 1's packed per-vertex light
- *  did) keeps lit and shadowed faces from ever welding across a light seam. */
+ *  merge even when they share a texture. The shade bits are RESERVED for
+ *  per-cell light (AO/skylight): today the shade is constant per face
+ *  direction (it comes from the FACES table), so it can never split a merge —
+ *  but a future per-cell light term entering this key will keep differently
+ *  lit faces from welding across a light seam. */
 function faceSignature(id: number, tile: number, shadeKey: number, isWater: boolean): number {
   return id | (tile << 8) | (shadeKey << 16) | (isWater ? WATER_BIT : 0);
 }
@@ -256,6 +258,8 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     const nDim = AXIS_SIZE[face.nAxis];
     const uDim = AXIS_SIZE[face.uAxis];
     const vDim = AXIS_SIZE[face.vAxis];
+    // Reserved per-cell light slot in the signature — constant per direction
+    // today (FACES.shade; no AO/skylight exists yet), so it never splits merges
     const shadeKey = Math.round(face.shade * 100);
     const mask = new Int32Array(uDim * vDim);
     const cell: [number, number, number] = [0, 0, 0];

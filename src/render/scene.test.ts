@@ -279,22 +279,24 @@ describe('sunLightPosition', () => {
     expect(p.y).toBeGreaterThan(0);
   });
 
-  it('night (sun below horizon): light stays ABOVE the horizon (moon = anti-sun)', () => {
+  it('night (sun below horizon): light stays ABOVE the horizon (vertical mirror)', () => {
     const night = sunDirection(0.75); // midnight: {0, -1, 0}
     expect(night.y).toBeLessThan(0); // the bug: raw position would be y < 0
     const p = sunLightPosition(night);
     expect(p.y).toBeGreaterThan(0); // lit from above → terrain not black
-    expect(p.y).toBeCloseTo(-night.y * DIST, 10); // negated through origin
+    expect(p.y).toBeCloseTo(-night.y * DIST, 10); // y mirrored → +1
+    expect(p.x).toBeCloseTo(night.x * DIST, 10); // azimuth untouched — no full mirror
+    expect(p.z).toBeCloseTo(night.z * DIST, 10);
   });
 
-  it('night at an angle: mirrors x/y/z (anti-sun), y strictly positive', () => {
+  it('night at an angle: azimuth UNCHANGED, only y mirrored above the horizon', () => {
     const d = sunDirection(0.6); // after dusk: y < 0, z ≠ 0
     expect(d.y).toBeLessThan(0);
     const p = sunLightPosition(d);
     expect(p.y).toBeGreaterThan(0);
-    expect(p.x).toBeCloseTo(-d.x * DIST, 10);
-    expect(p.y).toBeCloseTo(-d.y * DIST, 10);
-    expect(p.z).toBeCloseTo(-d.z * DIST, 10);
+    expect(p.x).toBeCloseTo(d.x * DIST, 10); // horizontal kept (mirroring it
+    expect(p.z).toBeCloseTo(d.z * DIST, 10); // flipped the light across z at dusk)
+    expect(p.y).toBeCloseTo(-d.y * DIST, 10); // only the vertical component mirrors
   });
 
   it('day at an angle (t=0.4, still day phase): position untouched', () => {
@@ -303,5 +305,18 @@ describe('sunLightPosition', () => {
     const p = sunLightPosition(d);
     expect(p.y).toBeCloseTo(d.y * DIST, 10);
     expect(p.z).toBeCloseTo(d.z * DIST, 10);
+  });
+
+  it('horizon crossing is continuous — no whole-world light flip at dusk/dawn', () => {
+    const EPS = 1e-4;
+    const before = sunLightPosition(sunDirection(0.5 - EPS)); // last day frame
+    const after = sunLightPosition(sunDirection(0.5 + EPS)); // first night frame
+    expect(before.y).toBeGreaterThan(0);
+    expect(after.y).toBeGreaterThan(0);
+    // Position delta across the crossing: the old full-vector mirror jumped
+    // ≈ 2·dist (z: +100 → −100) here, while intensity is still ≈ 0.51 — a
+    // whole-world lighting side flip at mid brightness, twice per game day.
+    const jump = Math.hypot(before.x - after.x, before.y - after.y, before.z - after.z);
+    expect(jump).toBeLessThan(10);
   });
 });

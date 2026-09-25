@@ -21,12 +21,17 @@ export interface GameScene {
  *  Deferred Task 6 fix: at night the sun sits below the horizon, and raw
  *  `sunDir × dist` put the light at y < 0 — lighting the world from BELOW,
  *  which went visibly wrong once Task 15 switched chunks to MeshLambertMaterial.
- *  Mirroring through the origin (the anti-sun / moon) keeps the light ABOVE
- *  the horizon so terrain stays lit from above. Intensity and color are NOT
- *  touched here — they still come from `skyColors` in `setDayNight`. */
+ *  Mirroring ONLY the vertical component keeps the light above the horizon
+ *  while preserving the sun's azimuth (x/z untouched). That matters because
+ *  `sunDirection` moves in the y–z plane and its y crosses 0 at mid brightness
+ *  (~0.51 intensity): a full-vector mirror would jump the position ≈ 2·dist in
+ *  one frame at every dusk/dawn — flipping the whole world's lighting side
+ *  twice per game day. The vertical mirror is continuous across the crossing
+ *  and matches the old behavior at night zenith (y = −1 → +1). Intensity and
+ *  color are NOT touched here — they still come from `skyColors` in
+ *  `setDayNight`. */
 export function sunLightPosition(sunDir: Vec3, dist = 100): Vec3 {
-  const s = sunDir.y < 0 ? -1 : 1;
-  return { x: sunDir.x * dist * s, y: sunDir.y * dist * s, z: sunDir.z * dist * s };
+  return { x: sunDir.x * dist, y: Math.abs(sunDir.y) * dist, z: sunDir.z * dist };
 }
 
 export function createGameScene(canvas: HTMLCanvasElement): GameScene {
@@ -41,8 +46,9 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   // Task 6: sun + ambient lights here (Task 15 switched chunks to
   // MeshLambertMaterial, so terrain now reacts to both; sky/fog respond
   // above). Directional light shines from position → target (origin), so
-  // position = sunLightPosition(sunDir) — flipped to the anti-sun at night
-  // so the light never dips below the horizon (deferred Task 6 fix).
+  // position = sunLightPosition(sunDir) — the vertical component is mirrored
+  // at night so the light never dips below the horizon, with azimuth (and
+  // therefore dusk/dawn continuity) preserved (deferred Task 6 fix).
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
   scene.add(sunLight);
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
@@ -70,7 +76,7 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
       renderer.setSize(w, h);
     },
     setDayNight(sunDir, colors) {
-      const p = sunLightPosition(sunDir); // y > 0 even at night (anti-sun)
+      const p = sunLightPosition(sunDir); // y = |sunDir.y| — never below horizon
       sunLight.position.set(p.x, p.y, p.z);
       sunLight.intensity = colors.sunIntensity;
       ambientLight.intensity = colors.ambient;
