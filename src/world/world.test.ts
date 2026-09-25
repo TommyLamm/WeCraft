@@ -173,3 +173,68 @@ describe('serializeModified / applyModified', () => {
     expect(w.serializeModified()).toEqual([['2,64,2', BLOCK.GLASS]]);
   });
 });
+
+/** Task 14 load-order fix: main.ts's terrain-generation response fills chunks
+ *  wholesale (`existing.data.set(data)`), which runs AFTER applyModified has
+ *  auto-created a not-yet-generated chunk — without a re-apply the saved edits
+ *  would be clobbered by regenerated terrain. These tests simulate that exact
+ *  fill sequence at the world level (the call ORDER lives in main.ts's gen
+ *  response handler; this proves the re-apply makes edits win). */
+describe('reapplyModifiedInChunk (Task 14 gen-order fix)', () => {
+  it('saved edits win over a wholesale terrain fill of the same chunk', () => {
+    const w = new World();
+    w.applyModified([
+      ['5,70,5', BLOCK.STONE], // chunk (0,0)
+      ['-17,80,-16', BLOCK.GLASS], // chunk (-2,-1) — must not be touched here
+    ]);
+    // simulate the gen response for chunk (0,0): fresh terrain replaces data
+    const c = w.getChunk(0, 0)!;
+    const terrain = new Uint8Array(c.data.length).fill(BLOCK.DIRT);
+    c.data.set(terrain);
+    expect(w.getBlock(5, 70, 5)).toBe(BLOCK.DIRT); // demonstrates the clobber hazard
+    w.reapplyModifiedInChunk(0, 0);
+    expect(w.getBlock(5, 70, 5)).toBe(BLOCK.STONE); // edit wins over terrain
+    // another chunk's edit is unaffected by this call
+    expect(w.getBlock(-17, 80, -16)).toBe(BLOCK.GLASS);
+    expect(w.serializeModified()).toContainEqual(['5,70,5', BLOCK.STONE]);
+  });
+
+  it('re-applies edits into a chunk re-created from terrain after an unload', () => {
+    const w = new World();
+    w.applyModified([['5,70,5', BLOCK.STONE]]);
+    w.removeChunk(0, 0); // refreshQueues unload — the edit stays in world.modified
+    // gen response else-branch: brand-new chunk built from terrain data
+    const fresh = new Chunk(0, 0, new Uint8Array(16 * 16 * 256).fill(BLOCK.DIRT));
+    fresh.generated = true;
+    w.addChunk(fresh);
+    w.reapplyModifiedInChunk(0, 0);
+    expect(w.getBlock(5, 70, 5)).toBe(BLOCK.STONE);
+  });
+
+  it('marks the chunk dirty for re-mesh (and no-op on an empty world)', () => {
+    const w = new World();
+    w.applyModified([['5,70,5', BLOCK.STONE]]);
+    w.getChunk(0, 0)!.dirty = false;
+    w.reapplyModifiedInChunk(0, 0);
+    expect(w.getChunk(0, 0)!.dirty).toBe(true);
+    const empty = new World();
+    expect(() => empty.reapplyModifiedInChunk(3, 3)).not.toThrow();
+  });
+
+  it('only re-applies entries inside the requested chunk', () => {
+    const w = new World();
+    w.applyModified([
+      ['0,64,0', BLOCK.STONE],
+      ['15,64,15', BLOCK.GLASS],
+      ['16,64,0', BLOCK.DIRT], // chunk (1,0)
+    ]);
+    const c1 = w.getChunk(1, 0)!;
+    c1.data.fill(BLOCK.AIR); // simulate fill wiping it
+    w.reapplyModifiedInChunk(0, 0);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.STONE);
+    expect(w.getBlock(15, 64, 15)).toBe(BLOCK.GLASS);
+    expect(w.getBlock(16, 64, 0)).toBe(BLOCK.AIR); // (1,0) untouched by this call
+    w.reapplyModifiedInChunk(1, 0);
+    expect(w.getBlock(16, 64, 0)).toBe(BLOCK.DIRT);
+  });
+});

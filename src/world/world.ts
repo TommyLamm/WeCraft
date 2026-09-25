@@ -79,6 +79,32 @@ export class World {
     }
   }
 
+  /** Re-apply every recorded edit inside chunk (cx, cz) — the Task 14
+   *  load-order fix. Terrain generation fills chunks wholesale
+   *  (`chunk.data.set(terrain)`) and that fill can run AFTER `applyModified`
+   *  (or a session edit) auto-created the chunk with `generated === false`,
+   *  wiping the edits; this call re-wins them over regenerated terrain.
+   *  main.ts invokes it from the gen response handler (both branches) and
+   *  from spawnPoint's synchronous generation. Routes through setBlock, so
+   *  the chunk is marked dirty for re-mesh and edge edits dirty neighbors.
+   *  Keys in `modified` are always setBlock-written (well-formed) — no
+   *  untrusted-parse guards needed here, unlike applyModified (save data). */
+  reapplyModifiedInChunk(cx: number, cz: number): void {
+    const x0 = cx * CHUNK_SIZE;
+    const z0 = cz * CHUNK_SIZE;
+    // snapshot: setBlock writes back into `modified` while we iterate
+    for (const [key, id] of [...this.modified]) {
+      const parts = key.split(',');
+      if (parts.length !== 3) continue; // defensive: never setBlock-written
+      const x = Number(parts[0]);
+      const y = Number(parts[1]);
+      const z = Number(parts[2]);
+      if (y < 0 || y >= CHUNK_HEIGHT) continue;
+      if (x < x0 || x >= x0 + CHUNK_SIZE || z < z0 || z >= z0 + CHUNK_SIZE) continue;
+      this.setBlock(x, y, z, id as BlockId);
+    }
+  }
+
   isSolid(x: number, y: number, z: number): boolean {
     return blockIsSolid(this.getBlock(x, y, z));
   }

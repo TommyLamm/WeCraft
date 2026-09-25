@@ -1,5 +1,5 @@
 // Task 13: IndexedDB persistence for world modifications and player state.
-// Payload assembly from live objects happens in Task 14 (menus wiring).
+// Task 14: `collectSavePayload` — pure payload assembly from live game state.
 
 import type { Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
@@ -17,6 +17,46 @@ export interface SavePayload {
 		inventory: (ItemStack | null)[];
 	};
 	time: { t: number };
+}
+
+/** Live-state sources for {@link collectSavePayload} — structurally typed so
+ *  tests pass plain objects while main.ts passes thin adapters. */
+export interface SaveSources {
+	world: { seed: number; serializeModified(): Array<[string, number]> };
+	player: {
+		pos: readonly [number, number, number];
+		yaw: number;
+		mode: 'survival' | 'creative';
+		inventory: (ItemStack | null)[];
+	};
+	vitals: Vitals | null;
+	clockT: number;
+	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
+	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
+	 *  value only matters for tests / pre-save inspection. */
+	savedAt?: number;
+}
+
+/** Assemble a {@link SavePayload} from live game state — PURE (no IDB, no DOM):
+ *  every player-owned value is copied (fresh pos array, fresh stack/vitals
+ *  objects) so later mutations of the live state never alias into an already
+ *  captured payload. `modified` comes from `world.serializeModified()`, which
+ *  already returns fresh tuples. */
+export function collectSavePayload(args: SaveSources): SavePayload {
+	return {
+		version: 1,
+		savedAt: args.savedAt ?? Date.now(),
+		worldSeed: args.world.seed,
+		modified: args.world.serializeModified(),
+		player: {
+			pos: [args.player.pos[0], args.player.pos[1], args.player.pos[2]],
+			yaw: args.player.yaw,
+			mode: args.player.mode,
+			vitals: args.vitals ? { ...args.vitals } : null,
+			inventory: args.player.inventory.map((s) => (s ? { ...s } : null)),
+		},
+		time: { t: args.clockT },
+	};
 }
 
 const DB_NAME = 'wecraft-save';

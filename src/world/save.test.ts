@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { saveGame, loadGame, openSaveDb, type SavePayload } from './save';
+import { saveGame, loadGame, openSaveDb, collectSavePayload, type SavePayload } from './save';
 import { createVitals } from '../player/survival';
+import type { ItemStack } from '../core/items';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
@@ -130,5 +131,82 @@ describe('saveGame / loadGame', () => {
   it('saveGame rejects when the database cannot be written', async () => {
     await createIncompatibleDb();
     await expect(saveGame(makePayload())).rejects.toBeDefined();
+  });
+});
+
+/** Task 14: payload assembly from live game state — a PURE function so the
+ *  composition root (main.ts) stays thin and this logic is testable without
+ *  touching IndexedDB or the DOM. */
+describe('collectSavePayload', () => {
+  const world = {
+    seed: 4242,
+    serializeModified: (): Array<[string, number]> => [
+      ['5,70,5', 1], // placed stone
+      ['6,70,6', 0], // mined to air
+    ],
+  };
+
+  it('assembles version, seed, modified and clock from the sources', () => {
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [] },
+      vitals: null,
+      clockT: 0.42,
+      savedAt: 123,
+    });
+    expect(payload.version).toBe(1);
+    expect(payload.worldSeed).toBe(4242);
+    expect(payload.modified).toEqual([
+      ['5,70,5', 1],
+      ['6,70,6', 0],
+    ]);
+    expect(payload.time).toEqual({ t: 0.42 });
+    expect(payload.savedAt).toBe(123);
+  });
+
+  it('copies the player sub-object — no aliasing of pos, stacks or vitals', () => {
+    const pos: [number, number, number] = [1, 2, 3];
+    const stack: ItemStack = { item: 'stone', count: 32 };
+    const inventory: Array<ItemStack | null> = [stack, null];
+    const vitals = createVitals();
+    const payload = collectSavePayload({
+      world,
+      player: { pos, yaw: -1.25, mode: 'survival', inventory },
+      vitals,
+      clockT: 0,
+      savedAt: 0,
+    });
+    // fresh pos array — mutating the source must not touch the payload
+    expect(payload.player.pos).toEqual([1, 2, 3]);
+    expect(payload.player.pos).not.toBe(pos);
+    pos[0] = 99;
+    expect(payload.player.pos[0]).toBe(1);
+    // fresh stack objects — mutating the source stack must not touch the payload
+    expect(payload.player.inventory[0]).toEqual({ item: 'stone', count: 32 });
+    expect(payload.player.inventory[0]).not.toBe(stack);
+    stack.count = 1;
+    expect(payload.player.inventory[0]?.count).toBe(32);
+    expect(payload.player.inventory[1]).toBeNull(); // null slots stay null
+    // fresh vitals copy
+    expect(payload.player.vitals).toEqual(vitals);
+    expect(payload.player.vitals).not.toBe(vitals);
+    expect(payload.player.yaw).toBe(-1.25);
+    expect(payload.player.mode).toBe('survival');
+  });
+
+  it('carries null vitals (creative) and defaults savedAt to now when omitted', () => {
+    const before = Date.now();
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [] },
+      vitals: null,
+      clockT: 0.1,
+    });
+    const after = Date.now();
+    expect(payload.player.mode).toBe('creative');
+    expect(payload.player.vitals).toBeNull();
+    // default savedAt = Date.now() (saveGame overwrites it anyway — documented)
+    expect(payload.savedAt).toBeGreaterThanOrEqual(before);
+    expect(payload.savedAt).toBeLessThanOrEqual(after);
   });
 });

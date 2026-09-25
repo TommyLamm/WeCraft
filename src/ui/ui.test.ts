@@ -91,7 +91,7 @@ describe('ui smoke', () => {
   it('menus show and hide title', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showTitle(() => {});
+    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
     expect(menus.isVisible()).toBe(true);
     expect(root.textContent).toContain('單人遊戲');
     menus.hideAll();
@@ -101,12 +101,34 @@ describe('ui smoke', () => {
   it('title screen shows the current mode (Task 5)', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showTitle(() => {});
+    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
     expect(root.textContent).toContain('Mode: Survival'); // default mode
     menus.hideAll();
     saveSettings({ mode: 'creative' });
-    menus.showTitle(() => {});
+    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
     expect(root.textContent).toContain('Mode: Creative');
+    menus.hideAll();
+  });
+
+  it('title shows 繼續遊戲 only when a save exists (Task 14)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // no save → Continue button hidden (settled: hidden, not a fallback)
+    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
+    expect(root.textContent).toContain('單人遊戲');
+    expect(root.textContent).not.toContain('繼續遊戲');
+    menus.hideAll();
+    // save exists → Continue mounts above new game and is wired
+    const onContinue = vi.fn();
+    const onNewGame = vi.fn();
+    menus.showTitle({ hasSave: true, onContinue, onNewGame });
+    const labels = [...root.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels).toContain('繼續遊戲');
+    btnByText(root, '繼續遊戲').click();
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(onNewGame).not.toHaveBeenCalled();
+    btnByText(root, '單人遊戲').click();
+    expect(onNewGame).toHaveBeenCalledTimes(1);
     menus.hideAll();
   });
 
@@ -175,7 +197,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onSaveQuit: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -186,9 +208,25 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
+    menus.hideAll();
+  });
+
+  it('儲存並離開 invokes onSaveQuit only; 回到標題 stays an unsaved quit (Task 14)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onSaveQuit = vi.fn();
+    const onQuit = vi.fn();
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit });
+    expect(root.textContent).toContain('儲存並離開');
+    btnByText(root, '儲存並離開').click();
+    expect(onSaveQuit).toHaveBeenCalledTimes(1);
+    expect(onQuit).not.toHaveBeenCalled(); // save-quit must NOT fire the plain quit
+    btnByText(root, '回到標題').click();
+    expect(onQuit).toHaveBeenCalledTimes(1);
+    expect(onSaveQuit).toHaveBeenCalledTimes(1);
     menus.hideAll();
   });
 
@@ -201,7 +239,7 @@ describe('pause menu', () => {
         mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
       });
     });
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onSaveQuit: () => {} });
     btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
@@ -217,7 +255,7 @@ describe('pause menu', () => {
     const onResume = vi.fn();
     const onQuit = vi.fn();
     const onToggleMode = vi.fn();
-    menus.showPause({ onResume, onQuit, onToggleMode });
+    menus.showPause({ onResume, onQuit, onToggleMode, onSaveQuit: () => {} });
     btnByText(root, '繼續遊戲').click();
     btnByText(root, '回到標題').click();
     btnByText(root, 'Mode: Survival').click();
@@ -230,7 +268,12 @@ describe('pause menu', () => {
   it('settings sliders persist via saveSettings on change only', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {} });
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => {},
+      onToggleMode: () => {},
+      onSaveQuit: () => {},
+    });
     btnByText(root, '設定').click();
     const ranges = [...root.querySelectorAll('input[type="range"]')] as HTMLInputElement[];
     expect(ranges.length).toBe(3);

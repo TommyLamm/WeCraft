@@ -50,6 +50,9 @@ import { createCrafting, type CraftingParams } from './ui/crafting';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { generateChunk, surfaceHeight } from './world/terrain';
+// Task 14: save/continue — payload assembly is pure (save.ts), all call sites
+// here are thin (composition-root convention).
+import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
@@ -236,6 +239,22 @@ let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 // `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
 let clock: Clock = createClock(settings.dayLengthSec);
 
+// ---- 存檔 / 繼續（Task 14）----
+/** Last known save: loaded ONCE at boot (gates the title's Continue button —
+ *  settled: hidden when no save) and refreshed by every SUCCESSFUL save in
+ *  this page life, so a click always applies the freshest known payload
+ *  without a second IDB read (and inside the click's pointer-lock gesture).
+ *  The save itself only changes through this page's saveGame calls, so the
+ *  cache matches what loadGame() would return (single-player, single tab). */
+let savedPayload: SavePayload | null = null;
+/** True from game entry (new game OR continue) until a quit-to-title — the
+ *  honest guard for the beforeunload save: on the title with no session
+ *  there is nothing worth saving (settled). */
+let sessionStarted = false;
+/** Seconds accumulator toward the 30 s autosave while playing. */
+let saveAcc = 0;
+const AUTOSAVE_INTERVAL_SEC = 30;
+
 // ---- 生存 HUD（Task 4）----
 // .vitals 容器：same programmatic markup pattern as hud/menus/inventory
 const vitalsEl = document.createElement('div');
@@ -333,6 +352,11 @@ function spawnPoint(): { x: number; y: number; z: number } {
     chunk.generated = true;
     chunk.dirty = true;
     world.addChunk(chunk);
+    // Task 14: this synchronous fill wholesale-replaces chunk data — same
+    // clobber hazard as the async gen response handler, so re-apply edits
+    // recorded before the chunk existed as generated (e.g. Continue's
+    // applyModified auto-creating (0,0) ahead of this line).
+    world.reapplyModifiedInChunk(0, 0);
   }
   generated.add(chunkKey(0, 0));
   let y = surfaceHeight(0.5, 0.5, settings.seed) + 1;
@@ -457,6 +481,11 @@ function processQueues(): void {
         world.addChunk(chunk);
       }
       generated.add(key);
+      // Task 14 load-order fix: the fill above may have wiped edits recorded
+      // while the chunk was NOT yet generated (Continue's applyModified
+      // auto-creates generated=false chunks; unloaded chunks re-fill on
+      // return) — saved/player edits must always win over regenerated terrain.
+      world.reapplyModifiedInChunk(cx, cz);
     }).catch(() => genInFlight.delete(key));
     budgetGen--;
   }
@@ -486,7 +515,13 @@ function setState(next: GameState): void {
   craftUi.close(); // every transition clears the crafting overlay too (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   if (next === 'title') {
-    menus.showTitle(startGame);
+    // Task 14: Continue renders iff a save exists (savedPayload — boot load
+    // or a successful in-session save); no save → hidden (settled).
+    menus.showTitle({
+      hasSave: savedPayload !== null,
+      onContinue: handleContinue,
+      onNewGame: startGame,
+    });
     document.exitPointerLock?.();
   } else if (next === 'paused') {
     menus.showPause({
@@ -500,9 +535,19 @@ function setState(next: GameState): void {
       },
       // reset to spawn before title: title orbit queues key off player.position —
       // leaving it far away would orbit a one-chunk island (Task 17 CR fix)
-      onQuit: () => {
-        resetPlayerToSpawn();
-        setState('title');
+      onQuit: quitToTitle, // plain 回到標題 — UNSAVED quit (Task 14 settled split)
+      // Task 14: 儲存並離開 — snapshot the live session FIRST, save, then quit
+      // (both callbacks are separate buttons; the death screen's quit below
+      // deliberately has neither — see handleQuitToTitle).
+      onSaveQuit: () => {
+        const payload = sessionSavePayload();
+        void saveGame(payload).then(
+          () => {
+            savedPayload = payload; // boot check may predate this save
+            quitToTitle();
+          },
+          () => quitToTitle(), // best-effort: still quit; savedPayload stays honest
+        );
       },
       // mode toggle (Task 5): emit only — the mode-changed handler above owns
       // persistence + application (Decision A — menus stays bus-free); menus
@@ -580,10 +625,125 @@ function resetPlayerToSpawn(): void {
   attackCd = 0;
 }
 
+/** Snapshot the live session as a SavePayload (Task 14) — thin composition-root
+ *  adapter feeding the PURE `collectSavePayload`. The World has no seed of its
+ *  own (terrain generation is keyed off `settings.seed` in the worker client),
+ *  so the seed is supplied from settings here: the payload therefore records
+ *  the seed the world was actually generated with at save time. */
+function sessionSavePayload(): SavePayload {
+  return collectSavePayload({
+    world: { seed: settings.seed, serializeModified: () => world.serializeModified() },
+    player: {
+      pos: [player.position.x, player.position.y, player.position.z],
+      yaw: player.yaw,
+      mode: currentMode,
+      inventory: [...hotbar],
+    },
+    vitals,
+    clockT: clock.t,
+  });
+}
+
+/** Fire-and-forget save of the current session (Task 14): the payload is
+ *  snapshotted synchronously (state can't drift mid-save); a success caches
+ *  it for the title's Continue button, a rejection is swallowed — saving is
+ *  best-effort everywhere (autosave, beforeunload — nothing can await). */
+function persistNow(): void {
+  const payload = sessionSavePayload(); // snapshot once — save + cache are identical
+  void saveGame(payload)
+    .then(() => {
+      savedPayload = payload;
+    })
+    .catch(() => {
+      /* best-effort: on failure the previous savedPayload stays honest */
+    });
+}
+
+/** Shared quit-to-title tail (pause 回到標題 / 儲存並離開 / death quit): ends
+ *  the session (beforeunload stops saving) and resets the player — the title
+ *  orbit queues key off player.position, so leaving it far away would orbit a
+ *  one-chunk island (Task 17 CR fix). No save happens here — saving is the
+ *  explicit job of 儲存並離開 / autosave / beforeunload (Task 14 settled). */
+function quitToTitle(): void {
+  sessionStarted = false;
+  resetPlayerToSpawn();
+  setState('title');
+}
+
 function startGame(): void {
+  sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
   relockCanvas();
+}
+
+/** Continue flow (Task 14): apply the payload, THEN enter the game exactly
+ *  like startGame. Order matters:
+ *  1. World — `applyModified` first so raycast/physics see the edits at once.
+ *     Chunks auto-created here are `generated === false`, so the async
+ *     terrain-gen pass fills them LATER and wholesale-replaces data; main's
+ *     gen response handler re-applies edits per chunk afterwards
+ *     (`world.reapplyModifiedInChunk`) — saved edits always win over terrain
+ *     gen (the subtle 14.4 hazard, tested at world level).
+ *     SEED: the payload records `settings.seed` at save time while terrain
+ *     generation uses the CURRENT `settings.seed` (there is no seed UI — a
+ *     mismatch requires hand-editing localStorage between sessions). World +
+ *     TerrainWorkerClient are built once at boot; rebuilding them for a
+ *     foreign seed would mean wiping every loaded chunk + mesh, so instead
+ *     edits apply onto whatever terrain generates (absolute block coords —
+ *     they still win over gen, just possibly against different terrain), and
+ *     the next save records the current seed, re-syncing the pair.
+ *  2. Player — pos + yaw restored (payload has no pitch; velocity/flying/
+ *     onGround are session-only and start fresh via createPlayer).
+ *  3. Mode/inventory/vitals — applied DIRECTLY, not through the mode-changed
+ *     event: that handler's creative refill / fresh-vitals side effects would
+ *     clobber the restored slots and vitals. Settings are synced so menu
+ *     labels (menus re-reads loadSettings) match the session mode.
+ *  4. Clock — time-of-day restored (dayLengthSec stays settings-driven).
+ */
+function continueGame(payload: SavePayload): void {
+  world.applyModified(payload.modified); // 1. world edits (see doc above)
+
+  const [px, py, pz] = payload.player.pos;
+  player = createPlayer(px, py, pz);
+  player.yaw = payload.player.yaw;
+  // Session-scoped resets, mirroring resetPlayerToSpawn (a stale fall apex or
+  // carried attack cooldown must not leak into the restored session).
+  fallState = resetFall();
+  attackCd = 0;
+
+  currentMode = payload.player.mode; // 3. mode
+  settings.mode = currentMode;
+  saveSettings({ mode: currentMode }); // keep menu labels in sync
+  inventory.setMode(currentMode);
+  for (let i = 0; i < hotbar.length; i++) {
+    const s = payload.player.inventory[i];
+    inventory.setSlot(i, s ? { ...s } : null); // setSlot copies + validates; clears the tail
+  }
+  hud.setHotbar(hotbar, selected);
+  // vitals: survival restores saved values (payload vitals is null only when
+  // it was saved in creative; a corrupt survival payload falls back to a full
+  // reset); creative keeps the hidden bar hidden.
+  setVitals(currentMode === 'survival' ? (payload.player.vitals ?? createVitals()) : null);
+
+  clock.t = payload.time.t; // 4. time-of-day
+
+  sessionStarted = true;
+  setState('playing'); // same entry tail as startGame
+  relockCanvas(); // the click is a user gesture → controls live
+}
+
+/** Title 繼續遊戲 (Task 14): apply the cached payload synchronously — inside
+ *  the click gesture, so the pointer-lock relock in continueGame works. The
+ *  cache is refreshed by every successful save (see savedPayload), i.e. it IS
+ *  the latest save this page knows about; applying it is what "continue from
+ *  save" means (state newer than the last save was never saved). */
+function handleContinue(): void {
+  if (savedPayload) {
+    continueGame(savedPayload);
+    return;
+  }
+  startGame(); // defensive: button rendered without a save (unreachable — hasSave gates it)
 }
 
 /** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
@@ -597,17 +757,15 @@ function handleRespawn(): void {
   relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
 }
 
-/** Death-screen quit (review Important #1): mirror the pause-menu quit — reset
- *  to spawn first (the title orbit queues key off player.position; leaving it
- *  far away would orbit a one-chunk island, Task 17 CR fix) — plus full vitals:
- *  leaving at hp 0 would carry the corpse into 單人遊戲 and re-kill the fresh
- *  spawn on its first frame (only respawn/mode-change reset vitals otherwise).
- *  `if (vitals)` keeps creative's hidden bar hidden (unreachable from death —
- *  it requires vitals — but defensive). No save here (Task 13 owns it). */
+/** Death-screen quit (review Important #1): mirror the pause-menu quit — full
+ *  vitals first (leaving at hp 0 would carry the corpse into 單人遊戲 and
+ *  re-kill the fresh spawn on its first frame) plus the shared quitToTitle
+ *  tail (spawn reset for the title orbit, session end).
+ *  NO SAVE — Task 14 settled: death-quit deliberately does not save (you're
+ *  dead; vitals reset anyway), unlike the pause menu's 儲存並離開. */
 function handleQuitToTitle(): void {
   if (vitals) setVitals(createVitals());
-  resetPlayerToSpawn();
-  setState('title');
+  quitToTitle();
 }
 
 // pointer lock 釋放 → 暫停；inventory 開啟時主動解鎖，保持背包開著
@@ -621,6 +779,16 @@ input.onLockChange((locked) => {
 // Page-lifetime listener — attach once (Task 17 deviation: pointerlockerror → pause).
 document.addEventListener('pointerlockerror', () => {
   if (state === 'playing' && !input.locked) setState('paused');
+});
+
+// Task 14 save point (b): best-effort save on tab close/refresh. Fire-and-forget
+// (the page is tearing down — nothing can await it; rejection swallowed) and
+// guarded by the session flag so the title screen with no session never writes
+// a save. Page-lifetime listener — attach once, never removed.
+window.addEventListener('beforeunload', () => {
+  if (!sessionStarted) return;
+  const payload = sessionSavePayload();
+  void saveGame(payload).catch(() => {});
 });
 
 input.setMouseMoveHandler((dx, dy) => {
@@ -641,7 +809,14 @@ window.addEventListener('resize', () =>
 );
 
 hud.setHotbar(hotbar, selected);
-setState('title');
+// Task 14: resolve save existence ONCE before the title mounts — Continue
+// renders iff loadGame() found a payload (settled: hidden when there is none,
+// async → title with the conditional button). loadGame never rejects (null on
+// any failure); state already IS 'title', this only (re)renders the menu.
+void loadGame().then((payload) => {
+  savedPayload = payload;
+  setState('title');
+});
 
 gs.renderer.setAnimationLoop(() => {
   const now = performance.now();
@@ -767,6 +942,14 @@ gs.renderer.setAnimationLoop(() => {
         const before = mobs.length;
         spawnTick();
         if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
+      }
+
+      // Task 14 save point (c): autosave every 30 s while playing — BOTH modes
+      // (mode is part of the payload; creative worlds save too — plan §7).
+      saveAcc += dt;
+      if (saveAcc >= AUTOSAVE_INTERVAL_SEC) {
+        saveAcc = 0;
+        persistNow();
       }
 
       // 相機（first-person eye；F5 加 third-person offset）

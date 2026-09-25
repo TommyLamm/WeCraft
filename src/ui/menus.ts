@@ -4,7 +4,10 @@ import { loadSettings, saveSettings } from '../core/settings';
 export type MenuAction = 'play' | 'resume' | 'quit-to-title';
 
 export interface Menus {
-  showTitle(onPlay: () => void): void;
+  /** Title screen. `hasSave` gates the 繼續遊戲 (Continue) button — rendered
+   *  ONLY when a save exists (Task 14 settled: hidden, no fallback); 單人遊戲
+   *  always renders and starts a new game. */
+  showTitle(opts: { hasSave: boolean; onContinue: () => void; onNewGame: () => void }): void;
   /** `onToggleMode` is required — a mode button that can't notify is a dead
    *  control. main.ts wires it to emit `mode-changed` (Decision A: ui modules
    *  never import the bus; the handler persists + applies). The label re-reads
@@ -13,6 +16,9 @@ export interface Menus {
   showPause(opts: {
     onResume: () => void;
     onQuit: () => void;
+    /** 儲存並離開 (Task 14): saves the session, then quits to title. Separate
+     *  from `onQuit` (回到標題), which stays an UNSAVED quit. */
+    onSaveQuit: () => void;
     onToggleMode: () => void;
   }): void;
   hideAll(): void;
@@ -114,17 +120,20 @@ export function createMenus(uiRoot: HTMLElement): Menus {
   };
 
   return {
-    showTitle(onPlay) {
+    showTitle({ hasSave, onContinue, onNewGame }) {
       clear();
       const el = document.createElement('div');
       el.className = 'ui-overlay title-screen interactive';
       const logo = document.createElement('div');
       logo.className = 'ui-logo';
       logo.textContent = 'WeCraft';
-      el.append(logo, btn('單人遊戲', onPlay), modeLine('ui-mode')); // display-only, under the buttons
+      el.append(logo);
+      // Task 14: Continue mounts only when a save exists (hidden otherwise)
+      if (hasSave) el.append(btn('繼續遊戲', onContinue));
+      el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
     },
-    showPause({ onResume, onQuit, onToggleMode }) {
+    showPause({ onResume, onQuit, onSaveQuit, onToggleMode }) {
       clear();
       const renderPause = () => {
         clear();
@@ -150,6 +159,8 @@ export function createMenus(uiRoot: HTMLElement): Menus {
             clear();
             mount(settingsPanel(renderPause));
           }),
+          // Task 14: both buttons — one saves, one doesn't (settle: split)
+          btn('儲存並離開', onSaveQuit),
           btn('回到標題', onQuit),
         );
         mount(el);
