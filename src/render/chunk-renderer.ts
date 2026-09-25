@@ -1,67 +1,140 @@
 import * as THREE from 'three';
 import type { World } from '../world/world';
 import { chunkKey } from '../world/world';
-import { meshChunk } from '../world/mesher';
+import { meshChunk, type ChunkMesh } from '../world/mesher';
 import type { AtlasImage } from './textures';
-import { ATLAS_SIZE, TILES_PER_ROW } from './textures';
+import { buildTextureArray } from './textures';
 
-/** mesher 的 0..1 uv + layer 烘成圖集座標（0.5px inset 防滲色） */
-export function bakeAtlasUvs(uvs: Float32Array, layers: Float32Array): Float32Array {
-  const out = new Float32Array(uvs.length);
-  const tile = 1 / TILES_PER_ROW;
-  const inset = 0.5 / ATLAS_SIZE;
-  for (let i = 0; i < uvs.length; i += 2) {
-    const layer = layers[i / 2];
-    const tx = layer % TILES_PER_ROW;
-    const ty = Math.floor(layer / TILES_PER_ROW);
-    const u0 = tx * tile;
-    const v0 = 1 - (ty + 1) * tile; // 圖像 y 向下 → WebGL uv y 向上
-    const uu = uvs[i];
-    const vv = uvs[i + 1];
-    out[i] = uu === 0 ? u0 + inset : u0 + tile - inset;
-    out[i + 1] = vv === 0 ? v0 + inset : v0 + tile - inset;
+/** The slice of three's onBeforeCompile shader object this patch touches —
+ *  structural, so tests can drive it with a plain fake. */
+export interface TextureArrayShader {
+  uniforms: Record<string, { value: unknown }>;
+  vertexShader: string;
+  fragmentShader: string;
+}
+
+/** Wire the greedy mesher's per-vertex `texIndex` into a `sampler2DArray`
+ *  sample. three already declares `attribute vec2 uv` in the vertex prefix and
+ *  never defines USE_UV for this material (no `material.map`), so `vUv` does
+ *  not exist — we carry our own varyings instead. The sample REPLACES
+ *  `#include <map_fragment>`, so `diffuseColor` is multiplied BEFORE
+ *  `#include <alphatest_fragment>` discards cutouts: glass/leaves keep their
+ *  holes (alphaTest 0.1 contract). Deliberately NOT `material.map = arrayTex`
+ *  — three would then declare `uniform sampler2D map` and bind an array
+ *  texture to TEXTURE_2D → GL error. Built-in materials compile as GLSL 3.00
+ *  (`#version 300 es`), so `texture()` + `sampler2DArray` are legal here. */
+export function patchTextureArrayShader(
+  shader: TextureArrayShader,
+  mapArray: THREE.DataArrayTexture,
+): void {
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      '#include <common>',
+      '#include <common>\nattribute float texIndex;\nvarying vec2 vTileUv;\nvarying float vTexIndex;',
+    )
+    .replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\nvTileUv = uv;\nvTexIndex = texIndex;',
+    );
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      '#include <common>\nuniform sampler2DArray mapArray;\nvarying vec2 vTileUv;\nvarying float vTexIndex;',
+    )
+    .replace(
+      '#include <map_fragment>',
+      'vec4 sampledDiffuseColor = texture( mapArray, vec3( vTileUv, vTexIndex ) );\n\tdiffuseColor *= sampledDiffuseColor;',
+    );
+  shader.uniforms.mapArray = { value: mapArray };
+}
+
+function concat(a: Float32Array, b: Float32Array): Float32Array {
+  const out = new Float32Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/** Mesher shades are one float per vertex; vertexColors wants vec3. */
+function shadeColors(shades: Float32Array): Float32Array {
+  const out = new Float32Array(shades.length * 3);
+  for (let i = 0; i < shades.length; i++) {
+    out[i * 3] = shades[i];
+    out[i * 3 + 1] = shades[i];
+    out[i * 3 + 2] = shades[i];
   }
   return out;
 }
 
+/** Build one BufferGeometry from a `ChunkMesh`. Returns null when the chunk
+ *  has no visible faces at all.
+ *
+ *  Task 16: translucent water pass — water currently rides in the SAME mesh
+ *  (same opaque Lambert material) so it never visually vanishes; the deferred
+ *  pass splits it onto its own material using the mesher's `water` mesh. */
+function buildChunkGeometry(mesh: ChunkMesh): THREE.BufferGeometry | null {
+  const { opaque, water } = mesh;
+  if (opaque.quadCount === 0 && water.quadCount === 0) return null;
+
+  const indices = new Uint32Array(opaque.indices.length + water.indices.length);
+  indices.set(opaque.indices, 0);
+  const waterOffset = opaque.positions.length / 3;
+  for (let i = 0; i < water.indices.length; i++) {
+    indices[opaque.indices.length + i] = water.indices[i] + waterOffset;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(concat(opaque.positions, water.positions), 3),
+  );
+  geometry.setAttribute(
+    'normal',
+    new THREE.BufferAttribute(concat(opaque.normals, water.normals), 3),
+  );
+  geometry.setAttribute('uv', new THREE.BufferAttribute(concat(opaque.uvs, water.uvs), 2));
+  geometry.setAttribute(
+    'texIndex',
+    new THREE.BufferAttribute(concat(opaque.texIndex, water.texIndex), 1),
+  );
+  geometry.setAttribute(
+    'color',
+    new THREE.BufferAttribute(
+      concat(shadeColors(opaque.shades), shadeColors(water.shades)),
+      3,
+    ),
+  );
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 export class ChunkRenderer {
   private meshes = new Map<string, THREE.Mesh>();
-  private material: THREE.MeshBasicMaterial;
+  private material: THREE.MeshLambertMaterial;
+  private textureArray: THREE.DataArrayTexture;
 
   constructor(private scene: THREE.Scene, atlas: AtlasImage) {
-    const canvas = document.createElement('canvas');
-    canvas.width = atlas.width;
-    canvas.height = atlas.height;
-    const ctx = canvas.getContext('2d')!;
-    // ImageData(...) blocked by TS 5.7 ArrayBufferLike vs ArrayBuffer — createImageData+set is pixel-identical
-    const imageData = ctx.createImageData(atlas.width, atlas.height);
-    imageData.data.set(atlas.data);
-    ctx.putImageData(imageData, 0, 0);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    // NearestFilter (mag+min) + generateMipmaps:false + 0.5px inset are load-bearing — never "improve" to LinearFilter
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.generateMipmaps = false;
-
-    // Phase 1: no transparent:true → water renders OPAQUE (accepted; real translucency deferred to phase 2)
-    this.material = new THREE.MeshBasicMaterial({
-      map: tex,
-      vertexColors: true,
-      // must stay > glass interior 0 and == 0.1 contract
+    this.textureArray = buildTextureArray(atlas);
+    // Lambert: the mesher's per-face normals + shades do the lighting.
+    // alphaTest MUST stay 0.1 (glass interior 0 / leaves holes contract).
+    this.material = new THREE.MeshLambertMaterial({
       alphaTest: 0.1,
+      vertexColors: true,
       side: THREE.FrontSide,
       fog: true,
     });
+    this.material.onBeforeCompile = (shader) => {
+      patchTextureArrayShader(shader, this.textureArray);
+    };
   }
 
   rebuild(world: World, cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
     const old = this.meshes.get(key);
-    const data = meshChunk(world, cx, cz);
+    const geometry = buildChunkGeometry(meshChunk(world, cx, cz));
 
-    if (data.quadCount === 0) {
+    if (!geometry) {
       if (old) {
         this.scene.remove(old);
         old.geometry.dispose();
@@ -69,23 +142,6 @@ export class ChunkRenderer {
       }
       return;
     }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
-    geometry.setAttribute(
-      'uv',
-      new THREE.BufferAttribute(bakeAtlasUvs(data.uvs, data.layers), 2),
-    );
-    geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
-
-    const colors = new Float32Array(data.shades.length * 3);
-    for (let i = 0; i < data.shades.length; i++) {
-      colors[i * 3] = data.shades[i];
-      colors[i * 3 + 1] = data.shades[i];
-      colors[i * 3 + 2] = data.shades[i];
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geometry, this.material);
     mesh.matrixAutoUpdate = false;
@@ -119,7 +175,7 @@ export class ChunkRenderer {
       m.geometry.dispose();
     }
     this.meshes.clear();
-    this.material.map?.dispose();
+    this.textureArray.dispose();
     this.material.dispose();
   }
 }

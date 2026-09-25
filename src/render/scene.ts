@@ -15,6 +15,20 @@ export interface GameScene {
   dispose(): void;
 }
 
+/** Position of the scene's directional sun light for a given sun direction
+ *  (distance `dist`; directional color is distance-invariant).
+ *
+ *  Deferred Task 6 fix: at night the sun sits below the horizon, and raw
+ *  `sunDir × dist` put the light at y < 0 — lighting the world from BELOW,
+ *  which went visibly wrong once Task 15 switched chunks to MeshLambertMaterial.
+ *  Mirroring through the origin (the anti-sun / moon) keeps the light ABOVE
+ *  the horizon so terrain stays lit from above. Intensity and color are NOT
+ *  touched here — they still come from `skyColors` in `setDayNight`. */
+export function sunLightPosition(sunDir: Vec3, dist = 100): Vec3 {
+  const s = sunDir.y < 0 ? -1 : 1;
+  return { x: sunDir.x * dist * s, y: sunDir.y * dist * s, z: sunDir.z * dist * s };
+}
+
 export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -24,10 +38,11 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   scene.background = new THREE.Color(0x87ceeb);
   scene.fog = new THREE.Fog(0x87ceeb, 40, 140);
 
-  // Task 6: sun + ambient lights live here (Phase 1 had none — chunks are still
-  // MeshBasicMaterial, so they only start reacting in Task 15's Lambert switch;
-  // sky/fog already respond above). Directional light shines from position →
-  // target (origin), so position = sunDir × distance.
+  // Task 6: sun + ambient lights here (Task 15 switched chunks to
+  // MeshLambertMaterial, so terrain now reacts to both; sky/fog respond
+  // above). Directional light shines from position → target (origin), so
+  // position = sunLightPosition(sunDir) — flipped to the anti-sun at night
+  // so the light never dips below the horizon (deferred Task 6 fix).
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
   scene.add(sunLight);
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
@@ -55,8 +70,8 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
       renderer.setSize(w, h);
     },
     setDayNight(sunDir, colors) {
-      const dist = 100; // light distance — directional color is distance-invariant
-      sunLight.position.set(sunDir.x * dist, sunDir.y * dist, sunDir.z * dist);
+      const p = sunLightPosition(sunDir); // y > 0 even at night (anti-sun)
+      sunLight.position.set(p.x, p.y, p.z);
       sunLight.intensity = colors.sunIntensity;
       ambientLight.intensity = colors.ambient;
       if (scene.background instanceof THREE.Color) scene.background.setHex(colors.sky);

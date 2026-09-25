@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createDropRenderer, createMobRenderer } from './scene';
+import { createDropRenderer, createMobRenderer, sunLightPosition } from './scene';
+import { sunDirection } from '../core/daynight';
 import type { DropEntity } from '../world/drops';
 import { createMob, type Mob, type Arrow } from '../world/mobs';
 import type { ItemId } from '../core/items';
@@ -260,5 +261,47 @@ describe('createMobRenderer', () => {
     expect(legL.rotation.x).toBe(0); // phase never advanced
     expect(Number.isFinite(legL.rotation.x)).toBe(true);
     renderer.dispose();
+  });
+});
+
+// ---- Task 15 (deferred Task 6 fix): night sun must light terrain from ABOVE ----
+
+describe('sunLightPosition', () => {
+  const DIST = 100; // setDayNight's light distance — direction is what matters
+
+  it('day (sun above horizon): position = sunDir × dist, unchanged from Task 6', () => {
+    const day = sunDirection(0.25); // noon: {0, 1, 0}
+    expect(day.y).toBeGreaterThan(0);
+    const p = sunLightPosition(day);
+    expect(p.x).toBeCloseTo(day.x * DIST, 10);
+    expect(p.y).toBeCloseTo(day.y * DIST, 10);
+    expect(p.z).toBeCloseTo(day.z * DIST, 10);
+    expect(p.y).toBeGreaterThan(0);
+  });
+
+  it('night (sun below horizon): light stays ABOVE the horizon (moon = anti-sun)', () => {
+    const night = sunDirection(0.75); // midnight: {0, -1, 0}
+    expect(night.y).toBeLessThan(0); // the bug: raw position would be y < 0
+    const p = sunLightPosition(night);
+    expect(p.y).toBeGreaterThan(0); // lit from above → terrain not black
+    expect(p.y).toBeCloseTo(-night.y * DIST, 10); // negated through origin
+  });
+
+  it('night at an angle: mirrors x/y/z (anti-sun), y strictly positive', () => {
+    const d = sunDirection(0.6); // after dusk: y < 0, z ≠ 0
+    expect(d.y).toBeLessThan(0);
+    const p = sunLightPosition(d);
+    expect(p.y).toBeGreaterThan(0);
+    expect(p.x).toBeCloseTo(-d.x * DIST, 10);
+    expect(p.y).toBeCloseTo(-d.y * DIST, 10);
+    expect(p.z).toBeCloseTo(-d.z * DIST, 10);
+  });
+
+  it('day at an angle (t=0.4, still day phase): position untouched', () => {
+    const d = sunDirection(0.4); // elevation cos((0.4-0.25)·2π) ≈ 0.809 > 0
+    expect(d.y).toBeGreaterThan(0);
+    const p = sunLightPosition(d);
+    expect(p.y).toBeCloseTo(d.y * DIST, 10);
+    expect(p.z).toBeCloseTo(d.z * DIST, 10);
   });
 });

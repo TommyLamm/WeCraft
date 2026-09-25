@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import {
   ATLAS_SIZE,
   TILE_PX,
   TILES_PER_ROW,
+  buildTextureArray,
   drawAtlas,
   tileIndexAt,
   type AtlasImage,
@@ -185,5 +187,90 @@ describe('textures', () => {
     for (let y = 6; y <= 11; y++)
       for (let x = 0; x < TILE_PX; x++) body += tilePixel(atlas, CRAFTING_SIDE, x, y)[0];
     expect(band / 64).toBeLessThan(body / 96 - 15);
+  });
+});
+
+// ---- Task 15: texture array for greedy-mesh sampling ----
+
+describe('buildTextureArray', () => {
+  const LAYERS = 64;
+  const MAGENTA: [number, number, number, number] = [255, 0, 255, 255];
+
+  /** RGBA at (x, y) of `layer` — y is TEXTURE row (v grows with y). */
+  function layerPixel(
+    tex: THREE.DataArrayTexture,
+    layer: number,
+    x: number,
+    y: number,
+  ): [number, number, number, number] {
+    const data = tex.image.data as Uint8Array;
+    const i = (layer * TILE_PX * TILE_PX + y * TILE_PX + x) * 4;
+    return [data[i], data[i + 1], data[i + 2], data[i + 3]];
+  }
+
+  it('is a 64 × 16 × 16 array: NearestFilter, no mipmaps, repeat wrap, no flipY', () => {
+    const tex = buildTextureArray();
+    expect(tex.image.width).toBe(TILE_PX);
+    expect(tex.image.height).toBe(TILE_PX);
+    expect(tex.image.depth).toBe(LAYERS);
+    expect(tex.image.data.length).toBe(LAYERS * TILE_PX * TILE_PX * 4);
+    expect(tex.minFilter).toBe(THREE.NearestFilter);
+    expect(tex.magFilter).toBe(THREE.NearestFilter);
+    expect(tex.generateMipmaps).toBe(false);
+    // merged quads tile the same texture N× → wrap must repeat within the layer
+    expect(tex.wrapS).toBe(THREE.RepeatWrapping);
+    expect(tex.wrapT).toBe(THREE.RepeatWrapping);
+    expect(tex.flipY).toBe(false);
+  });
+
+  it('copies atlas tiles into layers with rows flipped (v=1 ↔ image top)', () => {
+    const tex = buildTextureArray();
+    const atlas = drawAtlas();
+    // Every content tile: texture row r holds image row (15 − r), so the
+    // mesher's v=1 (block top) samples image row 0 — same contract the old
+    // CanvasTexture(flipY)+bakeAtlasUvs pair produced.
+    for (let tile = 0; tile < 19; tile++) {
+      const tx = tile % TILES_PER_ROW;
+      const ty = Math.floor(tile / TILES_PER_ROW);
+      for (const [x, y] of [[0, 0], [7, 3], [15, 15]] as const) {
+        const src =
+          ((ty * TILE_PX + (TILE_PX - 1 - y)) * ATLAS_SIZE + tx * TILE_PX + x) * 4;
+        expect(layerPixel(tex, tile, x, y), `tile ${tile} px ${x},${y}`).toEqual([
+          atlas.data[src],
+          atlas.data[src + 1],
+          atlas.data[src + 2],
+          atlas.data[src + 3],
+        ]);
+      }
+    }
+  });
+
+  it('grass_side green strip ends up at the TOP of its layer (block-face top)', () => {
+    const tex = buildTextureArray();
+    const GRASS_SIDE = 1;
+    // image rows 0–2 are the green strip (textures.test v-contract) → texture rows 13–15
+    for (let row = TILE_PX - 3; row < TILE_PX; row++) {
+      for (let x = 0; x < TILE_PX; x++) {
+        const [r, g, b] = layerPixel(tex, GRASS_SIDE, x, row);
+        expect(g, `green row=${row} x=${x}`).toBeGreaterThan(r);
+        expect(g, `green row=${row} x=${x}`).toBeGreaterThan(b);
+      }
+    }
+    // and the dirt bottom of the image sits at texture row 0 (block bottom)
+    const [r, g] = layerPixel(tex, GRASS_SIDE, 0, 0);
+    expect(g).toBeLessThan(r);
+  });
+
+  it('drawn tiles keep their content; empty layers are opaque magenta #ff00ff', () => {
+    const tex = buildTextureArray();
+    // tiles 0–18 are drawn in drawAtlas → content (glass tile 14 included)
+    const glass = layerPixel(tex, 14, 0, 0); // border pixel, a=220
+    expect(glass).not.toEqual(MAGENTA);
+    // tile 19+ never drawn → magenta debug fill (alphaTest-proof)
+    for (const layer of [19, 32, 47, 63]) {
+      for (const [x, y] of [[0, 0], [8, 8], [15, 15]] as const) {
+        expect(layerPixel(tex, layer, x, y), `layer ${layer} px ${x},${y}`).toEqual(MAGENTA);
+      }
+    }
   });
 });

@@ -1,6 +1,13 @@
+import * as THREE from 'three';
+
 export const ATLAS_SIZE = 512;
 export const TILE_PX = 16;
 export const TILES_PER_ROW = ATLAS_SIZE / TILE_PX; // 32
+
+/** Layers in the block texture array (one 16×16 slice per atlas tile). */
+export const ARRAY_LAYERS = 64;
+/** Tiles actually painted by `drawAtlas` — every other layer is debug magenta. */
+const DRAWN_TILES = 19;
 
 export function tileIndexAt(tx: number, ty: number): number {
   return ty * TILES_PER_ROW + tx;
@@ -145,4 +152,52 @@ export function drawAtlas(): AtlasImage {
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
+}
+
+/** GPU texture array for the greedy mesher: 64 layers of 16×16, layer = atlas
+ *  tile id, so each merged quad samples one layer via a per-vertex `texIndex`
+ *  (no UV atlas math at sample time). Rows are copied flipped — texture row r
+ *  holds atlas image row (15 − r) — so the mesher's v=1 (block top) samples
+ *  image row 0, matching the old CanvasTexture(flipY)+bakeAtlasUvs contract.
+ *  RepeatWrapping repeats WITHIN the layer, so merged quads show the tile once
+ *  per block and never bleed into a neighbour layer. Undrawn layers are opaque
+ *  magenta #ff00ff (survives alphaTest → an obvious glitch, not invisibility).
+ *  NearestFilter + no mipmaps keeps the pixel-art crispness of the atlas. */
+export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataArrayTexture {
+  const layerBytes = TILE_PX * TILE_PX * 4;
+  const data = new Uint8Array(ARRAY_LAYERS * layerBytes);
+  // Empty layers first: opaque magenta debug fill.
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = 255;
+    data[i + 1] = 0;
+    data[i + 2] = 255;
+    data[i + 3] = 255;
+  }
+  for (let tile = 0; tile < DRAWN_TILES; tile++) {
+    const tx = tile % TILES_PER_ROW;
+    const ty = Math.floor(tile / TILES_PER_ROW);
+    const base = tile * layerBytes;
+    for (let y = 0; y < TILE_PX; y++) {
+      const srcRow = ty * TILE_PX + (TILE_PX - 1 - y); // flipped: row 0 ← image bottom
+      for (let x = 0; x < TILE_PX; x++) {
+        const src = (srcRow * ATLAS_SIZE + tx * TILE_PX + x) * 4;
+        const dst = base + (y * TILE_PX + x) * 4;
+        data[dst] = atlas.data[src];
+        data[dst + 1] = atlas.data[src + 1];
+        data[dst + 2] = atlas.data[src + 2];
+        data[dst + 3] = atlas.data[src + 3];
+      }
+    }
+  }
+  const tex = new THREE.DataArrayTexture(data, TILE_PX, TILE_PX, ARRAY_LAYERS);
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.flipY = false; // rows already flipped during the copy
+  // Same decode the old CanvasTexture had — sRGB → linear before lighting.
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }
