@@ -1,6 +1,13 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { saveGame, loadGame, openSaveDb, collectSavePayload, type SavePayload } from './save';
+import {
+  saveGame,
+  loadGame,
+  openSaveDb,
+  collectSavePayload,
+  isValidSavePayload,
+  type SavePayload,
+} from './save';
 import { createVitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
 
@@ -131,6 +138,99 @@ describe('saveGame / loadGame', () => {
   it('saveGame rejects when the database cannot be written', async () => {
     await createIncompatibleDb();
     await expect(saveGame(makePayload())).rejects.toBeDefined();
+  });
+
+  it('loadGame rejects shape-corrupt records with version 1 (review #2)', async () => {
+    const base = makePayload();
+    // player missing entirely
+    await putRawRecord({ version: 1 });
+    expect(await loadGame()).toBeNull();
+    // non-finite pos coordinate
+    await putRawRecord({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } });
+    expect(await loadGame()).toBeNull();
+    // mode outside the allowed union
+    await putRawRecord({ ...base, player: { ...base.player, mode: 'spectator' } });
+    expect(await loadGame()).toBeNull();
+    // non-finite clock
+    await putRawRecord({ ...base, time: { t: Number.NaN } });
+    expect(await loadGame()).toBeNull();
+    // a fully valid payload still passes (round trip)
+    await saveGame(base);
+    expect(await loadGame()).not.toBeNull();
+  });
+});
+
+/** Task 14 review #2: IndexedDB records can be written by an older/broken
+ *  build — loadGame must validate the SHAPE before handing a payload to
+ *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
+describe('isValidSavePayload', () => {
+  it('accepts a fully valid payload', () => {
+    expect(isValidSavePayload(makePayload())).toBe(true);
+    expect(
+      isValidSavePayload(makePayload({ player: { ...makePayload().player, vitals: null } })),
+    ).toBe(true);
+  });
+
+  it('rejects non-objects, wrong version and a missing player', () => {
+    expect(isValidSavePayload(null)).toBe(false);
+    expect(isValidSavePayload('garbage')).toBe(false);
+    expect(isValidSavePayload(42)).toBe(false);
+    expect(isValidSavePayload({ ...makePayload(), version: 2 })).toBe(false);
+    expect(isValidSavePayload({ version: 1 })).toBe(false); // player missing
+  });
+
+  it('rejects malformed player.pos (wrong length or non-finite)', () => {
+    const base = makePayload();
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, pos: [1, 2] } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, pos: '1,2,3' as never } }),
+    ).toBe(false);
+  });
+
+  it('rejects a mode outside {survival, creative} and a malformed inventory', () => {
+    const base = makePayload();
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, mode: 'spectator' as never } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, inventory: 'nope' as never } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({
+        ...base,
+        player: { ...base.player, inventory: [{ item: 7, count: 1 } as never] },
+      }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({
+        ...base,
+        player: { ...base.player, inventory: [{ item: 'stone', count: Number.NaN }] },
+      }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, inventory: ['junk' as never] } }),
+    ).toBe(false);
+  });
+
+  it('rejects a malformed vitals, modified and clock', () => {
+    const base = makePayload();
+    expect(
+      isValidSavePayload({
+        ...base,
+        player: { ...base.player, vitals: { ...createVitals(), hp: Number.NaN } },
+      }),
+    ).toBe(false);
+    expect(isValidSavePayload({ ...base, player: { ...base.player, vitals: undefined } })).toBe(
+      false,
+    );
+    expect(isValidSavePayload({ ...base, modified: 'nope' as never })).toBe(false);
+    expect(isValidSavePayload({ ...base, time: { t: Number.NaN } })).toBe(false);
+    expect(isValidSavePayload({ ...base, time: {} as never })).toBe(false);
   });
 });
 

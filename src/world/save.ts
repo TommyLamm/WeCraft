@@ -59,6 +59,46 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 	};
 }
 
+/** Shape-validate an unknown value as a SavePayload (review #2). IndexedDB
+ *  records can be written by an older or broken build — continueGame trusts
+ *  this shape completely (destructuring, setBlock keys, DOM writes), so a
+ *  record must prove: object, version 1, a player with a finite pos triple,
+ *  mode ∈ {survival, creative}, an inventory of null | {item: string,
+ *  count: finite number}, vitals null | {hp: finite}, modified: array, and a
+ *  finite clock. Light checks only — `modified` ENTRIES are additionally
+ *  defended by applyModified's per-entry skip, and item ids by the inventory
+ *  model. Pure: exported for tests, called by loadGame. */
+export function isValidSavePayload(x: unknown): x is SavePayload {
+	if (typeof x !== 'object' || x === null) return false;
+	const r = x as Partial<SavePayload>;
+	if (r.version !== 1) return false;
+	// player: pos triple + mode + inventory + vitals
+	const p = r.player as SavePayload['player'] | undefined;
+	if (typeof p !== 'object' || p === null) return false;
+	if (!Array.isArray(p.pos) || p.pos.length !== 3) return false;
+	if (!p.pos.every((n) => typeof n === 'number' && Number.isFinite(n))) return false;
+	if (p.mode !== 'survival' && p.mode !== 'creative') return false;
+	if (!Array.isArray(p.inventory)) return false;
+	for (const s of p.inventory) {
+		if (s === null) continue;
+		if (typeof s !== 'object' || s === null) return false;
+		const st = s as Partial<ItemStack>;
+		if (typeof st.item !== 'string') return false;
+		if (typeof st.count !== 'number' || !Number.isFinite(st.count)) return false;
+	}
+	const v = p.vitals;
+	if (v !== null) {
+		if (typeof v !== 'object' || v === null) return false;
+		if (typeof v.hp !== 'number' || !Number.isFinite(v.hp)) return false;
+	}
+	// block edits + clock
+	if (!Array.isArray(r.modified)) return false;
+	const t = r.time as SavePayload['time'] | undefined;
+	if (typeof t !== 'object' || t === null) return false;
+	if (typeof t.t !== 'number' || !Number.isFinite(t.t)) return false;
+	return true;
+}
+
 const DB_NAME = 'wecraft-save';
 const DB_VERSION = 1;
 const STORE = 'games';
@@ -105,7 +145,9 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 	}
 }
 
-/** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects. */
+/** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
+ *  Shape-validated (review #2): a version-1 record with a broken shape (missing
+ *  player, non-finite pos, bad mode, NaN clock, …) reads as "no save". */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -113,9 +155,8 @@ export async function loadGame(): Promise<SavePayload | null> {
 			const tx = db.transaction(STORE, 'readonly');
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
-			const rec = value as Partial<SavePayload>;
-			if (rec.version !== 1) return null;
-			return rec as SavePayload;
+			if (!isValidSavePayload(value)) return null;
+			return value;
 		} finally {
 			db.close();
 		}

@@ -238,3 +238,30 @@ describe('reapplyModifiedInChunk (Task 14 gen-order fix)', () => {
     expect(w.getBlock(16, 64, 0)).toBe(BLOCK.DIRT);
   });
 });
+
+/** Task 14 review #4: New Game must be a FRESH world — sessions share one
+ *  boot World, so `clear()` is the testable seam behind main's resetWorld. */
+describe('clear (fresh-world reset)', () => {
+  it('drops every chunk and all recorded edits', () => {
+    const w = new World();
+    w.applyModified([
+      ['5,70,5', BLOCK.STONE],
+      ['20,80,20', BLOCK.AIR],
+    ]);
+    w.addChunk(new Chunk(1, 1));
+    w.clear();
+    expect(w.chunks.size).toBe(0);
+    expect(w.serializeModified()).toEqual([]);
+    expect(w.getBlock(5, 70, 5)).toBe(BLOCK.AIR); // edits gone from the world
+    expect(w.getChunk(1, 1)).toBeUndefined();
+  });
+
+  it('the cleared world is reusable (chunks auto-create again)', () => {
+    const w = new World();
+    w.applyModified([['5,70,5', BLOCK.STONE]]);
+    w.clear();
+    expect(w.setBlock(5, 70, 5, BLOCK.GLASS)).toBe(true);
+    expect(w.getBlock(5, 70, 5)).toBe(BLOCK.GLASS);
+    expect(w.serializeModified()).toEqual([['5,70,5', BLOCK.GLASS]]);
+  });
+});

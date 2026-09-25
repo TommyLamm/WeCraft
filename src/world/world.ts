@@ -105,6 +105,15 @@ export class World {
     }
   }
 
+  /** Drop EVERYTHING — chunks and recorded edits (Task 14 review #4: New Game
+   *  must be a fresh world; sessions share one boot World in main.ts). Mesh
+   *  removal is the composition root's job (chunkRenderer), this only owns
+   *  world data. The world stays reusable — setBlock auto-creates chunks again. */
+  clear(): void {
+    this.chunks.clear();
+    this.modified.clear();
+  }
+
   isSolid(x: number, y: number, z: number): boolean {
     return blockIsSolid(this.getBlock(x, y, z));
   }

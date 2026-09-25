@@ -254,6 +254,10 @@ let sessionStarted = false;
 /** Seconds accumulator toward the 30 s autosave while playing. */
 let saveAcc = 0;
 const AUTOSAVE_INTERVAL_SEC = 30;
+/** Last backgrounding-save timestamp (ms) + debounce — review #1: rapid
+ *  hidden/visible flips must not spam IDB. */
+let lastBgSave = 0;
+const BG_SAVE_DEBOUNCE_MS = 2000;
 
 // ---- 生存 HUD（Task 4）----
 // .vitals 容器：same programmatic markup pattern as hud/menus/inventory
@@ -536,11 +540,22 @@ function setState(next: GameState): void {
       // reset to spawn before title: title orbit queues key off player.position —
       // leaving it far away would orbit a one-chunk island (Task 17 CR fix)
       onQuit: quitToTitle, // plain 回到標題 — UNSAVED quit (Task 14 settled split)
-      // Task 14: 儲存並離開 — snapshot the live session FIRST, save, then quit
-      // (both callbacks are separate buttons; the death screen's quit below
-      // deliberately has neither — see handleQuitToTitle).
+      // Task 14 save point (a): 儲存並離開 — snapshot the live session FIRST,
+      // save, then quit (both callbacks are separate buttons; the death
+      // screen's quit below deliberately has neither — see handleQuitToTitle).
       onSaveQuit: () => {
+        // Review #7: unmount the pause menu FIRST — a detached button cannot
+        // receive user clicks, so a double-click can't fire a second save (or
+        // save+resume race) while the first one is still awaiting IDB; the
+        // frozen world shows until the quit lands.
+        menus.hideAll();
         const payload = sessionSavePayload();
+        if (!payload) {
+          // Unreachable in practice (the pause menu can't open while dead —
+          // review #6's guard) — quit without saving rather than strand the click.
+          quitToTitle();
+          return;
+        }
         void saveGame(payload).then(
           () => {
             savedPayload = payload; // boot check may predate this save
@@ -629,8 +644,20 @@ function resetPlayerToSpawn(): void {
  *  adapter feeding the PURE `collectSavePayload`. The World has no seed of its
  *  own (terrain generation is keyed off `settings.seed` in the worker client),
  *  so the seed is supplied from settings here: the payload therefore records
- *  the seed the world was actually generated with at save time. */
-function sessionSavePayload(): SavePayload {
+ *  the seed the world was actually generated with at save time.
+ *  Returns null when there is nothing HONEST to save:
+ *  - review #6: hp ≤ 0 (the death state) must never persist — autosave and
+ *    the Save&Quit button can't fire while dead anyway, so this guards
+ *    beforeunload/visibilitychange, which would otherwise write an hp=0
+ *    record that Continue restores as a corpse; and
+ *  - review #3: staged crafting items are flushed FIRST — the grid lives only
+ *    in `craftGrid` and would be missing from the save otherwise. All four
+ *    save triggers route through here; a repeat call is a harmless no-op
+ *    (empty grid → nothing to hand back; a full inventory just re-parks the
+ *    overflow, nothing is destroyed). */
+function sessionSavePayload(): SavePayload | null {
+  resetCraftGrid(2); // flush staged/overflow items into the inventory before snapshotting
+  if (vitals && vitals.hp <= 0) return null; // dead — see doc above
   return collectSavePayload({
     world: { seed: settings.seed, serializeModified: () => world.serializeModified() },
     player: {
@@ -650,6 +677,7 @@ function sessionSavePayload(): SavePayload {
  *  best-effort everywhere (autosave, beforeunload — nothing can await). */
 function persistNow(): void {
   const payload = sessionSavePayload(); // snapshot once — save + cache are identical
+  if (!payload) return; // nothing honest to save (review #6: dead session)
   void saveGame(payload)
     .then(() => {
       savedPayload = payload;
@@ -670,7 +698,49 @@ function quitToTitle(): void {
   setState('title');
 }
 
+/** Drop the live entities (review #4): mobs, ground drops and arrows are NOT
+ *  persisted (plan: they respawn naturally), so a session restart must never
+ *  inherit the previous session's. Called by resetWorld (New Game) and
+ *  continueGame (stale in-page predecessors). No mobs-changed/drops-changed
+ *  emit — nothing on the bus consumes them yet. */
+function resetSessionEntities(): void {
+  mobs = [];
+  drops = [];
+  arrows = [];
+}
+
+/** New Game = a FRESH world (plan 14.3 "new → fresh state"): sessions within
+ *  one page share the boot World, so starting anew must drop every trace of
+ *  the last one. The honest minimal set:
+ *  - meshes: ChunkRenderer keys built meshes by chunk (`private meshes` map),
+ *    and main only ever pairs mesh add/remove with chunk add/remove
+ *    (refreshQueues removes both together, rebuild only runs for chunks in
+ *    the world) — so removing per CURRENT chunk key before world.clear()
+ *    empties the scene. NOT `chunkRenderer.dispose()`: that also kills the
+ *    shared material + atlas texture. Rebuilds are lazy: the queues regenerate
+ *    as the player plays.
+ *  - world: chunks + block edits via the testable `World.clear()`.
+ *  - queues: pendingGen/pendingMesh are rebuilt every frame anyway; clearing
+ *    them plus `generated`/`genInFlight` starts the session from zero. A gen
+ *    response still in flight lands harmlessly — same seed ⇒ same terrain.
+ *  - entities: mobs/drops/arrows (resetSessionEntities).
+ *  Same seed on purpose: the TerrainWorkerClient is built once at boot —
+ *  seed rebuild is out of scope (see continueGame's SEED note). */
+function resetWorld(): void {
+  for (const key of [...world.chunks.keys()]) {
+    const [cx, cz] = key.split(',').map(Number);
+    chunkRenderer.remove(cx, cz);
+  }
+  world.clear();
+  generated.clear();
+  genInFlight.clear();
+  pendingGen.length = 0;
+  pendingMesh.length = 0;
+  resetSessionEntities();
+}
+
 function startGame(): void {
+  resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -703,6 +773,10 @@ function startGame(): void {
  */
 function continueGame(payload: SavePayload): void {
   world.applyModified(payload.modified); // 1. world edits (see doc above)
+  // Review #4: entities are never persisted — drop any stale in-page session's
+  // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are
+  // deliberately NOT cleared here: Continue applies onto the existing world.
+  resetSessionEntities();
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);
@@ -723,8 +797,16 @@ function continueGame(payload: SavePayload): void {
   hud.setHotbar(hotbar, selected);
   // vitals: survival restores saved values (payload vitals is null only when
   // it was saved in creative; a corrupt survival payload falls back to a full
-  // reset); creative keeps the hidden bar hidden.
-  setVitals(currentMode === 'survival' ? (payload.player.vitals ?? createVitals()) : null);
+  // reset); creative keeps the hidden bar hidden. Review #5: COPY the payload's
+  // vitals — live vitals are mutated frame-to-frame and the payload object is
+  // the cached `savedPayload`, reused by a later Continue.
+  setVitals(
+    currentMode === 'survival'
+      ? payload.player.vitals
+        ? { ...payload.player.vitals }
+        : createVitals()
+      : null,
+  );
 
   clock.t = payload.time.t; // 4. time-of-day
 
@@ -739,11 +821,21 @@ function continueGame(payload: SavePayload): void {
  *  the latest save this page knows about; applying it is what "continue from
  *  save" means (state newer than the last save was never saved). */
 function handleContinue(): void {
-  if (savedPayload) {
-    continueGame(savedPayload);
+  if (!savedPayload) {
+    startGame(); // defensive: button rendered without a save (unreachable — hasSave gates it)
     return;
   }
-  startGame(); // defensive: button rendered without a save (unreachable — hasSave gates it)
+  try {
+    continueGame(savedPayload);
+  } catch (err) {
+    // Review #2: honest recovery — a payload that explodes mid-apply must not
+    // strand the title screen. SETTLE: keep the cache (the record itself may
+    // be fine, and the next good save overwrites it) but fall back to a new
+    // game for THIS click; startGame's resetWorld discards any partial world
+    // application. loadGame's shape validation makes a throw near-impossible.
+    console.warn('[WeCraft] Continue failed — falling back to a new game', err);
+    startGame();
+  }
 }
 
 /** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
@@ -781,13 +873,30 @@ document.addEventListener('pointerlockerror', () => {
   if (state === 'playing' && !input.locked) setState('paused');
 });
 
-// Task 14 save point (b): best-effort save on tab close/refresh. Fire-and-forget
-// (the page is tearing down — nothing can await it; rejection swallowed) and
-// guarded by the session flag so the title screen with no session never writes
-// a save. Page-lifetime listener — attach once, never removed.
+// ---- Task 14 save point (b): backgrounding / closing the tab ----
+// Plan 14.3(b) is the visibility change — the tab going hidden (switch away,
+// minimize, mobile background) is the crash-prone moment, and it costs at
+// most the autosave window (30 s) of progress without this. Fire-and-forget
+// through the shared sessionSavePayload/persistNow path (also caches the
+// payload for the title's Continue button), debounced ~2 s so rapid
+// hidden/visible flips can't spam IDB. `sessionStarted` keeps the title
+// screen with no session from ever writing. Page-lifetime listener.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !sessionStarted) return;
+  const now = Date.now();
+  if (now - lastBgSave < BG_SAVE_DEBOUNCE_MS) return;
+  lastBgSave = now;
+  persistNow();
+});
+
+// Save point (b), close/refresh half: best-effort save on tab close. The page
+// is tearing down — nothing can await it, so rejection is swallowed (and
+// review #6's null payload — the death state — skips the write entirely).
+// Session guard as above. Page-lifetime listener — attach once, never removed.
 window.addEventListener('beforeunload', () => {
   if (!sessionStarted) return;
   const payload = sessionSavePayload();
+  if (!payload) return;
   void saveGame(payload).catch(() => {});
 });
 
