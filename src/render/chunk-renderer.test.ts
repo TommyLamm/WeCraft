@@ -220,6 +220,19 @@ describe('ChunkRenderer', () => {
     renderer.dispose();
   });
 
+  it('chunk that GAINS water: water mesh visible again with geometry', () => {
+    const { scene, renderer } = setup();
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    renderer.rebuild(w, 0, 0);
+    expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // starts dry
+    w.setBlock(5, 60, 5, BLOCK.WATER);
+    renderer.rebuild(w, 0, 0);
+    const waterMesh = scene.children[1] as THREE.Mesh;
+    expect(waterMesh.visible).toBe(true); // non-null branch must re-enable the pass
+    expect(waterMesh.geometry.getAttribute('position').count).toBe(6 * 4);
+    renderer.dispose();
+  });
+
   it('rebuilding an emptied chunk removes its mesh', () => {
     const { scene, renderer } = setup();
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);

@@ -359,6 +359,24 @@ describe('createFogController', () => {
     expect((scene.fog as THREE.Fog).far).toBe(96); // render-distance far survives too
   });
 
+  it('setDayFogFar while surfaced applies immediately (render-distance change)', () => {
+    const { scene } = sceneWithDayFog();
+    const ctl = createFogController(scene);
+    ctl.setDayFogFar(96); // main.ts: settings.renderDistance × CHUNK_SIZE
+    expect((scene.fog as THREE.Fog).far).toBe(96);
+  });
+
+  it('setDayFogFar while submerged stores it on the day fog; applied on surfacing', () => {
+    const { scene, dayFog } = sceneWithDayFog();
+    const ctl = createFogController(scene);
+    ctl.setUnderwater(true);
+    ctl.setDayFogFar(96);
+    expect(dayFog.far).toBe(96); // stored on the day fog…
+    expect(scene.fog).toBeInstanceOf(THREE.FogExp2); // …but the visible fog is untouched
+    ctl.setUnderwater(false);
+    expect((scene.fog as THREE.Fog).far).toBe(96); // no lost update after surfacing
+  });
+
   it('repeated toggles reuse the two fog objects (no per-frame allocation)', () => {
     const { scene, dayFog } = sceneWithDayFog();
     const ctl = createFogController(scene);

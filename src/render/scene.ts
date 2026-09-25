@@ -16,6 +16,10 @@ export interface GameScene {
    *  FogExp2; on exit the day/night fog from `setDayNight` is restored — the
    *  two compose regardless of call order (see `createFogController`). */
   setUnderwater(inside: boolean): void;
+  /** Task 16 review fix: apply the render-distance fog `far` (world units) —
+   *  stored on the day fog even while submerged, so a change made underwater
+   *  isn't lost (scene.fog is the FogExp2 there and has no `far`). */
+  setDayFogFar(far: number): void;
   dispose(): void;
 }
 
@@ -56,6 +60,12 @@ export interface FogController {
    *  day fog in place every frame — no allocation — and while submerged only
    *  stores it, so the underwater tint isn't clobbered as time passes. */
   setDayFogColor(hex: number): void;
+  /** Store the render-distance fog `far` in world units (main.ts's
+   *  applyRenderDistanceFog): updates the day fog's `far` and — only when
+   *  surfaced — makes sure it's the active fog. Mirrors `setDayFogColor`, so
+   *  a render-distance change made WHILE submerged is applied on surfacing
+   *  instead of being dropped (scene.fog is the FogExp2 there — no `far`). */
+  setDayFogFar(far: number): void;
   /** Enter/leave the underwater FogExp2; exit restores the persistent day
    *  fog object with the latest stored color. */
   setUnderwater(inside: boolean): void;
@@ -72,8 +82,9 @@ export interface FogController {
  *    (0x1c4e8a @ 0.09): entering swaps `scene.fog` to it, exiting swaps back
  *    — two object references, zero per-frame allocation.
  *  - Because `scene.fog` is the FogExp2 while submerged, `setDayNight`'s
- *    color writes go through `setDayFogColor` to the STORED day color instead
- *    of the visible underwater one; composition is therefore order-free. */
+ *    color and main.ts's render-distance `far` writes go through
+ *    `setDayFogColor`/`setDayFogFar` to the STORED day fog instead of the
+ *    visible underwater one; composition is therefore order-free. */
 export function createFogController(scene: THREE.Scene): FogController {
   let dayFog = scene.fog instanceof THREE.Fog ? scene.fog : null;
   if (!dayFog) {
@@ -86,6 +97,10 @@ export function createFogController(scene: THREE.Scene): FogController {
   return {
     setDayFogColor(hex) {
       dayFog.color.setHex(hex); // stored regardless of submersion
+      if (!underwater) scene.fog = dayFog;
+    },
+    setDayFogFar(far) {
+      dayFog.far = far; // stored regardless of submersion (the fix under review)
       if (!underwater) scene.fog = dayFog;
     },
     setUnderwater(inside) {
@@ -149,6 +164,9 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
     },
     setUnderwater(inside) {
       fogCtl.setUnderwater(inside);
+    },
+    setDayFogFar(far) {
+      fogCtl.setDayFogFar(far);
     },
     dispose() {
       renderer.dispose();

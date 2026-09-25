@@ -182,6 +182,13 @@ export class ChunkRenderer {
         m.updateMatrix(); // positions are world-space; the matrix never changes
       }
       pair.water.renderOrder = WATER_RENDER_ORDER; // draw after opaque geometry
+      // Honest note on water-vs-water order (don't assume a real painter's
+      // algorithm): three's transparent sort (reversePainterSortStable) orders
+      // water MESHES back-to-front by one projected z per mesh — each chunk's
+      // water bounding-sphere centre — so cross-chunk order is only chunk-
+      // granularity; triangles WITHIN one water geometry draw in mesher index
+      // order (the sort never sees them). Harmless either way: depthWrite
+      // false means no water surface ever occludes another.
       this.scene.add(pair.opaque, pair.water); // opaque first → stable children order
       this.chunks.set(key, pair);
     }

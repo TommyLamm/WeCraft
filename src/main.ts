@@ -336,8 +336,11 @@ bus.on('mode-changed', ({ mode }) => {
 });
 
 function applyRenderDistanceFog(): void {
-  const fog = gs.scene.fog;
-  if (fog && 'far' in fog) fog.far = settings.renderDistance * CHUNK_SIZE;
+  // Routed through the fog controller (Task 16 review fix): while submerged
+  // scene.fog is the FogExp2 (no `far`), so mutating scene.fog directly would
+  // silently DROP the update until the next render-distance change after
+  // surfacing — setDayFogFar stores it on the day fog and applies it there.
+  gs.setDayFogFar(settings.renderDistance * CHUNK_SIZE);
 }
 applyRenderDistanceFog();
 
