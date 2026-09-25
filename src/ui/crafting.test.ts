@@ -105,6 +105,17 @@ describe('crafting section (embedded)', () => {
     expect(inv.isOpen()).toBe(false);
   });
 
+  it('no crafting params → no 2×2 section, palette intact (creative gate seam)', () => {
+    // main.ts passes `undefined` in creative (crafting hidden, plan 12.4)
+    const inv = createInventory(root());
+    inv.open([], 0, () => {}, undefined, undefined);
+    expect(inv.isOpen()).toBe(true);
+    expect(root().querySelector('.ui-craft')).toBeNull();
+    expect(root().querySelectorAll('.ui-craft-grid .ui-slot').length).toBe(0);
+    expect(root().querySelector('.ui-inv-grid')).not.toBeNull(); // palette untouched
+    inv.close();
+  });
+
   it('clicking an empty cell moves 1 item from the selected hotbar slot into the grid', () => {
     const { grid, hotbar, params } = harness(2);
     mountCrafting(root(), params);
@@ -211,5 +222,26 @@ describe('crafting overlay (createCrafting)', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(craft.isOpen()).toBe(false);
+  });
+
+  it('open → close → open → Esc: one onClose, exactly one live handler', () => {
+    const craft = createCrafting(root());
+    const onClose = vi.fn();
+    craft.open({ ...harness(2).params, onClose });
+    craft.close();
+    expect(onClose).not.toHaveBeenCalled(); // close() alone never notifies
+    craft.open({ ...harness(2).params, onClose });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(craft.isOpen()).toBe(false);
+    // the previous session's Esc handler must be gone — a stray key is inert
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // reopening attaches exactly one fresh handler and never stacks overlays
+    craft.open({ ...harness(2).params, onClose });
+    expect(root().querySelectorAll('.ui-craft').length).toBe(1);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(root().querySelector('.ui-craft')).toBeNull();
   });
 });

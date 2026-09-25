@@ -19,6 +19,15 @@ export interface InventoryModel {
   removeItem(item: ItemId, count: number): number;
   /** Total of `item` summed across slots. */
   countItem(item: ItemId): number;
+  /** Pure capacity pre-check: true iff `count` of `item` would fit entirely
+   *  (slack in matching partial stacks + empty slots × maxStack ≥ count).
+   *  Never mutates — the crafting take path calls this BEFORE `addItem`,
+   *  which otherwise commits partial merges before reporting its remainder
+   *  (review Critical #1). count ≤ 0 → true (nothing to add); NaN or
+   *  +Infinity → false.
+   *  No mode branch (documented): creative's take path is unreachable
+   *  (crafting is hidden there, plan 12.4). */
+  fits(item: ItemId, count: number): boolean;
   /** Direct slot write (palette pick, hotbar swap). Validates + copies on write:
    *  null or count < 1 clears the slot; count is floored and clamped to maxStack;
    *  the stored stack never aliases the caller's object. Out-of-range ignored. */
@@ -79,6 +88,17 @@ export function createInventoryModel(
       let total = 0;
       for (const s of slots) if (s && s.item === item) total += s.count;
       return total;
+    },
+    fits(item, count) {
+      if (count <= 0) return true; // nothing to add (covers -Infinity)
+      if (!Number.isFinite(count)) return false; // NaN / +Infinity
+      const cap = maxStack(item);
+      let slack = 0;
+      for (const s of slots) {
+        if (!s) slack += cap; // empty slot can hold a whole new stack
+        else if (s.item === item && s.count < cap) slack += cap - s.count;
+      }
+      return slack >= count; // mirrors addItem's two passes exactly
     },
     setSlot(index, stack) {
       if (index < 0 || index >= slots.length) return;

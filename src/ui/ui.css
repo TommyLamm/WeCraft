@@ -255,13 +255,13 @@
 .ui-craft-hotbar .ui-slot {
   background: #8b8b8b;
 }
-/* table overlay panel (mirrors .ui-inventory chrome) */
+/* table overlay panel (mirrors .ui-inventory chrome). pointer-events comes
+   from the `interactive` class → `#ui-root .interactive` (review Minor #9). */
 .ui-craft-panel {
   background: #c6c6c6;
   border: 3px solid #555;
   border-radius: 4px;
   padding: 12px;
-  pointer-events: auto;
 }
 .ui-craft-panel h3 {
   margin: 0 0 8px;

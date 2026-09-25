@@ -43,8 +43,13 @@ export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (the only shapeless recipe)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
   // two planks stacked vertically → 4 sticks
+  // Deviation, adjudicated KEEP SHAPED (Minecraft parity): the plan's recipe
+  // table lists this as shapeless; shipped shaped so a HORIZONTAL pair does
+  // NOT craft sticks, exactly like Minecraft — orchestrator decision.
   { id: 'planks_to_stick', kind: 'shaped', pattern: [[P], [P]], result: { item: 'stick', count: 4 } },
   // 2×2 square of planks → crafting table
+  // Same adjudication as planks_to_stick above: plan table says shapeless,
+  // shipped SHAPED for Minecraft parity (position matters) — orchestrator decision.
   {
     id: 'planks_to_table',
     kind: 'shaped',

@@ -110,8 +110,11 @@ let craftExcess: ItemStack[] = [];
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
- *  stacks directly (merge partials, then empty slots) — otherwise taking a
- *  craft result would consume the grid and hand back nothing visible. */
+ *  stacks directly (merge partials, then empty slots). That branch is NOT dead
+ *  (review #3): the crafting take/give-back paths are survival-only now, but
+ *  `resetCraftGrid`'s flush below runs on every inventory open in ANY mode —
+ *  a grid staged in survival and then mode-toggled must still hand its items
+ *  back instead of losing them to the creative no-op. */
 function giveItem(item: ItemId, count: number): number {
   if (inventory.mode !== 'creative') return inventory.addItem(item, count);
   const cap = maxStack(item);
@@ -135,7 +138,9 @@ function giveItem(item: ItemId, count: number): number {
 /** Rebuild `craftGrid` for `size`, handing every leftover (plus anything
  *  parked in `craftExcess`) back to the inventory first; items that still
  *  don't fit land in the FRONT cells of the new grid — visible and craftable,
- *  never lost. Called on every crafting open (the grid starts empty). */
+ *  never lost. Called on every crafting open (the grid starts empty) and on
+ *  every inventory open (see the call site — it must flush in creative too).
+ *  Task 13: flush craftGrid before save (staged items live only in this array). */
 function resetCraftGrid(size: 2 | 3): void {
   const pending: ItemStack[] = [...craftExcess];
   craftExcess = [];
@@ -180,7 +185,13 @@ function craftingParams(size: 2 | 3): CraftingParams {
       return overflow;
     },
     onTake: (result) => {
-      if (giveItem(result.item, result.count) > 0) return false; // full → blocked, grid untouched
+      // Atomic take (review Critical #1): pre-check capacity BEFORE any write.
+      // `addItem` commits its partial merges before returning the remainder, so
+      // testing that remainder afterwards would still have granted a free
+      // partial stack (and skipped this HUD refresh). `fits` matches addItem's
+      // capacity exactly, so the give below never overflows here.
+      if (!inventory.fits(result.item, result.count)) return false; // full → blocked, grid untouched
+      giveItem(result.item, result.count);
       hud.setHotbar(hotbar, selected);
       return true;
     },
@@ -523,7 +534,9 @@ function setState(next: GameState): void {
     // else calls setState('dead').
     bus.emit('player-died', {});
   } else if (next === 'inventory') {
-    resetCraftGrid(2); // hand back leftovers from a previous session (items never lost)
+    // Flush leftovers from a previous session (items never lost) — this runs in
+    // creative too, where the 2×2 section below does NOT mount (plan 12.4).
+    resetCraftGrid(2);
     inv.open(
       hotbar,
       selected,
@@ -537,11 +550,14 @@ function setState(next: GameState): void {
         setState('playing');
         relockCanvas();
       },
-      // Task 11: 2×2 crafting section embedded at the top of the panel
-      craftingParams(2),
+      // Task 11: 2×2 crafting section embedded at the top of the panel.
+      // creative: crafting hidden (plan 12.4) → no params, no section mounted.
+      currentMode === 'survival' ? craftingParams(2) : undefined,
     );
   } else if (next === 'crafting') {
-    // Task 11: right-click on a placed crafting table → standalone 3×3 overlay
+    // Task 11: right-click on a placed crafting table → standalone 3×3 overlay.
+    // Reachable in survival only: the sole entry point is the gated place-path
+    // above (creative: crafting hidden, plan 12.4).
     resetCraftGrid(3);
     craftUi.open({
       ...craftingParams(3),
@@ -844,8 +860,13 @@ gs.renderer.setAnimationLoop(() => {
       if (hit && wantPlace) {
         // Task 11: interacting with a crafting table ALWAYS opens the 3×3 UI
         // (settled — never place a block onto the table itself, even while
-        // holding one); every other target places as before.
-        if (world.getBlock(hit.x, hit.y, hit.z) === BLOCK.CRAFTING_TABLE) {
+        // holding one). creative: crafting hidden (plan 12.4) → the gate fails
+        // and the click falls through to the normal place path (place AGAINST
+        // the table when holding a block, otherwise nothing).
+        if (
+          currentMode === 'survival' &&
+          world.getBlock(hit.x, hit.y, hit.z) === BLOCK.CRAFTING_TABLE
+        ) {
           setState('crafting');
           document.exitPointerLock?.(); // same order as the inventory open below
         } else {

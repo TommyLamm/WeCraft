@@ -178,3 +178,81 @@ describe('inventory model — slots', () => {
     expect(initial[0]!.count).toBe(1);
   });
 });
+
+// `fits` is the atomic-take pre-check (crafting review Critical #1): addItem
+// commits partial merges BEFORE returning its remainder, so "check the
+// overflow afterwards" would already have granted a free partial stack.
+describe('inventory model — fits (capacity pre-check)', () => {
+  it('exact-fit boundary: slack 2 < 4 → false, slack exactly 4 → true', () => {
+    const inv = createInventoryModel(
+      [
+        { item: 'oak_planks', count: 62 }, // only slack in the whole inventory: 64 − 62 = 2
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'dirt', count: 64 },
+        { item: 'oak_log', count: 64 },
+      ],
+      'survival',
+    );
+    expect(inv.fits('oak_planks', 4)).toBe(false); // 2 < 4 — the bug this guards
+    expect(inv.fits('oak_planks', 2)).toBe(true); // exactly the slack
+    inv.setSlot(8, null); // +64 of room (an empty slot, not more planks slack)
+    expect(inv.fits('oak_planks', 4)).toBe(true); // 2 + 64 ≥ 4
+  });
+
+  it('an empty slot is worth maxStack of room (splitting cost is not hidden)', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    expect(inv.fits('dirt', 128)).toBe(true); // 2 × 64
+    expect(inv.fits('dirt', 129)).toBe(false); // 2 × 64 + 1
+    expect(inv.fits('wooden_pickaxe', 2)).toBe(true); // tools: cap 1 per slot
+    expect(inv.fits('wooden_pickaxe', 3)).toBe(false);
+  });
+
+  it('count ≤ 0 fits (nothing to add); NaN / +Infinity never fit', () => {
+    const inv = createInventoryModel([{ item: 'dirt', count: 64 }], 'survival');
+    expect(inv.fits('dirt', 0)).toBe(true);
+    expect(inv.fits('dirt', -3)).toBe(true);
+    expect(inv.fits('dirt', NaN)).toBe(false);
+    expect(inv.fits('dirt', Infinity)).toBe(false);
+  });
+
+  it('is a pure read — slots are untouched by every answer', () => {
+    const inv = createInventoryModel(
+      [{ item: 'oak_planks', count: 62 }, null, { item: 'stick', count: 5 }],
+      'survival',
+    );
+    const before = inv.slots.map((s) => (s ? { ...s } : null));
+    expect(inv.fits('oak_planks', 67)).toBe(false); // slack 2 + one empty slot 64 = 66
+    expect(inv.fits('oak_planks', 66)).toBe(true); // exactly that slack
+    expect(inv.fits('dirt', 64)).toBe(true); // only the empty slot is reusable
+    expect(inv.fits('dirt', 65)).toBe(false);
+    expect(inv.slots).toEqual(before);
+  });
+
+  it('agrees with addItem: fits(n) ⇔ addItem(n) reports no overflow', () => {
+    const inv = createInventoryModel(
+      [{ item: 'dirt', count: 60 }, { item: 'stone', count: 64 }, null],
+      'survival',
+    );
+    for (const n of [1, 4, 67, 68, 69]) {
+      const probe = createInventoryModel(
+        [{ item: 'dirt', count: 60 }, { item: 'stone', count: 64 }, null],
+        'survival',
+      );
+      expect(inv.fits('dirt', n)).toBe(probe.addItem('dirt', n) === 0);
+    }
+  });
+
+  it('creative: fits stays a structural capacity read (no mode branch)', () => {
+    // The crafting take path is unreachable in creative (plan 12.4 — crafting
+    // is hidden), so fits reports what the SLOTS can hold either way.
+    const inv = createInventoryModel([{ item: 'dirt', count: 64 }]); // creative default
+    expect(inv.mode).toBe('creative');
+    expect(inv.fits('dirt', 1)).toBe(false);
+    expect(inv.fits('dirt', 0)).toBe(true);
+  });
+});

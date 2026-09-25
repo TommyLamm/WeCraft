@@ -76,6 +76,13 @@ describe('matchRecipe — shaped', () => {
     expect(col1).toEqual({ item: 'stick', count: 4 });
   });
 
+  it('horizontal 2 oak_planks do NOT craft sticks (shaped — review #2 pin)', () => {
+    // The plan table lists planks_to_stick as shapeless; shipped SHAPED for
+    // Minecraft parity, so a side-by-side pair must be rejected.
+    expect(matchRecipe([s('oak_planks'), s('oak_planks'), null, null], 2)).toBeNull();
+    // …and the vertical pair above keeps crafting 4 sticks.
+  });
+
   it('2×2 oak_planks → 1 crafting_table', () => {
     const g = [s('oak_planks'), s('oak_planks'), s('oak_planks'), s('oak_planks')];
     expect(matchRecipe(g, 2)).toEqual({ item: 'crafting_table', count: 1 });
