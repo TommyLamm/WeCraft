@@ -2,13 +2,18 @@ import './ui.css';
 import { PLACEABLE } from '../world/blocks';
 import { stackFromBlock, stackName, type ItemStack } from '../core/items';
 import { itemIcon } from './icons';
+import { mountCrafting, type CraftingParams } from './crafting';
 
 export interface InventoryUi {
+  /** `crafting` (Task 11) mounts a 2×2 crafting section into the panel —
+   *  omitted by callers that only want the palette. It is unmounted again in
+   *  `close()`, so the caller owns no lifecycle beyond passing params. */
   open(
     hotbar: ReadonlyArray<ItemStack | null>,
     selected: number,
     onPick: (slot: number, stack: ItemStack) => void,
     onClose?: () => void,
+    crafting?: CraftingParams,
   ): void;
   close(): void;
   isOpen(): boolean;
@@ -17,9 +22,10 @@ export interface InventoryUi {
 export function createInventory(uiRoot: HTMLElement): InventoryUi {
   let el: HTMLElement | null = null;
   let escHandler: ((e: KeyboardEvent) => void) | null = null;
+  let unmountCrafting: (() => void) | null = null;
 
   return {
-    open(_hotbar, selected, onPick, onClose) {
+    open(_hotbar, selected, onPick, onClose, crafting) {
       this.close();
       // Full-screen transparent backdrop captures outside clicks so they never
       // reach the canvas (prevents requestPointerLock while inventory is open).
@@ -56,7 +62,11 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
         s.addEventListener('click', () => onPick(selected, { ...stack }));
         grid.appendChild(s);
       }
-      panel.append(h, grid);
+      // Task 11: the 2×2 crafting section sits above the palette (survival
+      // crafting); the creative palette below stays untouched.
+      panel.append(h);
+      if (crafting) unmountCrafting = mountCrafting(panel, crafting);
+      panel.append(grid);
       el.appendChild(panel);
       uiRoot.appendChild(el);
     },
@@ -65,6 +75,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
         document.removeEventListener('keydown', escHandler);
         escHandler = null;
       }
+      unmountCrafting?.();
+      unmountCrafting = null;
       el?.remove();
       el = null;
     },

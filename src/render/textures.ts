@@ -125,6 +125,23 @@ export function drawAtlas(): AtlasImage {
     if (blob && r() > 0.3) return vary([216, 175, 147, 255], r, 20);
     return stone;
   }); // iron_ore
+  put(17, (x, y, r) => {
+    // crafting_table top: planks base + dark 2×2 workbench grid cross
+    const cross = x === 7 || x === 8 || y === 7 || y === 8 ? -40 : 0;
+    const line = y % 4 === 3 ? -14 : 0;
+    const c = vary([168, 136, 84, 255], r, 14);
+    return [clamp255(c[0] + line + cross), clamp255(c[1] + line + cross), clamp255(c[2] + line + cross), 255];
+  }); // crafting_top
+  put(18, (x, y, r) => {
+    // crafting_table side: dark apron band under the top + tool marks
+    const band = y >= 2 && y <= 5 ? -30 : 0;
+    const tool =
+      (x >= 3 && x <= 5 && y >= 9 && y <= 11) || (x === 11 && y >= 8 && y <= 12) ? -45 : 0;
+    const line = y % 4 === 3 ? -14 : 0;
+    const c = vary([168, 136, 84, 255], r, 14);
+    const d = band + tool + line;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // crafting_side
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

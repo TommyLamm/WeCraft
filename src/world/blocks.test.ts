@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BLOCK, getBlockDef, isSolid, isTransparent, PLACEABLE } from './blocks';
+import { BLOCK, getBlockDef, isSolid, isTransparent, PLACEABLE, HOTBAR_DEFAULT } from './blocks';
 
 describe('blocks', () => {
   it('air id is 0 and not solid', () => {
@@ -41,5 +41,16 @@ describe('blocks', () => {
     expect(PLACEABLE).not.toContain(BLOCK.AIR);
     expect(PLACEABLE).not.toContain(BLOCK.WATER);
     expect(PLACEABLE.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it('crafting_table: solid, opaque, hardness 2.5, placeable, per-face tiles (Task 11)', () => {
+    const def = getBlockDef(BLOCK.CRAFTING_TABLE);
+    expect(def.name).toBe('crafting_table');
+    expect(def.hardness).toBe(2.5);
+    expect(isSolid(BLOCK.CRAFTING_TABLE)).toBe(true);
+    expect(isTransparent(BLOCK.CRAFTING_TABLE)).toBe(false);
+    expect(PLACEABLE).toContain(BLOCK.CRAFTING_TABLE);
+    expect(def.top).not.toBe(def.side); // grid top vs tool-front side
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.CRAFTING_TABLE); // crafted, not given
   });
 });

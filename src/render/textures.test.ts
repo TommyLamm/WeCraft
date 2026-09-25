@@ -156,4 +156,34 @@ describe('textures', () => {
     expect(tileIndexAt(1, 0)).toBe(1);
     expect(tileIndexAt(0, 1)).toBe(32);
   });
+
+  it('crafting table (Task 11): opaque tiles; top grid cross + side apron band are darker', () => {
+    const CRAFTING_TOP = 17;
+    const CRAFTING_SIDE = 18;
+    const atlas = drawAtlas();
+    for (const tile of [CRAFTING_TOP, CRAFTING_SIDE]) {
+      for (let y = 0; y < TILE_PX; y++)
+        for (let x = 0; x < TILE_PX; x++) {
+          expect(tilePixel(atlas, tile, x, y)[3], `tile ${tile} px ${x},${y}`).toBe(255);
+        }
+    }
+    // top: the 2×2 workbench grid cross (x or y in {7,8}) vs the planks base
+    let cross = 0;
+    let base = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const r = tilePixel(atlas, CRAFTING_TOP, x, y)[0];
+        if (x === 7 || x === 8 || y === 7 || y === 8) cross += r;
+        else base += r;
+      }
+    expect(cross / 60).toBeLessThan(base / 196 - 15);
+    // side: apron band under the table top (rows 2–5) vs the lower body
+    let band = 0;
+    let body = 0;
+    for (let y = 2; y <= 5; y++)
+      for (let x = 0; x < TILE_PX; x++) band += tilePixel(atlas, CRAFTING_SIDE, x, y)[0];
+    for (let y = 6; y <= 11; y++)
+      for (let x = 0; x < TILE_PX; x++) body += tilePixel(atlas, CRAFTING_SIDE, x, y)[0];
+    expect(band / 64).toBeLessThan(body / 96 - 15);
+  });
 });

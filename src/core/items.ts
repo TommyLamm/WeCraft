@@ -15,10 +15,10 @@ export type ItemId =
 
 export interface ItemStack { item: ItemId; count: number }
 
-// Item ↔ block pairs for blocks that exist RIGHT NOW. crafting_table/chest are in
-// the ItemId union but gain entries here when their blocks land (Task 11);
-// gravel has no block at all. air is never an item; water is a world-only block
-// with no obtainable item form (it is never mined or placed as an item).
+// Item ↔ block pairs for blocks that exist RIGHT NOW. chest is in the ItemId
+// union but gains its entry when its block lands; gravel has no block at all.
+// air is never an item; water is a world-only block with no obtainable item
+// form (it is never mined or placed as an item).
 const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['grass', BLOCK.GRASS],
   ['dirt', BLOCK.DIRT],
@@ -33,6 +33,7 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['oak_leaves', BLOCK.LEAVES],
   ['snow_block', BLOCK.SNOW],
   ['bedrock', BLOCK.BEDROCK],
+  ['crafting_table', BLOCK.CRAFTING_TABLE],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

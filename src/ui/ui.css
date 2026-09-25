@@ -179,6 +179,10 @@
 .ui-overlay.ui-inv-backdrop {
   background: transparent;
 }
+/* crafting-table overlay mirrors the inventory backdrop (world stays visible) */
+.ui-overlay.ui-craft-backdrop {
+  background: transparent;
+}
 .ui-inventory h3 {
   margin: 0 0 8px;
   font-size: 14px;
@@ -197,6 +201,72 @@
 }
 .ui-inv-grid .ui-slot:hover {
   outline: 2px solid #fff;
+}
+
+/* Crafting section (Task 11): grid + arrow + result slot, then the hotbar row
+   used as the transfer source (click a slot to select it, click a cell to move
+   1 item). Embedded in the inventory panel (2×2) and in the table overlay (3×3). */
+.ui-craft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.ui-craft-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ui-craft-grid {
+  display: grid;
+  gap: 4px;
+}
+.ui-craft-grid.size-2 {
+  grid-template-columns: repeat(2, 44px);
+}
+.ui-craft-grid.size-3 {
+  grid-template-columns: repeat(3, 44px);
+}
+.ui-craft-arrow {
+  font-size: 22px;
+  color: #3f3f3f;
+}
+.ui-craft .ui-slot {
+  width: 44px;
+  height: 44px;
+  background: #8b8b8b;
+  cursor: pointer;
+}
+.ui-craft .ui-slot:hover {
+  outline: 2px solid #fff;
+}
+.ui-craft-result {
+  background: #7a7a7a;
+}
+.ui-craft-hotbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 2px solid rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  align-self: flex-start;
+}
+.ui-craft-hotbar .ui-slot {
+  background: #8b8b8b;
+}
+/* table overlay panel (mirrors .ui-inventory chrome) */
+.ui-craft-panel {
+  background: #c6c6c6;
+  border: 3px solid #555;
+  border-radius: 4px;
+  padding: 12px;
+  pointer-events: auto;
+}
+.ui-craft-panel h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #3f3f3f;
 }
 
 .ui-settings {

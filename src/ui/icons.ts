@@ -154,16 +154,6 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       line(ctx, 5, 21, 11, 27, '#e8e8e8', 2);
       break;
     }
-    case 'crafting_table': {
-      ctx.fillStyle = WOOD_LIGHT;
-      ctx.fillRect(5, 5, 22, 22);
-      ctx.strokeStyle = '#8a6b3f';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(6, 6, 20, 20);
-      line(ctx, 5, 16, 27, 16, '#8a6b3f', 2);
-      line(ctx, 16, 5, 16, 27, '#8a6b3f', 2);
-      break;
-    }
     case 'chest': {
       ctx.fillStyle = '#a5713d';
       ctx.fillRect(4, 8, 24, 18);

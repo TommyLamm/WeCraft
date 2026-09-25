@@ -14,6 +14,7 @@ export const BLOCK = {
   GLASS: 12,
   COAL_ORE: 13,
   IRON_ORE: 14,
+  CRAFTING_TABLE: 15,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -35,6 +36,7 @@ const T = {
   PLANKS: 8, COBBLE: 9, WATER: 10, BEDROCK: 11,
   SNOW_TOP: 12, SNOW_SIDE: 13, GLASS: 14,
   COAL: 15, IRON: 16,
+  CRAFTING_TOP: 17, CRAFTING_SIDE: 18,
 } as const;
 
 const DEFS: Record<number, BlockDef> = {
@@ -53,6 +55,7 @@ const DEFS: Record<number, BlockDef> = {
   12: { id: 12, name: 'glass', hardness: 0.4, solid: true, transparent: true, top: T.GLASS, side: T.GLASS, bottom: T.GLASS },
   13: { id: 13, name: 'coal_ore', hardness: 2.5, solid: true, transparent: false, top: T.COAL, side: T.COAL, bottom: T.COAL },
   14: { id: 14, name: 'iron_ore', hardness: 3.0, solid: true, transparent: false, top: T.IRON, side: T.IRON, bottom: T.IRON },
+  15: { id: 15, name: 'crafting_table', hardness: 2.5, solid: true, transparent: false, top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -65,7 +68,7 @@ export const isTransparent = (id: number): boolean => getBlockDef(id).transparen
 export const PLACEABLE: BlockId[] = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLE, BLOCK.PLANKS,
   BLOCK.LOG, BLOCK.LEAVES, BLOCK.SAND, BLOCK.GLASS, BLOCK.SNOW,
-  BLOCK.BEDROCK, BLOCK.COAL_ORE, BLOCK.IRON_ORE,
+  BLOCK.BEDROCK, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.CRAFTING_TABLE,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

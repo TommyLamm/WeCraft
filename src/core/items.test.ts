@@ -58,7 +58,8 @@ describe('items', () => {
       expect(blockFromItem(item!)).toBe(block);
     }
     expect(blockFromItem('stick')).toBeNull();
-    expect(blockFromItem('crafting_table')).toBeNull(); // block arrives in Task 11
+    expect(blockFromItem('crafting_table')).toBe(BLOCK.CRAFTING_TABLE); // Task 11 block
+    expect(blockFromItem('chest')).toBeNull(); // no chest block yet
   });
 
   it('stackName title-cases item ids', () => {
@@ -79,6 +80,7 @@ describe('items', () => {
     expect(stackFromBlock(BLOCK.GRASS)).toEqual({ item: 'grass', count: 64 });
     expect(stackFromBlock(BLOCK.GRASS, 3)).toEqual({ item: 'grass', count: 3 });
     expect(stackFromBlock(BLOCK.STONE, 1)).toEqual({ item: 'stone', count: 1 });
+    expect(stackFromBlock(BLOCK.CRAFTING_TABLE)).toEqual({ item: 'crafting_table', count: 64 });
     expect(stackFromBlock(BLOCK.AIR)).toBeNull();
     expect(stackFromBlock(BLOCK.WATER)).toBeNull(); // no obtainable item form
   });

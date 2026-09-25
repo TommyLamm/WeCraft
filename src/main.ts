@@ -7,7 +7,8 @@ import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor } from './world/raycast';
 import { BLOCK, HOTBAR_DEFAULT } from './world/blocks';
-import { blockFromItem, stackFromBlock, stackName } from './core/items';
+import { blockFromItem, stackFromBlock, stackName, maxStack, type ItemId, type ItemStack } from './core/items';
+import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
@@ -45,12 +46,15 @@ import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
 import { createDeathScreen } from './ui/death';
 import { createInventory } from './ui/inventory';
+import { createCrafting, type CraftingParams } from './ui/crafting';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { generateChunk, surfaceHeight } from './world/terrain';
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
-type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'dead';
+// 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
+// handling as 'inventory' — the frame loop's final else keeps it static)
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'dead';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -67,6 +71,8 @@ const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
 const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
+// Task 11: standalone 3×3 crafting overlay (right-click on a crafting table)
+const craftUi = createCrafting(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
 
@@ -94,6 +100,92 @@ let showDebug = false;
 let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- Crafting state (Task 11) ----
+// The grid is owned here (not by the UI) so items staged in it survive between
+// opens of the same size. `craftExcess` parks leftovers that didn't fit a full
+// inventory — retried on the next reset, so items are never destroyed.
+let craftGrid: Array<ItemStack | null> = [];
+let craftExcess: ItemStack[] = [];
+
+/** Give `count` of `item` back to the inventory → the overflow that didn't fit.
+ *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
+ *  stacks directly (merge partials, then empty slots) — otherwise taking a
+ *  craft result would consume the grid and hand back nothing visible. */
+function giveItem(item: ItemId, count: number): number {
+  if (inventory.mode !== 'creative') return inventory.addItem(item, count);
+  const cap = maxStack(item);
+  let rest = count;
+  for (let i = 0; i < hotbar.length && rest > 0; i++) {
+    const s = hotbar[i];
+    if (!s || s.item !== item || s.count >= cap) continue;
+    const put = Math.min(cap - s.count, rest);
+    inventory.setSlot(i, { item, count: s.count + put });
+    rest -= put;
+  }
+  for (let i = 0; i < hotbar.length && rest > 0; i++) {
+    if (hotbar[i]) continue;
+    const put = Math.min(cap, rest);
+    inventory.setSlot(i, { item, count: put });
+    rest -= put;
+  }
+  return rest;
+}
+
+/** Rebuild `craftGrid` for `size`, handing every leftover (plus anything
+ *  parked in `craftExcess`) back to the inventory first; items that still
+ *  don't fit land in the FRONT cells of the new grid — visible and craftable,
+ *  never lost. Called on every crafting open (the grid starts empty). */
+function resetCraftGrid(size: 2 | 3): void {
+  const pending: ItemStack[] = [...craftExcess];
+  craftExcess = [];
+  for (const cell of craftGrid) {
+    if (cell && Number.isFinite(cell.count) && cell.count >= 1) pending.push({ ...cell });
+  }
+  craftGrid = emptyGrid(size);
+  let front = 0;
+  for (const p of pending) {
+    const overflow = giveItem(p.item, p.count);
+    if (overflow > 0 && front < craftGrid.length) {
+      craftGrid[front++] = { item: p.item, count: overflow };
+    } else if (overflow > 0) {
+      craftExcess.push({ item: p.item, count: overflow });
+    }
+  }
+}
+
+/** Callback bundle for ui/crafting (Decision A: plain callbacks, no bus).
+ *  Mutations go through the inventory model (`setSlot`/`giveItem`); the HUD is
+ *  refreshed after each so the hotbar below stays in sync live. */
+function craftingParams(size: 2 | 3): CraftingParams {
+  return {
+    size,
+    grid: craftGrid, // live array — the UI writes cells in place
+    hotbar, // live slots — re-read on every UI render
+    selected, // source slot for the first transfer (UI-local afterwards)
+    // no onSlotSelect: the craft row's source selection is local to the widget.
+    // Syncing it into `selected` would desync the inventory palette, whose
+    // heading + onPick snapshot `selected` at open time (keys are gated while
+    // unlocked, so nothing else can move it mid-open).
+    onSpend: (slot, item) => {
+      const s = hotbar[slot];
+      if (!s || s.item !== item || !Number.isFinite(s.count) || s.count < 1) return false;
+      inventory.setSlot(slot, s.count > 1 ? { item: s.item, count: s.count - 1 } : null);
+      hud.setHotbar(hotbar, selected);
+      return true;
+    },
+    onGiveBack: (item) => {
+      const overflow = giveItem(item, 1);
+      hud.setHotbar(hotbar, selected);
+      return overflow;
+    },
+    onTake: (result) => {
+      if (giveItem(result.item, result.count) > 0) return false; // full → blocked, grid untouched
+      hud.setHotbar(hotbar, selected);
+      return true;
+    },
+  };
+}
 
 // ---- Combat / vitals tuning (Task 9) ----
 // Repeat hits on a held LMB are gated by a 0.6 s cooldown — without it the
@@ -380,6 +472,7 @@ function setState(next: GameState): void {
   state = next;
   menus.hideAll();
   inv.close();
+  craftUi.close(); // every transition clears the crafting overlay too (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   if (next === 'title') {
     menus.showTitle(startGame);
@@ -430,6 +523,7 @@ function setState(next: GameState): void {
     // else calls setState('dead').
     bus.emit('player-died', {});
   } else if (next === 'inventory') {
+    resetCraftGrid(2); // hand back leftovers from a previous session (items never lost)
     inv.open(
       hotbar,
       selected,
@@ -443,7 +537,19 @@ function setState(next: GameState): void {
         setState('playing');
         relockCanvas();
       },
+      // Task 11: 2×2 crafting section embedded at the top of the panel
+      craftingParams(2),
     );
+  } else if (next === 'crafting') {
+    // Task 11: right-click on a placed crafting table → standalone 3×3 overlay
+    resetCraftGrid(3);
+    craftUi.open({
+      ...craftingParams(3),
+      onClose: () => {
+        setState('playing');
+        relockCanvas();
+      },
+    });
   }
 }
 
@@ -736,11 +842,19 @@ gs.renderer.setAnimationLoop(() => {
       // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
       const wantPlace = input.consumePlace();
       if (hit && wantPlace) {
-        const t = placeTarget(hit);
-        const held = hotbar[selected];
-        const placeId = held ? blockFromItem(held.item) : null;
-        if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-          world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+        // Task 11: interacting with a crafting table ALWAYS opens the 3×3 UI
+        // (settled — never place a block onto the table itself, even while
+        // holding one); every other target places as before.
+        if (world.getBlock(hit.x, hit.y, hit.z) === BLOCK.CRAFTING_TABLE) {
+          setState('crafting');
+          document.exitPointerLock?.(); // same order as the inventory open below
+        } else {
+          const t = placeTarget(hit);
+          const held = hotbar[selected];
+          const placeId = held ? blockFromItem(held.item) : null;
+          if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
+            world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+          }
         }
       }
 
@@ -788,7 +902,7 @@ gs.renderer.setAnimationLoop(() => {
     refreshQueues();
     processQueues();
   } else {
-    // paused | inventory | dead: keep the frozen world view (plan's single
+    // paused | inventory | crafting | dead: keep the frozen world view (plan's single
     // else ran the orbit here too — that would yank the camera on pause).
     // 'dead' renders the world behind the death-screen overlay (Task 10).
     hud.setDebug(null);
