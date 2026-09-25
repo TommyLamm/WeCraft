@@ -5,6 +5,7 @@ import {
   stackFromBlock,
   stackName,
   maxStack,
+  starterSlots,
   type ItemId,
 } from './items';
 import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
@@ -83,5 +84,40 @@ describe('items', () => {
     expect(stackFromBlock(BLOCK.CRAFTING_TABLE)).toEqual({ item: 'crafting_table', count: 64 });
     expect(stackFromBlock(BLOCK.AIR)).toBeNull();
     expect(stackFromBlock(BLOCK.WATER)).toBeNull(); // no obtainable item form
+  });
+
+  // The Critical the live walkthrough found: a survival hotbar starting FULL
+  // (64/64 of unrelated blocks) leaves fits() zero slack, so no mined drop can
+  // be picked up and no craft result can be taken — the whole loop deadlocks.
+  it('starterSlots is a full hotbar of nulls in survival (fits() must have slack)', () => {
+    const slots = starterSlots('survival');
+    expect(slots).toHaveLength(9);
+    expect(slots).toHaveLength(HOTBAR_DEFAULT.length);
+    expect(slots.every((s) => s === null)).toBe(true);
+  });
+
+  it('starterSlots is the default block kit at max stacks in creative', () => {
+    const expected = HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
+    expect(starterSlots('creative')).toEqual(expected);
+    expect(starterSlots('creative')).toHaveLength(HOTBAR_DEFAULT.length);
+    for (const s of starterSlots('creative')) {
+      expect(s).not.toBeNull();
+      expect(s!.count).toBe(maxStack(s!.item));
+    }
+  });
+
+  it('starterSlots returns a fresh array each call (mutating one cannot alias the next)', () => {
+    const a = starterSlots('survival');
+    const b = starterSlots('survival');
+    expect(a).not.toBe(b);
+    a[0] = { item: 'dirt', count: 64 };
+    expect(b[0]).toBeNull();
+
+    const c = starterSlots('creative');
+    const d = starterSlots('creative');
+    expect(c).not.toBe(d);
+    expect(c[0]).not.toBe(d[0]);
+    c[0]!.count = 1;
+    expect(d[0]!.count).toBe(64);
   });
 });

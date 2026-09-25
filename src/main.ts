@@ -6,8 +6,8 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor } from './world/raycast';
-import { BLOCK, HOTBAR_DEFAULT } from './world/blocks';
-import { blockFromItem, stackFromBlock, stackName, maxStack, type ItemId, type ItemStack } from './core/items';
+import { BLOCK } from './world/blocks';
+import { blockFromItem, stackName, maxStack, starterSlots, type ItemId, type ItemStack } from './core/items';
 import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
@@ -92,11 +92,10 @@ let player: PlayerState = createPlayer(0.5, 90, 0.5);
 let currentMode: GameMode = settings.mode;
 // Stack-based model owns the hotbar slots; `hotbar` is the live reference the
 // HUD/palette render. Mode comes from settings (default survival since Task 5);
-// creative add/remove no-op inside the model.
-const inventory = createInventoryModel(
-  HOTBAR_DEFAULT.map((b) => stackFromBlock(b)),
-  settings.mode,
-);
+// creative add/remove no-op inside the model. starterSlots: survival starts
+// EMPTY — a full hotbar leaves fits() zero slack, so no drop could be picked
+// up and no craft result taken (Task 17.5 Critical).
+const inventory = createInventoryModel(starterSlots(settings.mode), settings.mode);
 const hotbar = inventory.slots;
 let selected = 0;
 let showDebug = false;
@@ -322,8 +321,9 @@ bus.on('mode-changed', ({ mode }) => {
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
   if (mode === 'creative') {
-    // full hotbar refill: every block slot back to a full ×64 stack (matches hotbar init)
-    HOTBAR_DEFAULT.forEach((b, i) => inventory.setSlot(i, stackFromBlock(b)));
+    // full hotbar refill: every block slot back to a full ×64 stack (shares
+    // the starter kit with startGame/module init — one definition, no drift)
+    starterSlots('creative').forEach((s, i) => inventory.setSlot(i, s));
     hud.setHotbar(hotbar, selected);
     setVitals(null); // hide the bar; Task 9 owns the vitals lifecycle
   } else {
@@ -755,6 +755,24 @@ function resetWorld(): void {
 
 function startGame(): void {
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
+  // Plan 14.3 "new → fresh state" for everything the world reset can't see.
+  // Task 17.5 Critical (verified live): the hotbar is the ENTIRE inventory, so
+  // inheriting the previous session's slots deadlocks a fresh survival game —
+  // fits() counts slack only from empty slots / partial stacks of the same
+  // item, and a hotbar of unrelated 64/64 stacks has ZERO: mined drops can't
+  // be picked up (addItem overflows → pickup rejected) and craft results can't
+  // be taken (craftingParams.onTake pre-checks fits() → blocked forever).
+  // Vitals/clock carried stale values the same way (quit at hp 6/20 → new game
+  // at 6/20; quit at night → new game at night), and staged craftGrid/craftExcess
+  // items would flush into the NEW session's inventory on its first inventory open.
+  const fresh = starterSlots(currentMode);
+  for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, fresh[i] ?? null);
+  selected = 0;
+  hud.setHotbar(hotbar, selected);
+  setVitals(currentMode === 'survival' ? createVitals() : null);
+  clock = createClock(settings.dayLengthSec);
+  craftGrid = [];
+  craftExcess = [];
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');

@@ -1,4 +1,4 @@
-import { BLOCK, type BlockId } from '../world/blocks';
+import { BLOCK, HOTBAR_DEFAULT, type BlockId } from '../world/blocks';
 
 export type ItemId =
   | 'grass' | 'dirt' | 'stone' | 'cobblestone' | 'oak_log' | 'oak_planks'
@@ -67,4 +67,17 @@ export function stackFromBlock(block: BlockId, count?: number): ItemStack | null
   const item = itemFromBlock(block);
   if (!item) return null;
   return { item, count: count ?? maxStack(item) };
+}
+
+/** Starting hotbar contents per mode. Survival begins EMPTY (vanilla parity —
+ *  and a full hotbar leaves fits() zero slack, blocking every pickup and craft
+ *  take); creative begins with the standard block kit at full stacks.
+ *  A fresh array (and fresh stacks) per call — callers write it straight into
+ *  live slot arrays, so results must never alias each other. */
+export function starterSlots(mode: 'survival' | 'creative'): Array<ItemStack | null> {
+  // Local union, not `import type { GameMode } from './inventory'`: GameMode is
+  // declared in inventory.ts, which imports THIS module — importing it back
+  // would close a module cycle for zero benefit (structurally identical union).
+  if (mode === 'survival') return HOTBAR_DEFAULT.map(() => null);
+  return HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
 }
