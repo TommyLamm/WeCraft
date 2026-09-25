@@ -7,7 +7,8 @@ export function chunkKey(cx: number, cz: number): string {
 
 export class World {
   readonly chunks = new Map<string, Chunk>();
-  readonly modified = new Set<string>();
+  /** Block edits vs. generated terrain, keyed `"x,y,z"` → blockId (AIR kept). */
+  readonly modified = new Map<string, number>();
 
   hasChunk(cx: number, cz: number): boolean {
     return this.chunks.has(chunkKey(cx, cz));
@@ -50,13 +51,32 @@ export class World {
     if (lx === CHUNK_SIZE - 1) this.markDirty(cx + 1, cz);
     if (lz === 0) this.markDirty(cx, cz - 1);
     if (lz === CHUNK_SIZE - 1) this.markDirty(cx, cz + 1);
-    this.modified.add(chunkKey(cx, cz));
+    this.modified.set(`${x},${y},${z}`, id);
     return true;
   }
 
   markDirty(cx: number, cz: number): void {
     const c = this.getChunk(cx, cz);
     if (c) c.dirty = true;
+  }
+
+  /** All block edits as `"x,y,z"` → blockId pairs (for the save payload). */
+  serializeModified(): Array<[string, number]> {
+    return [...this.modified.entries()];
+  }
+
+  /** Restore block edits from a save. Malformed / out-of-range entries are
+   *  skipped; valid ones route through setBlock (auto chunk + dirty flag). */
+  applyModified(pairs: Array<[string, number]>): void {
+    for (const entry of pairs) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      const [key, id] = entry as [unknown, unknown];
+      if (typeof key !== 'string' || !Number.isInteger(id)) continue;
+      if (!/^-?\d+,-?\d+,-?\d+$/.test(key)) continue;
+      const [x, y, z] = key.split(',').map(Number);
+      if (y < 0 || y >= CHUNK_HEIGHT) continue;
+      this.setBlock(x, y, z, id as BlockId);
+    }
   }
 
   isSolid(x: number, y: number, z: number): boolean {

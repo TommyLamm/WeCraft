@@ -107,15 +107,69 @@ describe('World', () => {
     expect(dirtied()).toEqual([false, true, false, false, false]);
   });
 
-  it('successful setBlock records chunk in modified set', () => {
+  it('successful setBlock records block in modified map', () => {
     const w = new World();
     w.setBlock(5, 70, 5, BLOCK.STONE);
-    expect(w.modified.has('0,0')).toBe(true);
+    expect(w.modified.get('5,70,5')).toBe(BLOCK.STONE);
   });
 
   it('setBlock returns true on success', () => {
     const w = new World();
     expect(w.setBlock(5, 70, 5, BLOCK.STONE)).toBe(true);
     expect(w.setBlock(0, 0, 0, BLOCK.DIRT)).toBe(true);
+  });
+});
+
+describe('serializeModified / applyModified', () => {
+  it('round-trips placed and mined blocks through a fresh world', () => {
+    const w1 = new World();
+    w1.setBlock(5, 70, 5, BLOCK.STONE); // placed
+    w1.setBlock(6, 70, 6, BLOCK.STONE);
+    w1.setBlock(6, 70, 6, BLOCK.AIR); // mined to air — must stay mined
+    const pairs = w1.serializeModified();
+    expect(pairs).toContainEqual(['5,70,5', BLOCK.STONE]);
+    expect(pairs).toContainEqual(['6,70,6', BLOCK.AIR]);
+
+    const w2 = new World();
+    w2.applyModified(pairs);
+    expect(w2.getBlock(5, 70, 5)).toBe(BLOCK.STONE);
+    expect(w2.getBlock(6, 70, 6)).toBe(BLOCK.AIR);
+  });
+
+  it('applied pairs re-serialize identically (idempotent round-trip)', () => {
+    const w = new World();
+    const pairs: Array<[string, number]> = [
+      ['1,64,1', BLOCK.GLASS],
+      ['-1,64,-1', BLOCK.DIRT],
+      ['0,0,0', BLOCK.AIR],
+    ];
+    w.applyModified(pairs);
+    expect(w.serializeModified()).toEqual(pairs);
+  });
+
+  it('applyModified marks the chunk dirty for re-mesh', () => {
+    const w = new World();
+    w.applyModified([['5,70,5', BLOCK.STONE]]);
+    expect(w.getChunk(0, 0)?.dirty).toBe(true);
+  });
+
+  it('serializeModified is empty on an untouched world', () => {
+    expect(new World().serializeModified()).toEqual([]);
+  });
+
+  it('applyModified skips malformed and out-of-range entries without throwing', () => {
+    const w = new World();
+    expect(() =>
+      w.applyModified([
+        ['not-a-key', 1],
+        ['1,2', BLOCK.STONE],
+        ['a,b,c', BLOCK.STONE],
+        ['1,999,1', BLOCK.STONE], // y out of range
+        ['1,64,1.5', BLOCK.STONE], // non-integer coords
+        ['2,64,2', BLOCK.GLASS], // valid — must still be applied
+      ]),
+    ).not.toThrow();
+    expect(w.getBlock(2, 64, 2)).toBe(BLOCK.GLASS);
+    expect(w.serializeModified()).toEqual([['2,64,2', BLOCK.GLASS]]);
   });
 });
