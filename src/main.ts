@@ -654,9 +654,20 @@ function resetPlayerToSpawn(): void {
  *    in `craftGrid` and would be missing from the save otherwise. All four
  *    save triggers route through here; a repeat call is a harmless no-op
  *    (empty grid → nothing to hand back; a full inventory just re-parks the
- *    overflow, nothing is destroyed). */
+ *    overflow, nothing is destroyed). The flush is SKIPPED while the
+ *    inventory/crafting overlay is open — see the guard below. */
 function sessionSavePayload(): SavePayload | null {
-  resetCraftGrid(2); // flush staged/overflow items into the inventory before snapshotting
+  // Flush staged items into the inventory before snapshotting — BUT never
+  // while an overlay is open. resetCraftGrid REASSIGNS the module `craftGrid`,
+  // and the open inventory/crafting UI captured the OLD array reference at
+  // open time (craftingParams; the UI writes cells in place). A flush now
+  // would leave the overlay holding an orphaned grid: clicking its cells would
+  // hand the same item to the inventory AGAIN (dupe), and anything staged
+  // afterwards would live only in the orphan (lost at the next reset).
+  // Reachable because visibilitychange (alt-tab) fires with the overlay open.
+  // Skip instead: staged items are simply absent from THIS save (honest) —
+  // the next save after the overlay closes flushes them normally.
+  if (!inv.isOpen() && !craftUi.isOpen()) resetCraftGrid(2);
   if (vitals && vitals.hp <= 0) return null; // dead — see doc above
   return collectSavePayload({
     world: { seed: settings.seed, serializeModified: () => world.serializeModified() },

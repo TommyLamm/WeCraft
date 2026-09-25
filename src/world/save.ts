@@ -62,8 +62,9 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 /** Shape-validate an unknown value as a SavePayload (review #2). IndexedDB
  *  records can be written by an older or broken build — continueGame trusts
  *  this shape completely (destructuring, setBlock keys, DOM writes), so a
- *  record must prove: object, version 1, a player with a finite pos triple,
- *  mode ∈ {survival, creative}, an inventory of null | {item: string,
+ *  record must prove: object, version 1, a player with a finite pos triple
+ *  and finite yaw (a NaN yaw would reach camera render state without ever
+ *  throwing), mode ∈ {survival, creative}, an inventory of null | {item: string,
  *  count: finite number}, vitals null | {hp: finite}, modified: array, and a
  *  finite clock. Light checks only — `modified` ENTRIES are additionally
  *  defended by applyModified's per-entry skip, and item ids by the inventory
@@ -72,11 +73,12 @@ export function isValidSavePayload(x: unknown): x is SavePayload {
 	if (typeof x !== 'object' || x === null) return false;
 	const r = x as Partial<SavePayload>;
 	if (r.version !== 1) return false;
-	// player: pos triple + mode + inventory + vitals
+	// player: pos triple + yaw + mode + inventory + vitals
 	const p = r.player as SavePayload['player'] | undefined;
 	if (typeof p !== 'object' || p === null) return false;
 	if (!Array.isArray(p.pos) || p.pos.length !== 3) return false;
 	if (!p.pos.every((n) => typeof n === 'number' && Number.isFinite(n))) return false;
+	if (typeof p.yaw !== 'number' || !Number.isFinite(p.yaw)) return false;
 	if (p.mode !== 'survival' && p.mode !== 'creative') return false;
 	if (!Array.isArray(p.inventory)) return false;
 	for (const s of p.inventory) {

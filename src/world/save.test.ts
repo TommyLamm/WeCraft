@@ -151,6 +151,9 @@ describe('saveGame / loadGame', () => {
     // mode outside the allowed union
     await putRawRecord({ ...base, player: { ...base.player, mode: 'spectator' } });
     expect(await loadGame()).toBeNull();
+    // non-finite yaw (would reach camera render state without throwing)
+    await putRawRecord({ ...base, player: { ...base.player, yaw: Number.NaN } });
+    expect(await loadGame()).toBeNull();
     // non-finite clock
     await putRawRecord({ ...base, time: { t: Number.NaN } });
     expect(await loadGame()).toBeNull();
@@ -189,6 +192,19 @@ describe('isValidSavePayload', () => {
     ).toBe(false);
     expect(
       isValidSavePayload({ ...base, player: { ...base.player, pos: '1,2,3' as never } }),
+    ).toBe(false);
+  });
+
+  it('rejects a non-finite yaw (unguarded NaN path into the camera)', () => {
+    const base = makePayload();
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, yaw: Number.NaN } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, yaw: Infinity } }),
+    ).toBe(false);
+    expect(
+      isValidSavePayload({ ...base, player: { ...base.player, yaw: '0.5' as never } }),
     ).toBe(false);
   });
 
