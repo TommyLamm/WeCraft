@@ -40,7 +40,7 @@ import {
   type Arrow,
   type MobEvent,
 } from './world/mobs';
-import { createHud } from './ui/hud';
+import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
@@ -90,6 +90,9 @@ let player: PlayerState = createPlayer(0.5, 90, 0.5);
 // Current game mode (Task 5): mirrors settings.mode at boot and follows the
 // pause-menu toggle via the mode-changed event below.
 let currentMode: GameMode = settings.mode;
+// Flight is creative-only (spec §95): gate the double-tap Space toggle at the
+// input layer — synced at every `currentMode` assignment below.
+input.setFlyEnabled(currentMode === 'creative');
 // Stack-based model owns the hotbar slots; `hotbar` is the live reference the
 // HUD/palette render. Mode comes from settings (default survival since Task 5);
 // creative add/remove no-op inside the model. starterSlots: survival starts
@@ -317,6 +320,7 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
 // still sees the new value for its label.
 bus.on('mode-changed', ({ mode }) => {
   currentMode = mode;
+  input.setFlyEnabled(currentMode === 'creative'); // survival: force a landing
   settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
@@ -819,6 +823,7 @@ function continueGame(payload: SavePayload): void {
   attackCd = 0;
 
   currentMode = payload.player.mode; // 3. mode
+  input.setFlyEnabled(currentMode === 'creative'); // survival save → stay grounded
   settings.mode = currentMode;
   saveSettings({ mode: currentMode }); // keep menu labels in sync
   inventory.setMode(currentMode);
@@ -1198,7 +1203,13 @@ gs.renderer.setAnimationLoop(() => {
           const held = hotbar[selected];
           const placeId = held ? blockFromItem(held.item) : null;
           if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-            world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+            // no pay, no place: the stack is spent FIRST (creative's
+            // spendFromSlot is a free `true`), so a rejected spend never
+            // writes the world — unreachable in practice, structural defense
+            if (inventory.spendFromSlot(selected, 1)) {
+              world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+              hud.setHotbar(hotbar, selected);
+            }
           }
         }
       }
@@ -1223,14 +1234,21 @@ gs.renderer.setAnimationLoop(() => {
 
       if (showDebug) {
         const p = player.position;
-        hud.setDebug([
-          `WeCraft (dev)  ${fps} fps`,
-          `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
-          `Block: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`,
-          `Chunks: ${world.chunks.size}`,
-          `Seed: ${settings.seed}`,
-          `Mode: ${currentMode}${player.flying ? ' (flying)' : ''}`,
-        ]);
+        // triangles: read BEFORE the render below — three.js resets info at the
+        // START of render(), so this yields the previous frame's (non-zero) count
+        hud.setDebug(
+          formatDebugLines({
+            fps,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            chunks: world.chunks.size,
+            seed: settings.seed,
+            mode: currentMode,
+            flying: player.flying,
+            triangles: gs.renderer.info.render.triangles,
+          }),
+        );
       } else {
         hud.setDebug(null);
       }

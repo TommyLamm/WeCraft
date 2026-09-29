@@ -21,6 +21,9 @@ export interface InputController {
   consumeToggleDebug(): boolean;
   consumeToggleView(): boolean;
   consumeRequestPause(): boolean;
+  /** Gate double-tap Space flight (creative-only). Disabling forces an
+   *  immediate landing: fly/flyUp/flyDown clear, held keys re-derived. */
+  setFlyEnabled(enabled: boolean): void;
   dispose(): void;
 }
 
@@ -33,6 +36,11 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
     toggleInventory: false, toggleDebug: false, toggleView: false, requestPause: false,
   };
 
+  // Double-tap Space flight is CREATIVE-ONLY (spec §95) — main.ts syncs this
+  // at every `currentMode` assignment via setFlyEnabled. Per-controller state,
+  // like flyToggle/lastSpaceTime/keys/locked above/below: a second controller
+  // never inherits another session's flag.
+  let flyEnabled = false;
   let locked = false;
   let lastSpaceTime = Number.NEGATIVE_INFINITY;
   let flyToggle = false;
@@ -53,7 +61,10 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'F3' || e.code === 'F5') e.preventDefault();
     if (!locked) return;
-    if (e.code === 'Space' && !e.repeat) {
+    if (e.code === 'Space' && !e.repeat && flyEnabled) {
+      // Armed only: taps while flight is disarmed (survival jumps) must NOT
+      // record a last-tap time — otherwise one survival jump <300 ms before a
+      // mode switch would start flight on the first creative press.
       const now = performance.now();
       if (now - lastSpaceTime < 300) flyToggle = !flyToggle;
       lastSpaceTime = now;
@@ -168,6 +179,15 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
       const v = state.requestPause;
       state.requestPause = false;
       return v;
+    },
+    setFlyEnabled(enabled) {
+      flyEnabled = enabled;
+      if (enabled) return;
+      // survival entry: clear the toggle and re-derive state — updateMove()
+      // recalculates fly/flyUp/flyDown from flyToggle (held movement keys are
+      // re-derived too; the player lands via physics)
+      flyToggle = false;
+      updateMove();
     },
     dispose() {
       document.removeEventListener('keydown', onKeyDown);

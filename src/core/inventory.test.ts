@@ -109,6 +109,57 @@ describe('inventory model — remove / count', () => {
   });
 });
 
+describe('inventory model — spendFromSlot (placement cost)', () => {
+  it('survival decrements exactly the given slot even when another slot holds the same item', () => {
+    const inv = createInventoryModel(
+      [{ item: 'dirt', count: 5 }, { item: 'dirt', count: 64 }],
+      'survival',
+    );
+    expect(inv.spendFromSlot(0, 1)).toBe(true);
+    expect(inv.slots[0]).toEqual({ item: 'dirt', count: 4 }); // only the placed slot pays
+    expect(inv.slots[1]).toEqual({ item: 'dirt', count: 64 });
+    expect(inv.countItem('dirt')).toBe(68);
+  });
+
+  it('clears the slot when the count reaches 0', () => {
+    const inv = createInventoryModel([{ item: 'grass', count: 1 }], 'survival');
+    expect(inv.spendFromSlot(0, 1)).toBe(true);
+    expect(inv.slots[0]).toBeNull();
+    expect(inv.countItem('grass')).toBe(0);
+  });
+
+  it('returns false and mutates nothing on a null slot or insufficient count', () => {
+    const inv = createInventoryModel([{ item: 'dirt', count: 2 }, null], 'survival');
+    expect(inv.spendFromSlot(1, 1)).toBe(false); // null slot
+    expect(inv.spendFromSlot(0, 3)).toBe(false); // 2 < 3
+    expect(inv.spendFromSlot(9, 1)).toBe(false); // out of range
+    expect(inv.slots).toEqual([{ item: 'dirt', count: 2 }, null]); // no partial spend
+  });
+
+  it('rejects negative, fractional and NaN counts with zero mutation', () => {
+    const inv = createInventoryModel([{ item: 'dirt', count: 5 }], 'survival');
+    expect(inv.spendFromSlot(0, -1)).toBe(false); // -1 would ADD an item (duplication)
+    expect(inv.slots[0]).toEqual({ item: 'dirt', count: 5 });
+    expect(inv.spendFromSlot(0, 0.5)).toBe(false); // fractional counts poison the stack
+    expect(inv.slots[0]).toEqual({ item: 'dirt', count: 5 });
+    expect(inv.spendFromSlot(0, NaN)).toBe(false); // NaN would poison the slot outright
+    expect(inv.slots[0]).toEqual({ item: 'dirt', count: 5 });
+    expect(inv.countItem('dirt')).toBe(5);
+    // the guard sits ABOVE the mode branch: invalid input is invalid everywhere
+    const creative = createInventoryModel([{ item: 'dirt', count: 5 }]);
+    expect(creative.spendFromSlot(0, -1)).toBe(false);
+    expect(creative.slots[0]).toEqual({ item: 'dirt', count: 5 });
+  });
+
+  it('creative: returns true and mutates nothing (placement never consumes)', () => {
+    const inv = createInventoryModel([{ item: 'grass', count: 64 }, null]); // creative default
+    expect(inv.spendFromSlot(0, 1)).toBe(true);
+    expect(inv.spendFromSlot(1, 1)).toBe(true); // even an empty slot "succeeds"
+    expect(inv.slots[0]).toEqual({ item: 'grass', count: 64 });
+    expect(inv.slots[1]).toBeNull();
+  });
+});
+
 describe('inventory model — creative semantics', () => {
   it('defaults to creative: addItem is a no-op returning 0 (infinite supply)', () => {
     const inv = createInventoryModel(empty(2));

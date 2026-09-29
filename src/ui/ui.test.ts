@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createHud } from './hud';
+import { createHud, formatDebugLines } from './hud';
 import { createMenus } from './menus';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
@@ -156,6 +156,50 @@ describe('hud debug overlay', () => {
     hud.setDebug(null);
     expect(debug.style.display).toBe('none');
     hud.dispose();
+  });
+});
+
+describe('formatDebugLines', () => {
+  const base = {
+    fps: 60,
+    x: 1.5,
+    y: 64,
+    z: -3.25,
+    chunks: 12,
+    seed: 1337,
+    mode: 'survival' as const,
+    flying: false,
+    triangles: 42,
+  };
+
+  it('reports the triangle count on its own line (F3 baseline check)', () => {
+    const lines = formatDebugLines(base);
+    expect(lines.some((l) => /^Triangles: 42$/.test(l))).toBe(true);
+  });
+
+  it('keeps the fps and XYZ line formats byte-for-byte', () => {
+    const lines = formatDebugLines(base);
+    expect(lines[0]).toBe('WeCraft (dev)  60 fps'); // two spaces after (dev)
+    expect(lines[1]).toBe('XYZ: 1.50 / 64.00 / -3.25');
+  });
+
+  it('renders Mode with (flying) only when flying is true', () => {
+    const lines = formatDebugLines(base);
+    expect(lines[lines.length - 1]).toBe('Mode: survival');
+    const flying = formatDebugLines({ ...base, flying: true });
+    expect(flying[flying.length - 1]).toBe('Mode: survival (flying)');
+  });
+
+  it('matches the previous inline output with Triangles between Seed and Mode', () => {
+    expect(formatDebugLines(base)).toEqual([
+      'WeCraft (dev)  60 fps',
+      'XYZ: 1.50 / 64.00 / -3.25',
+      'Block: 1 64 -4',
+      'Chunks: 12',
+      'Seed: 1337',
+      'Triangles: 42',
+      'Mode: survival',
+    ]);
   });
 });
 

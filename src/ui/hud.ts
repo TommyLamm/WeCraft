@@ -1,6 +1,36 @@
 import '../ui/ui.css';
 import type { ItemStack } from '../core/items';
+import type { GameMode } from '../core/inventory';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
+
+/** Frame reads that make up the F3 overlay — pure data, no DOM/Three. */
+export interface DebugLinesParams {
+  fps: number;
+  x: number;
+  y: number;
+  z: number;
+  chunks: number;
+  seed: number;
+  mode: GameMode;
+  flying: boolean;
+  triangles: number;
+}
+
+/** Build the F3 debug lines (pure — main.ts reads the frame, hud renders it).
+ *  Line formats are byte-for-byte stable (the walkthrough diffs them); the
+ *  triangle count sits after Seed so the greedy-mesher's per-frame cost can be
+ *  read off against the memory baseline in the browser. */
+export function formatDebugLines(p: DebugLinesParams): string[] {
+  return [
+    `WeCraft (dev)  ${p.fps} fps`,
+    `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
+    `Block: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}`,
+    `Chunks: ${p.chunks}`,
+    `Seed: ${p.seed}`,
+    `Triangles: ${p.triangles}`,
+    `Mode: ${p.mode}${p.flying ? ' (flying)' : ''}`,
+  ];
+}
 
 export interface Hud {
   root: HTMLElement;

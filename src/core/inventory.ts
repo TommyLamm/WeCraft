@@ -32,6 +32,14 @@ export interface InventoryModel {
    *  null or count < 1 clears the slot; count is floored and clamped to maxStack;
    *  the stored stack never aliases the caller's object. Out-of-range ignored. */
   setSlot(index: number, stack: ItemStack | null): void;
+  /** Spend exactly `count` from `slot` (right-click placement). `count` must be
+   *  an integer ≥ 1 — negative/fractional/NaN return false with no mutation
+   *  (siblings `addItem`/`removeItem`/`setSlot` harden the same way). Creative
+   *  is an infinite no-op returning true (placement never consumes); survival
+   *  returns false WITHOUT mutating when the slot is null, out of range or
+   *  under-stocked, otherwise decrements that slot alone (cleared at 0) and
+   *  returns true. */
+  spendFromSlot(slot: number, count: number): boolean;
 }
 
 /** `mode` defaults to creative: Phase 1 behavior — infinite blocks, drops never collected. */
@@ -110,6 +118,15 @@ export function createInventoryModel(
         item: stack.item,
         count: Math.min(Math.floor(stack.count), maxStack(stack.item)),
       };
+    },
+    spendFromSlot(slot, count) {
+      if (!Number.isInteger(count) || count < 1) return false; // no dupes/fractions/NaN
+      if (currentMode === 'creative') return true; // infinite supply — never consumes
+      const s = slots[slot];
+      if (!s || s.count < count) return false; // null / out of range / under-stocked
+      s.count -= count;
+      if (s.count === 0) slots[slot] = null;
+      return true;
     },
   };
 }
