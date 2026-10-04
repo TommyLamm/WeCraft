@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "wecraft",
+  "name": "WeCraft",
+  "version": "0.1.0",
+  "description": "瀏覽器裡的體素沙盒遊戲，支援創造與生存雙模式、日夜循環、怪物、合成與存檔。",
+  "author": "Tommy Lamm",
+  "entry": "index.html",
+  "cover": "cover.png",
+  "tags": ["體素", "沙盒", "生存", "創造"],
+  "instructions": "點擊畫面鎖定視角。WASD移動，空白鍵跳躍，滑鼠左鍵挖掘/攻擊，右鍵放置方塊/開啟工作台，E鍵開啟背包/合成，Esc鍵開啟選單。",
+  "devices": ["desktop"]
+}

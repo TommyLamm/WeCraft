@@ -1,0 +1,56 @@
+name: Release game
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run test suite
+        run: npm test
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build game
+        run: npm run build
+      - name: Checkout platform tools
+        uses: actions/checkout@v4
+        with:
+          repository: TommyLamm/playroom-platform
+          ref: 3728de1c50d4b0263f9f5f279d33d5d205a385fa
+          path: .platform-tools
+      - name: Install platform dependencies
+        run: npm --prefix .platform-tools ci
+      - name: Validate manifest and package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p artifacts
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = 'dist';
+          const m = JSON.parse(fs.readFileSync(path.join(root, 'game.json'), 'utf8'));
+          if (m.schemaVersion !== 1 || !/^[a-z][a-z0-9-]{1,47}$/.test(m.id)) throw Error('Invalid manifest');
+          if ('v' + m.version !== process.env.RELEASE_TAG) throw Error('Tag and manifest version differ');
+          for (const name of [m.entry, m.cover]) {
+            if (typeof name !== 'string' || name.includes('..') || path.isAbsolute(name) || !fs.statSync(path.join(root, name)).isFile()) throw Error('Missing or invalid game asset');
+          }
+          JS
+          npm --prefix .platform-tools run game:pack -- "$GITHUB_WORKSPACE/dist" "$GITHUB_WORKSPACE/artifacts/game.zip"
+          npm --prefix .platform-tools run game:validate -- "$GITHUB_WORKSPACE/artifacts/game.zip"
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" artifacts/game.zip --verify-tag --generate-notes
