@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "wecraft",
   "name": "WeCraft",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "瀏覽器裡的體素沙盒遊戲，支援創造與生存雙模式、日夜循環、怪物、合成與存檔。",
   "author": "TommyLam",
   "entry": "index.html",
