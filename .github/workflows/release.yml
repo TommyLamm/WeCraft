@@ -10,9 +10,6 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
-      GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
     defaults:
       run:
         shell: bash
@@ -49,11 +46,15 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, `GAME_PATH=${root}\n`);
           JS
       - name: Install latest Playroom validation tools
+        env:
+          PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
         run: |
           git clone --depth 1 --branch main --single-branch https://github.com/TommyLamm/playroom-platform.git "$PLATFORM_DIR"
-          npm ci --prefix "$PLATFORM_DIR"
+          (cd "$PLATFORM_DIR" && npm ci)
       - name: Pack and fully validate release ZIP
-        working-directory: ${{ env.PLATFORM_DIR }}
+        working-directory: ${{ runner.temp }}/playroom-platform-tools
+        env:
+          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
         run: |
           npm run game:pack -- "$GAME_PATH" "$GAME_ZIP"
           npm run game:validate -- "$GAME_ZIP"
@@ -62,4 +63,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_REPO: ${{ github.repository }}
+          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
         run: gh release create "$RELEASE_TAG" "$GAME_ZIP" --repo "$RELEASE_REPO" --verify-tag --generate-notes
