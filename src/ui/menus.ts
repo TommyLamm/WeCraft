@@ -20,6 +20,10 @@ export interface Menus {
      *  from `onQuit` (回到標題), which stays an UNSAVED quit. */
     onSaveQuit: () => void;
     onToggleMode: () => void;
+    /** Phase 3 Task 5: sun-shadow toggle — same contract as `onToggleMode`:
+     *  the callback persists + applies; the re-render re-reads settings so the
+     *  label reflects the new state. */
+    onToggleShadows: () => void;
   }): void;
   hideAll(): void;
   isVisible(): boolean;
@@ -112,6 +116,9 @@ export function createMenus(uiRoot: HTMLElement): Menus {
   const modeName = (): string =>
     loadSettings().mode === 'creative' ? 'Creative' : 'Survival';
 
+  /** Phase 3 Task 5: sun-shadow toggle label, re-read from settings each render. */
+  const shadowsName = (): string => (loadSettings().shadows ? '開' : '關');
+
   const modeLine = (className: string): HTMLElement => {
     const el = document.createElement('div');
     el.className = className;
@@ -133,7 +140,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
     },
-    showPause({ onResume, onQuit, onSaveQuit, onToggleMode }) {
+    showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows }) {
       clear();
       const renderPause = () => {
         clear();
@@ -153,6 +160,12 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           // persists + applies; the re-render re-reads settings for the label
           btn(`Mode: ${modeName()}`, () => {
             onToggleMode();
+            renderPause();
+          }),
+          // sun-shadow toggle (Phase 3 Task 5): same notify + re-render pattern
+          // — main.ts persists + applies, the label re-reads settings
+          btn(`陰影：${shadowsName()}`, () => {
+            onToggleShadows();
             renderPause();
           }),
           btn('設定', () => {

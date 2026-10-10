@@ -364,6 +364,10 @@ function applyRenderDistanceFog(): void {
 }
 applyRenderDistanceFog();
 
+// Phase 3 Task 5: sun shadows — boot state from settings; the pause menu's
+// 陰影 toggle persists + applies live (setShadowsEnabled in its callback).
+gs.setShadowsEnabled(settings.shadows);
+
 // ---- 區塊佇列（preserves shipped Task 11/12 fixes: generated-keyed, gen r+1,
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
@@ -593,6 +597,14 @@ function setState(next: GameState): void {
       onToggleMode: () => {
         const next: GameMode = currentMode === 'survival' ? 'creative' : 'survival';
         bus.emit('mode-changed', { mode: next });
+      },
+      // sun-shadow toggle (Phase 3 Task 5): persist + apply live; menus
+      // re-renders its 陰影 label from settings after this callback returns
+      onToggleShadows: () => {
+        const next = !loadSettings().shadows;
+        settings.shadows = next; // keep in-memory settings fresh (menus re-reads localStorage)
+        saveSettings({ shadows: next });
+        gs.setShadowsEnabled(next);
       },
     });
   } else if (next === 'dead') {
@@ -1332,6 +1344,11 @@ gs.renderer.setAnimationLoop(() => {
   gs.setUnderwater(
     world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER,
   );
+
+  // Phase 3 Task 5: keep the sun shadow focus on the camera — setSunFocus
+  // stores x/z and the next setDayNight snaps it to the 2-block grid
+  // (shadowFollow), so the shadow box follows without subpixel swim.
+  gs.setSunFocus(cam.x, cam.z);
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)

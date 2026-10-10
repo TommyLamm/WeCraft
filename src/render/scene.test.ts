@@ -4,6 +4,7 @@ import {
   createDropRenderer,
   createMobRenderer,
   sunLightPosition,
+  shadowFollow,
   createFogController,
 } from './scene';
 import { sunDirection } from '../core/daynight';
@@ -198,6 +199,19 @@ describe('createMobRenderer', () => {
     expect(scene.children).toHaveLength(0);
   });
 
+  it('sets castShadow on every limb mesh at build time (Phase 3 Task 5)', () => {
+    const { scene, renderer } = mobSetup();
+    renderer.syncMobs([mobFixture()], 0.016);
+    const group = scene.children[0] as THREE.Group;
+    const meshes: THREE.Mesh[] = [];
+    group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) meshes.push(obj);
+    });
+    expect(meshes).toHaveLength(6); // head + body + 4 limbs
+    for (const mesh of meshes) expect(mesh.castShadow).toBe(true);
+    renderer.dispose();
+  });
+
   it('swings limbs with sin(phase) while moving and settles them at rest', () => {
     const { scene, renderer } = mobSetup();
     // phase = 3.2 · 0.1 · 4 = 1.28 → swing = sin(1.28)·0.6 ≈ 0.575
@@ -323,6 +337,35 @@ describe('sunLightPosition', () => {
     // whole-world lighting side flip at mid brightness, twice per game day.
     const jump = Math.hypot(before.x - after.x, before.y - after.y, before.z - after.z);
     expect(jump).toBeLessThan(10);
+  });
+});
+
+// ---- Phase 3 Task 5: sun shadow focus follows the player ----
+
+describe('shadowFollow', () => {
+  it('snaps the focus to the 2-block grid and targets it at y=0', () => {
+    const { light, target } = shadowFollow(3.4, -5.6, { x: 0, y: 1, z: 0 });
+    // Math.round(3.4 / 2) * 2 = 4 ; Math.round(-5.6 / 2) * 2 = -6
+    expect(target).toEqual({ x: 4, y: 0, z: -6 });
+    expect(light).toEqual({ x: 4, y: 100, z: -6 }); // noon: light straight overhead
+  });
+
+  it('offsets the light from the SNAPPED focus by sunDir × dist (y above horizon)', () => {
+    const d = { x: 0.6, y: -0.8, z: 0 }; // night: raw y would put the light below the world
+    const { light, target } = shadowFollow(0, 0, d, 100);
+    expect(target).toEqual({ x: 0, y: 0, z: 0 });
+    expect(light.x).toBeCloseTo(60, 10);
+    expect(light.y).toBeCloseTo(80, 10); // |−0.8|·100 — never below the horizon
+    expect(light.z).toBeCloseTo(0, 10);
+  });
+
+  it('defaults dist to 100 and offsets from the snapped focus, not the raw one', () => {
+    const d = { x: 0.5, y: 0.5, z: 0.5 };
+    const raw = shadowFollow(10, 10, d); // (10, 10) is already on the grid
+    expect(raw.light).toEqual({ x: 60, y: 50, z: 60 });
+    const off = shadowFollow(3.4, 3.4, d); // snap → (4, 4), NOT (3.4, 3.4)
+    expect(off.light).toEqual({ x: 54, y: 50, z: 54 });
+    expect(off.target).toEqual({ x: 4, y: 0, z: 4 });
   });
 });
 

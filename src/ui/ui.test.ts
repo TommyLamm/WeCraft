@@ -241,7 +241,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -252,7 +252,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
     menus.hideAll();
@@ -263,7 +263,7 @@ describe('pause menu', () => {
     const menus = createMenus(root);
     const onSaveQuit = vi.fn();
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit });
     expect(root.textContent).toContain('儲存並離開');
     btnByText(root, '儲存並離開').click();
     expect(onSaveQuit).toHaveBeenCalledTimes(1);
@@ -283,7 +283,7 @@ describe('pause menu', () => {
         mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
       });
     });
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onSaveQuit: () => {} });
     btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
@@ -299,13 +299,37 @@ describe('pause menu', () => {
     const onResume = vi.fn();
     const onQuit = vi.fn();
     const onToggleMode = vi.fn();
-    menus.showPause({ onResume, onQuit, onToggleMode, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onSaveQuit: () => {} });
     btnByText(root, '繼續遊戲').click();
     btnByText(root, '回到標題').click();
     btnByText(root, 'Mode: Survival').click();
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(onQuit).toHaveBeenCalledTimes(1);
     expect(onToggleMode).toHaveBeenCalledTimes(1);
+    menus.hideAll();
+  });
+
+  it('shadow toggle shows current state and calls onToggleShadows (Phase 3 Task 5)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // realistic wiring: main.ts persists via saveSettings inside the callback
+    const onToggleShadows = vi.fn(() => {
+      saveSettings({ shadows: !loadSettings().shadows });
+    });
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => {},
+      onToggleMode: () => {},
+      onToggleShadows,
+      onSaveQuit: () => {},
+    });
+    expect(root.textContent).toContain('陰影：開'); // default is on
+    btnByText(root, '陰影：開').click();
+    expect(onToggleShadows).toHaveBeenCalledTimes(1);
+    // pause re-renders from settings → label flips without reopening the menu
+    btnByText(root, '陰影：關').click();
+    expect(onToggleShadows).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain('陰影：開');
     menus.hideAll();
   });
 
@@ -316,6 +340,7 @@ describe('pause menu', () => {
       onResume: () => {},
       onQuit: () => {},
       onToggleMode: () => {},
+      onToggleShadows: () => {},
       onSaveQuit: () => {},
     });
     btnByText(root, '設定').click();

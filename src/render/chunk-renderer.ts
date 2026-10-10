@@ -179,6 +179,13 @@ export class ChunkRenderer {
         opaque: new THREE.Mesh(new THREE.BufferGeometry(), this.material),
         water: new THREE.Mesh(new THREE.BufferGeometry(), this.waterMaterial),
       };
+      // Phase 3 Task 5: terrain both casts and receives the sun shadow; the
+      // translucent water pass only receives it — water casting an opaque
+      // full-cell shadow would darken the terrain it floats over, which reads
+      // wrong through the transparency (castShadow stays three's default false).
+      pair.opaque.castShadow = true;
+      pair.opaque.receiveShadow = true;
+      pair.water.receiveShadow = true;
       for (const m of [pair.opaque, pair.water]) {
         m.matrixAutoUpdate = false;
         m.updateMatrix(); // positions are world-space; the matrix never changes
