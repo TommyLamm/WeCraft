@@ -46,6 +46,21 @@ function countQuads(m: MeshData, dir: [number, number, number]): number {
   return n;
 }
 
+/** Every quad facing `dir`, as its four vertex positions and per-vertex shades. */
+function dirQuads(
+  m: MeshData,
+  dir: [number, number, number],
+): Array<{ verts: number[][]; shades: number[] }> {
+  const out: Array<{ verts: number[][]; shades: number[] }> = [];
+  for (let q = 0; q < m.quadCount; q++) {
+    const nrm = quadNormal(m, q);
+    if (nrm[0] !== dir[0] || nrm[1] !== dir[1] || nrm[2] !== dir[2]) continue;
+    const verts = quadVerts(m, q);
+    out.push({ verts, shades: verts.map((_, i) => m.shades[q * 4 + i]) });
+  }
+  return out;
+}
+
 /** A flat 16×16 layer of `id` at world height `y` (fills chunk 0,0). */
 function layer(id: BlockId, y: number): World {
   const w = new World();
@@ -280,5 +295,139 @@ describe('meshChunk', () => {
     const m = water(w);
     expect(countQuads(m, [0, 1, 0])).toBeLessThanOrEqual(4);
     expect(opaque(w).quadCount).toBe(0); // water never lands in the opaque mesh
+  });
+});
+
+// ---- Per-vertex ambient occlusion (Task 2) ----
+
+describe('per-vertex AO', () => {
+  /** The single-cell grass top quad at plane `y` (its occluders' own top
+   *  faces sit one plane higher, so the y filter picks the grass one). */
+  function topQuadAt(m: MeshData, y: number): { verts: number[][]; shades: number[] } {
+    const quads = dirQuads(m, [0, 1, 0]).filter((q) => q.verts.every((p) => p[1] === y));
+    expect(quads).toHaveLength(1);
+    return quads[0];
+  }
+
+  it('isolated faces keep full shade', () => {
+    const m = opaque(worldWithBlock(5, 64, 5, BLOCK.GRASS));
+    const top = dirQuads(m, [0, 1, 0]);
+    expect(top).toHaveLength(1);
+    for (const shade of top[0].shades) expect(shade).toBe(1.0);
+  });
+
+  it('one side occluder darkens the touching corners to 0.85', () => {
+    const w = worldWithBlock(0, 0, 0, BLOCK.GRASS);
+    w.setBlock(1, 1, 0, BLOCK.STONE); // beside the top face's +x edge
+    const { verts, shades } = topQuadAt(opaque(w), 1);
+    for (let i = 0; i < 4; i++) expect(shades[i]).toBeCloseTo(verts[i][0] === 1 ? 0.85 : 1.0, 5);
+  });
+
+  it('two adjacent sides darken the meeting corner to 0.5', () => {
+    const w = worldWithBlock(0, 0, 0, BLOCK.GRASS);
+    w.setBlock(1, 1, 0, BLOCK.STONE); // +x side
+    w.setBlock(0, 1, 1, BLOCK.STONE); // +z side
+    const { verts, shades } = topQuadAt(opaque(w), 1);
+    for (let i = 0; i < 4; i++) {
+      const [x, , z] = verts[i];
+      expect(shades[i]).toBeCloseTo(x === 1 && z === 1 ? 0.5 : x === 1 || z === 1 ? 0.85 : 1.0, 5);
+    }
+  });
+
+  it('a diagonal-only occluder darkens the corner to 0.85', () => {
+    const w = worldWithBlock(0, 0, 0, BLOCK.GRASS);
+    w.setBlock(1, 1, 1, BLOCK.STONE); // touches only the (1,1) corner of the top face
+    const { verts, shades } = topQuadAt(opaque(w), 1);
+    for (let i = 0; i < 4; i++) {
+      const [x, , z] = verts[i];
+      expect(shades[i]).toBeCloseTo(x === 1 && z === 1 ? 0.85 : 1.0, 5);
+    }
+  });
+
+  it('a side plus a diagonal occluder darken the corner to 0.7', () => {
+    const w = worldWithBlock(0, 0, 0, BLOCK.GRASS);
+    w.setBlock(1, 1, 0, BLOCK.STONE); // +x side
+    w.setBlock(1, 1, 1, BLOCK.STONE); // diagonal of the (1,1) corner
+    const { verts, shades } = topQuadAt(opaque(w), 1);
+    for (let i = 0; i < 4; i++) {
+      const [x, , z] = verts[i];
+      expect(shades[i]).toBeCloseTo(x === 1 && z === 1 ? 0.7 : x === 1 ? 0.85 : 1.0, 5);
+    }
+  });
+
+  it('transparent blocks never occlude (glass, water, leaves)', () => {
+    const w = worldWithBlock(0, 0, 0, BLOCK.GRASS);
+    w.setBlock(1, 1, 0, BLOCK.GLASS);
+    w.setBlock(0, 1, 1, BLOCK.WATER);
+    w.setBlock(1, 1, 1, BLOCK.LEAVES);
+    const { shades } = topQuadAt(opaque(w), 1);
+    for (const shade of shades) expect(shade).toBe(1.0);
+  });
+
+  it('merge seam splits only where AO differs', () => {
+    const w = layer(BLOCK.GRASS, 64);
+    for (let z = 0; z < CHUNK_SIZE; z++) w.setBlock(16, 65, z, BLOCK.STONE); // wall beside the +x edge
+    const m = opaque(w);
+    // Verified seams: the wall row's contact makes the x=15 column's +x
+    // corners 0.7 along the interior (side + diagonal occluder), but only
+    // 0.85 at the two end cells (their outward diagonal sample is AIR), so
+    // the lit 15×16 region is one quad and the border column becomes three.
+    expect(countQuads(m, [0, 1, 0])).toBe(4);
+    // The +x faces see the same wall through their top corners (0.7 interior,
+    // 0.85 at the two z-ends) → three quads instead of one.
+    expect(countQuads(m, [1, 0, 0])).toBe(3);
+    // Faces whose AO samples never reach the wall stay fully merged.
+    expect(countQuads(m, [0, -1, 0])).toBe(1);
+    expect(countQuads(m, [-1, 0, 0])).toBe(1);
+    expect(countQuads(m, [0, 0, 1])).toBe(1);
+    expect(countQuads(m, [0, 0, -1])).toBe(1);
+    // control: identical AO everywhere keeps an unwalled face a single quad
+    expect(countQuads(opaque(layer(BLOCK.GRASS, 64)), [0, 1, 0])).toBe(1);
+  });
+
+  it('samples across chunk borders: walls in the ±x and diagonal neighbours', () => {
+    const w = layer(BLOCK.GRASS, 64);
+    // one block past each z edge (−1 and 16) so every border cell's diagonal
+    // sample is wall too: each border column then has identical corner AO
+    for (let z = -1; z <= CHUNK_SIZE; z++) {
+      w.setBlock(16, 65, z, BLOCK.STONE); // +x neighbour chunk + its z diagonals
+      w.setBlock(-1, 65, z, BLOCK.STONE); // -x neighbour chunk + its z diagonals
+    }
+    const m = opaque(w);
+    expect(countQuads(m, [0, 1, 0])).toBe(3); // two darkened columns + lit middle
+    for (const q of dirQuads(m, [0, 1, 0]))
+      for (let i = 0; i < 4; i++) {
+        const x = q.verts[i][0];
+        expect(q.shades[i]).toBeCloseTo(x === 0 || x === 16 ? 0.7 : 1.0, 5);
+      }
+  });
+
+  it('samples across chunk borders: diagonal neighbour chunk', () => {
+    const w = layer(BLOCK.GRASS, 64);
+    w.setBlock(16, 65, 16, BLOCK.STONE); // diagonal chunk (1,1), touching only the (16,16) corner
+    const m = opaque(w);
+    for (const q of dirQuads(m, [0, 1, 0]))
+      for (let i = 0; i < 4; i++) {
+        const [x, , z] = q.verts[i];
+        expect(q.shades[i]).toBeCloseTo(x === 16 && z === 16 ? 0.85 : 1.0, 5);
+      }
+  });
+
+  it('flipped faces map corners correctly', () => {
+    // +x face (uFlip on z): occluder beside the +z edge of the front cell
+    const w = worldWithBlock(0, 64, 0, BLOCK.STONE);
+    w.setBlock(1, 64, 1, BLOCK.STONE);
+    const px = dirQuads(opaque(w), [1, 0, 0]).filter((q) => q.verts.every((p) => p[0] === 1));
+    expect(px).toHaveLength(1);
+    for (let i = 0; i < 4; i++)
+      expect(px[0].shades[i]).toBeCloseTo(px[0].verts[i][2] === 1 ? 0.72 * 0.85 : 0.72);
+
+    // -z face (uFlip on x): occluder beside the +x edge of the front cell
+    const w2 = worldWithBlock(0, 64, 0, BLOCK.STONE);
+    w2.setBlock(1, 64, -1, BLOCK.STONE);
+    const nz = dirQuads(opaque(w2), [0, 0, -1]).filter((q) => q.verts.every((p) => p[2] === 0));
+    expect(nz).toHaveLength(1);
+    for (let i = 0; i < 4; i++)
+      expect(nz[0].shades[i]).toBeCloseTo(nz[0].verts[i][0] === 1 ? 0.86 * 0.85 : 0.86);
   });
 });
