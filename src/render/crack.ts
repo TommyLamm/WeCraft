@@ -14,9 +14,11 @@ export function crackStageFor(progress: number): number {
   return Math.max(0, Math.min(9, Math.floor(progress * 10)));
 }
 
-/** Euler that lays a +Z-facing unit plane flush on the face `n` points away
- *  from (raycast normals are single-axis): ±y faces rotate about X, ±x about
- *  Y, +z stays flat and −z flips half a turn. */
+/** Euler that lays a +Z-facing unit plane flush on a hit face: `n` is the face
+ *  NORMAL — RayHit's nx/ny/nz, never the block coordinates (the shapes are
+ *  structurally identical, so call sites must pick the normal fields). Raycast
+ *  normals are single-axis: ±y faces rotate about X, ±x about Y, +z stays flat
+ *  and −z flips half a turn. */
 export function crackQuadEuler(n: { x: number; y: number; z: number }): [number, number, number] {
   if (n.y !== 0) return n.y > 0 ? [-Math.PI / 2, 0, 0] : [Math.PI / 2, 0, 0];
   if (n.x !== 0) return n.x > 0 ? [0, Math.PI / 2, 0] : [0, -Math.PI / 2, 0];
@@ -126,7 +128,9 @@ export function createCrackOverlay(scene: THREE.Scene): CrackOverlay {
       }
       const c = crackQuadCenter(hit);
       mesh.position.set(c.x, c.y, c.z);
-      const [ex, ey, ez] = crackQuadEuler(hit);
+      // hit.nx/ny/nz — the face NORMAL; passing `hit` itself would feed block
+      // coords into the x/y/z fields and mis-orient every side face.
+      const [ex, ey, ez] = crackQuadEuler({ x: hit.nx, y: hit.ny, z: hit.nz });
       mesh.rotation.set(ex, ey, ez);
       mesh.material = materials[crackStageFor(progress)];
       mesh.visible = true;

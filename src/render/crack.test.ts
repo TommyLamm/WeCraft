@@ -56,14 +56,36 @@ describe('createCrackOverlay', () => {
     overlay.set(null, 0);
     expect(mesh.visible).toBe(false);
 
-    overlay.set(hit(), 0.45); // stage 4
+    overlay.set(hit(), 0.45); // stage 4, +y face
     expect(mesh.visible).toBe(true);
     expect(mesh.position.x).toBeCloseTo(3.5, 10);
     expect(mesh.position.y).toBeCloseTo(5.003, 10);
     expect(mesh.position.z).toBeCloseTo(5.5, 10);
     expect(mesh.rotation.x).toBeCloseTo(-Math.PI / 2, 10);
     expect(mesh.rotation.y).toBeCloseTo(0, 10);
+    expect(mesh.rotation.z).toBeCloseTo(0, 10);
     const stage4 = mesh.material;
+
+    // Integration regression (review Critical): the euler must come from the
+    // hit NORMAL. hit().y = 4 > 0 coincidentally matches ny = 1 in the ±y
+    // branch, so a side face is the case that pins the contract.
+    overlay.set(hit({ nx: 1, ny: 0 }), 0.45); // +x face
+    expect(mesh.rotation.x).toBeCloseTo(0, 10);
+    expect(mesh.rotation.y).toBeCloseTo(Math.PI / 2, 10);
+    expect(mesh.rotation.z).toBeCloseTo(0, 10);
+    expect(mesh.position.x).toBeCloseTo(4.003, 10);
+    expect(mesh.position.y).toBeCloseTo(4.5, 10);
+    expect(mesh.position.z).toBeCloseTo(5.5, 10);
+
+    // Corner hit where every coordinate-derived euler branch is wrong:
+    // block (0,0,0) (−z face) must flip, not stay flat.
+    overlay.set(hit({ x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: -1 }), 0.45);
+    expect(mesh.rotation.x).toBeCloseTo(0, 10);
+    expect(mesh.rotation.y).toBeCloseTo(Math.PI, 10);
+    expect(mesh.rotation.z).toBeCloseTo(0, 10);
+    expect(mesh.position.x).toBeCloseTo(0.5, 10);
+    expect(mesh.position.y).toBeCloseTo(0.5, 10);
+    expect(mesh.position.z).toBeCloseTo(-0.003, 10);
 
     overlay.set(hit({ y: 9 }), 0.05); // stage 0 at another block
     expect(mesh.material).not.toBe(stage4); // stage swap, not a rebuild
