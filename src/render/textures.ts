@@ -201,6 +201,20 @@ export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataAr
   return tex;
 }
 
+/** Task 4: the ONE shared GPU texture array (chunk terrain, particle
+ *  billboards — later the held-item viewmodel). Memoized: the first caller
+ *  builds it from `drawAtlas()` and every later caller gets the same
+ *  instance, so the atlas bytes are uploaded once. Owners must NOT dispose
+ *  it (chunk unload/teardown would break every other consumer).
+ *  `buildTextureArray` is deliberately left untouched — it still returns a
+ *  fresh object per call for tests and one-off callers. */
+let cachedTextureArray: THREE.DataArrayTexture | null = null;
+
+export function getTextureArray(): THREE.DataArrayTexture {
+  if (!cachedTextureArray) cachedTextureArray = buildTextureArray(drawAtlas());
+  return cachedTextureArray;
+}
+
 // ---- Task 3: mining crack overlay stage textures ----
 
 /** Crack-line alpha (both brief and test pin it): semi-transparent black so

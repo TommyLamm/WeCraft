@@ -1,8 +1,8 @@
 import './style.css';
 import { createGameScene, createDropRenderer, createMobRenderer } from './render/scene';
 import { ChunkRenderer } from './render/chunk-renderer';
-import { drawAtlas } from './render/textures';
 import { createCrackOverlay } from './render/crack';
+import { createParticleRenderer } from './render/particles';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
@@ -29,6 +29,7 @@ import {
   attackMob,
 } from './player/interact';
 import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
+import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
   stepMobs,
   stepArrows,
@@ -66,11 +67,13 @@ const uiRoot = document.getElementById('ui-root') as HTMLElement;
 const gs = createGameScene(canvas);
 const settings = loadSettings();
 const world = new World();
-const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
+const chunkRenderer = new ChunkRenderer(gs.scene); // Task 4: shared texture array
 // Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 // Task 8: mobs + arrows — blocky humanoids and oriented boxes
 const mobRenderer = createMobRenderer(gs.scene);
+// Task 4: break/dig debris — billboard quads over the shared block texture array
+const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
 // frame from the dig loop (hidden while not playing)
 const crackOverlay = createCrackOverlay(gs.scene);
@@ -240,6 +243,14 @@ let drops: DropEntity[] = [];
 let mobs: Mob[] = [];
 let arrows: Arrow[] = [];
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
+
+// ---- 破壞/挖掘粒子（Task 4）----
+// Pure particle sim (world/particles.ts) stepped each playing frame; the
+// billboard renderer (render/particles.ts) syncs every frame. digChipAcc
+// paces the dig spray to one 2-particle batch per 0.1 s of dig progress.
+let particles: Particle[] = [];
+let digChipAcc = 0;
+const DIG_CHIP_INTERVAL_SEC = 0.1;
 
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
@@ -1048,6 +1059,9 @@ gs.renderer.setAnimationLoop(() => {
       }
     }
 
+    // ---- 粒子（Task 4）：same solidity test as the player (water falls through)
+    particles = stepParticles(particles, dt, (x, y, z) => world.isSolid(x, y, z));
+
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
     const mobsBefore = mobs.length;
     const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
@@ -1187,11 +1201,35 @@ gs.renderer.setAnimationLoop(() => {
           });
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
+          // Task 4: break burst — 12 debris particles in BOTH modes (creative
+          // keeps the visual payoff; only the drop is survival-gated).
+          particles = spawnBreakBurst(particles, id, {
+            x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
+          });
           dig.reset(); // post-break bookkeeping — clears survival progress after isDone
           digTarget = null; // block is gone: no crack quad hanging on air this frame
         }
       } else {
         dig.reset();
+      }
+      // Task 4: dig chips — one 2-particle batch per accumulated 0.1 s of
+      // progress, spawned at the block centre pushed half a block along the
+      // hit normal (i.e. on the face being dug). digTarget is null on the
+      // frame a block breaks (and every non-digging frame), so the timer
+      // resets there and chips never spawn from an already-broken block.
+      if (digTarget) {
+        digChipAcc += dt;
+        if (digChipAcc >= DIG_CHIP_INTERVAL_SEC) {
+          digChipAcc = 0;
+          const chipId = world.getBlock(digTarget.x, digTarget.y, digTarget.z);
+          particles = spawnDigChip(particles, chipId, {
+            x: digTarget.x + 0.5 + digTarget.nx * 0.5,
+            y: digTarget.y + 0.5 + digTarget.ny * 0.5,
+            z: digTarget.z + 0.5 + digTarget.nz * 0.5,
+          });
+        }
+      } else {
+        digChipAcc = 0;
       }
       // stage follows dig.progress (stage 9 just below a break); hidden when the
       // target is null — no cracks for miss/attack/unbreakable/off-hand frames
@@ -1294,6 +1332,7 @@ gs.renderer.setAnimationLoop(() => {
   );
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
+  particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
   // Task 3: cracks belong to the dig loop only — the playing branch above

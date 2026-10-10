@@ -6,7 +6,6 @@ import {
   waterMaterialParams,
   WATER_RENDER_ORDER,
 } from './chunk-renderer';
-import { drawAtlas } from './textures';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import { BLOCK, type BlockId } from '../world/blocks';
@@ -20,7 +19,7 @@ function worldWithBlock(x: number, y: number, z: number, id: BlockId): World {
 
 function setup(): { scene: THREE.Scene; renderer: ChunkRenderer } {
   const scene = new THREE.Scene();
-  return { scene, renderer: new ChunkRenderer(scene, drawAtlas()) };
+  return { scene, renderer: new ChunkRenderer(scene) };
 }
 
 function fakeShader() {
@@ -251,5 +250,31 @@ describe('ChunkRenderer', () => {
     expect(scene.children).toHaveLength(4); // 2 chunks × the opaque+water pair
     renderer.dispose();
     expect(scene.children).toHaveLength(0);
+  });
+
+  it('shares ONE texture array across instances; unload/dispose never disposes it', () => {
+    const sceneA = new THREE.Scene();
+    const sceneB = new THREE.Scene();
+    const a = new ChunkRenderer(sceneA);
+    const b = new ChunkRenderer(sceneB);
+    a.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
+    b.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
+    const matA = (sceneA.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    const matB = (sceneB.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    const sA = fakeShader();
+    const sB = fakeShader();
+    (matA.onBeforeCompile as (s: typeof sA) => void)(sA);
+    (matB.onBeforeCompile as (s: typeof sB) => void)(sB);
+    const shared = sA.uniforms.mapArray.value as THREE.DataArrayTexture;
+    expect(shared).toBeInstanceOf(THREE.DataArrayTexture);
+    expect(sB.uniforms.mapArray.value).toBe(shared); // same shared ref, two renderers
+
+    let disposed = false;
+    shared.addEventListener('dispose', () => {
+      disposed = true;
+    });
+    a.dispose();
+    b.dispose();
+    expect(disposed).toBe(false); // chunk teardown must not break the shared array
   });
 });

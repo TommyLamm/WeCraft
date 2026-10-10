@@ -7,6 +7,7 @@ import {
   buildTextureArray,
   drawAtlas,
   drawCrackStage,
+  getTextureArray,
   tileIndexAt,
   type AtlasImage,
 } from './textures';
@@ -323,5 +324,17 @@ describe('drawCrackStage', () => {
   it('clamps the stage: NaN and -1 paint stage 0', () => {
     expect(Array.from(drawCrackStage(NaN))).toEqual(Array.from(drawCrackStage(0)));
     expect(Array.from(drawCrackStage(-1))).toEqual(Array.from(drawCrackStage(0)));
+  });
+});
+
+// ---- Task 4: shared memoized texture array (chunks + particles) ----
+
+describe('getTextureArray', () => {
+  it('memoizes ONE shared instance; buildTextureArray keeps returning fresh objects', () => {
+    const first = getTextureArray();
+    expect(first).toBeInstanceOf(THREE.DataArrayTexture);
+    expect(getTextureArray()).toBe(first); // same ref every call
+    expect(buildTextureArray()).not.toBe(buildTextureArray()); // build stays fresh
+    expect(getTextureArray()).toBe(first); // fresh builds never replace the memo
   });
 });

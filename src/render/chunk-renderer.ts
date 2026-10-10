@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import type { World } from '../world/world';
 import { chunkKey } from '../world/world';
 import { meshChunk, type MeshData } from '../world/mesher';
-import type { AtlasImage } from './textures';
-import { buildTextureArray } from './textures';
+import { getTextureArray } from './textures';
 
 /** The slice of three's onBeforeCompile shader object this patch touches —
  *  structural, so tests can drive it with a plain fake. */
@@ -130,10 +129,13 @@ export class ChunkRenderer {
   private chunks = new Map<string, ChunkMeshes>();
   private material: THREE.MeshLambertMaterial;
   private waterMaterial: THREE.MeshLambertMaterial;
+  /** Task 4: the SHARED texture array (getTextureArray) — chunks, water and
+   *  particles all sample the same upload. Owned by the module memo, so this
+   *  class never disposes it (dispose() frees only its own materials). */
   private textureArray: THREE.DataArrayTexture;
 
-  constructor(private scene: THREE.Scene, atlas: AtlasImage) {
-    this.textureArray = buildTextureArray(atlas);
+  constructor(private scene: THREE.Scene) {
+    this.textureArray = getTextureArray();
     // Lambert: the mesher's per-face normals + shades do the lighting.
     // alphaTest MUST stay 0.1 (glass interior 0 / leaves holes contract).
     this.material = new THREE.MeshLambertMaterial({
@@ -217,7 +219,9 @@ export class ChunkRenderer {
       pair.water.geometry.dispose();
     }
     this.chunks.clear();
-    this.textureArray.dispose(); // ONE shared texture array (both passes)
+    // The shared texture array is deliberately NOT disposed here: other chunk
+    // renderers and the particle renderer sample the same upload — chunk
+    // teardown must never break them.
     this.material.dispose();
     this.waterMaterial.dispose();
   }
