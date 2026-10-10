@@ -112,6 +112,7 @@ describe('skyColors', () => {
     const c = skyColors(0.25);
     expect(c.sky).toBe(0x87ceeb);
     expect(c.fog).toBe(c.sky);
+    expect(c.zenith).toBe(0x3d6fc9);
     expect(c.ambient).toBeCloseTo(0.75, 5);
     expect(c.sunIntensity).toBeCloseTo(0.9, 5);
   });
@@ -120,8 +121,27 @@ describe('skyColors', () => {
     const c = skyColors(0.75);
     expect(c.sky).toBe(0x0a0e1a);
     expect(c.fog).toBe(c.sky);
+    expect(c.zenith).toBe(0x05070f);
     expect(c.ambient).toBeCloseTo(0.25, 5);
     expect(c.sunIntensity).toBeCloseTo(0.12, 5);
+  });
+
+  it('zenith lerps night→day with no golden window (dawn/dusk stay cool)', () => {
+    // dayF = 0.5 at the horizon → exact midpoint of 0x05070f → 0x3d6fc9
+    expect(skyColors(0).zenith).toBe(0x213b6c);
+    expect(skyColors(0.5).zenith).toBe(0x213b6c);
+    // the horizon sky is golden-warm at the same t; the zenith must not share it
+    expect(skyColors(0).sky).toBe(0xe49362);
+  });
+
+  it('zenith is finite, integer and in range across the whole cycle', () => {
+    for (let i = 0; i <= 100; i++) {
+      const z = skyColors(i / 100).zenith;
+      expect(Number.isFinite(z)).toBe(true);
+      expect(Number.isInteger(z)).toBe(true);
+      expect(z).toBeGreaterThanOrEqual(0);
+      expect(z).toBeLessThanOrEqual(0xffffff);
+    }
   });
 
   it('stays plain day across the daylight band, plain night across midnight', () => {
@@ -159,6 +179,7 @@ describe('skyColors', () => {
       const c = skyColors(i / 10);
       expect(c.fog).toBe(c.sky);
       expect(Number.isFinite(c.sky)).toBe(true);
+      expect(Number.isFinite(c.zenith)).toBe(true);
       expect(Number.isFinite(c.ambient)).toBe(true);
       expect(Number.isFinite(c.sunIntensity)).toBe(true);
     }

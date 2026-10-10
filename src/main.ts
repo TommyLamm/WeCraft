@@ -3,6 +3,7 @@ import { createGameScene, createDropRenderer, createMobRenderer } from './render
 import { ChunkRenderer } from './render/chunk-renderer';
 import { createCrackOverlay } from './render/crack';
 import { createParticleRenderer } from './render/particles';
+import { createSky } from './render/sky';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
@@ -52,7 +53,8 @@ import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
-import { generateChunk, surfaceHeight } from './world/terrain';
+import { applyBiomeTint } from './core/biome-fog';
+import { generateChunk, surfaceHeight, biomeAt } from './world/terrain';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
@@ -77,6 +79,9 @@ const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
 // frame from the dig loop (hidden while not playing)
 const crackOverlay = createCrackOverlay(gs.scene);
+// Phase 3 Task 6: sky dome gradient + sun/moon quads; main feeds it the raw
+// skyColors (zenith + horizon) and the sun direction every playing frame
+const sky = createSky(gs.scene);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -256,6 +261,14 @@ const DIG_CHIP_INTERVAL_SEC = 0.1;
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
 // `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
 let clock: Clock = createClock(settings.dayLengthSec);
+
+// ---- 生物群系（Phase 3 Task 6）----
+// Biome under the player — drives the fog/background tint and the F3 Biome
+// line. Re-sampled at most every 0.5 s (two fbm2 lookups each, memoized
+// Noise): a step across a biome border recolors within half a second.
+let biomeNow = biomeAt(player.position.x, player.position.z, settings.seed);
+let biomeAcc = 0;
+const BIOME_SAMPLE_INTERVAL_SEC = 0.5;
 
 // ---- 存檔 / 繼續（Task 14）----
 /** Last known save: loaded ONCE at boot (gates the title's Continue button —
@@ -1010,7 +1023,23 @@ gs.renderer.setAnimationLoop(() => {
     const prevPhase = phaseOf(clock.t);
     clock = tickClock(clock, dt);
     const phase = phaseOf(clock.t);
-    gs.setDayNight(sunDirection(clock.t), skyColors(clock.t));
+    // Phase 3 Task 6: 0.5 s-throttled biome sample → tint the fog/background;
+    // the dome keeps the raw sky (horizon + zenith) so the gradient stays the
+    // sunset ramp while the haze picks up the biome hue.
+    biomeAcc += dt;
+    if (biomeAcc >= BIOME_SAMPLE_INTERVAL_SEC) {
+      biomeAcc = 0;
+      biomeNow = biomeAt(player.position.x, player.position.z, settings.seed);
+    }
+    const sunDir = sunDirection(clock.t);
+    const c = skyColors(clock.t);
+    const tinted = {
+      ...c,
+      fog: applyBiomeTint(c.fog, biomeNow),
+      sky: applyBiomeTint(c.sky, biomeNow),
+    };
+    gs.setDayNight(sunDir, tinted);
+    sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
     if (phase !== prevPhase) bus.emit('time-changed', { phase, t: clock.t });
 
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
@@ -1309,6 +1338,7 @@ gs.renderer.setAnimationLoop(() => {
             z: p.z,
             chunks: world.chunks.size,
             seed: settings.seed,
+            biome: biomeNow,
             mode: currentMode,
             flying: player.flying,
             triangles: gs.renderer.info.render.triangles,

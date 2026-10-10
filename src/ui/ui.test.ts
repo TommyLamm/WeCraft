@@ -167,6 +167,7 @@ describe('formatDebugLines', () => {
     z: -3.25,
     chunks: 12,
     seed: 1337,
+    biome: 'plains' as const,
     mode: 'survival' as const,
     flying: false,
     triangles: 42,
@@ -175,6 +176,12 @@ describe('formatDebugLines', () => {
   it('reports the triangle count on its own line (F3 baseline check)', () => {
     const lines = formatDebugLines(base);
     expect(lines.some((l) => /^Triangles: 42$/.test(l))).toBe(true);
+  });
+
+  it('renders the Biome line between Seed and Triangles (Phase 3 Task 6)', () => {
+    const lines = formatDebugLines(base);
+    expect(lines.indexOf('Biome: plains')).toBe(lines.indexOf('Seed: 1337') + 1);
+    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Biome: plains') + 1);
   });
 
   it('keeps the fps and XYZ line formats byte-for-byte', () => {
@@ -197,6 +204,7 @@ describe('formatDebugLines', () => {
       'Block: 1 64 -4',
       'Chunks: 12',
       'Seed: 1337',
+      'Biome: plains',
       'Triangles: 42',
       'Mode: survival',
     ]);
