@@ -2,10 +2,11 @@ import './style.css';
 import { createGameScene, createDropRenderer, createMobRenderer } from './render/scene';
 import { ChunkRenderer } from './render/chunk-renderer';
 import { drawAtlas } from './render/textures';
+import { createCrackOverlay } from './render/crack';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
-import { raycast, reachFor } from './world/raycast';
+import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { blockFromItem, stackName, maxStack, starterSlots, type ItemId, type ItemStack } from './core/items';
 import { emptyGrid } from './core/recipes';
@@ -22,6 +23,7 @@ import {
   spawnBlockDrop,
   toolSpeed,
   digStep,
+  getBreakTime,
   toolDamage,
   hitMobId,
   attackMob,
@@ -69,6 +71,9 @@ const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 // Task 8: mobs + arrows — blocky humanoids and oriented boxes
 const mobRenderer = createMobRenderer(gs.scene);
+// Task 3: mining crack overlay — one quad + 10 stage textures, driven per
+// frame from the dig loop (hidden while not playing)
+const crackOverlay = createCrackOverlay(gs.scene);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -1164,11 +1169,15 @@ gs.renderer.setAnimationLoop(() => {
         }
       }
 
+      // Task 3: crack overlay target — the block being dug this frame, when it
+      // CAN break (bedrock/water never accumulate progress, so never crack).
+      let digTarget: RayHit | null = null;
       if (hit && input.state.dig && !attacking) {
         const id = world.getBlock(hit.x, hit.y, hit.z);
         // digStep owns the mode branch (creative ignores `speed` → instant break;
         // survival is timed × toolSpeed) — no mode check needed here (review #4)
         const speed = toolSpeed(id, hotbar[selected]);
+        if (Number.isFinite(getBreakTime(id))) digTarget = hit;
         if (digStep(currentMode, dig, id, hit, dt, speed)) {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
           // Task 7: the broken block becomes a world drop (survival only; creative
@@ -1179,10 +1188,14 @@ gs.renderer.setAnimationLoop(() => {
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
           dig.reset(); // post-break bookkeeping — clears survival progress after isDone
+          digTarget = null; // block is gone: no crack quad hanging on air this frame
         }
       } else {
         dig.reset();
       }
+      // stage follows dig.progress (stage 9 just below a break); hidden when the
+      // target is null — no cracks for miss/attack/unbreakable/off-hand frames
+      crackOverlay.set(digTarget, dig.progress);
 
       // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
       const wantPlace = input.consumePlace();
@@ -1283,5 +1296,9 @@ gs.renderer.setAnimationLoop(() => {
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
+  // Task 3: cracks belong to the dig loop only — the playing branch above
+  // drives set(digTarget, dig.progress); every other state (title/paused/
+  // inventory/crafting/dead) clears any quad left hanging on the frozen view.
+  if (state !== 'playing') crackOverlay.set(null, 0);
   gs.renderer.render(gs.scene, gs.camera);
 });
