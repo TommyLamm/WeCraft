@@ -77,40 +77,69 @@ describe('createSky', () => {
     }
   });
 
-  it('setSky moves + face-corrects the quads and updates the dome uniforms', () => {
+  it('setSky anchors the dome + quads to the camera, face-corrects the quads, updates uniforms', () => {
     const { sky, dome, sun, moon } = setup();
-    const camPos = { x: 0, y: 64, z: 0 };
+    const camPos = { x: 150, y: 80, z: -220 };
     expect(() =>
       sky.setSky({ x: 0, y: 1, z: 0 }, { zenith: 0x3d6fc9, horizon: 0x87ceeb }, camPos),
     ).not.toThrow();
 
-    expect(sun.position.x).toBeCloseTo(0, 10);
-    expect(sun.position.y).toBeCloseTo(800, 10);
-    expect(sun.position.z).toBeCloseTo(0, 10);
-    expect(moon.position.y).toBeCloseTo(-800, 10);
+    // camera-relative anchoring (review Important fix): the 900-radius dome and
+    // the 800-distance quads must travel with the camera, so they always stay
+    // inside the camera's far plane (1000). getWorldPosition — also passes for
+    // a camera-anchored group implementation.
+    const world = new THREE.Vector3();
+    dome.getWorldPosition(world);
+    expect(world.x).toBeCloseTo(150, 10);
+    expect(world.y).toBeCloseTo(80, 10);
+    expect(world.z).toBeCloseTo(-220, 10);
+
+    expect(sun.getWorldPosition(world).y).toBeCloseTo(880, 10); // camPos.y + 1·800
+    expect(world.x).toBeCloseTo(150, 10);
+    expect(world.z).toBeCloseTo(-220, 10);
+    expect(moon.getWorldPosition(world).y).toBeCloseTo(-720, 10); // camPos.y − 1·800
 
     // lookAt(cameraPos): each quad's +Z (its plane normal) points at the camera
     const cam = new THREE.Vector3(camPos.x, camPos.y, camPos.z);
     const face = new THREE.Vector3();
+    const sunWorld = sun.getWorldPosition(new THREE.Vector3());
     sun.getWorldDirection(face);
-    expect(face.dot(cam.clone().sub(sun.position).normalize())).toBeCloseTo(1, 5);
+    expect(face.dot(cam.clone().sub(sunWorld).normalize())).toBeCloseTo(1, 5);
+    const moonWorld = moon.getWorldPosition(new THREE.Vector3());
     moon.getWorldDirection(face);
-    expect(face.dot(cam.clone().sub(moon.position).normalize())).toBeCloseTo(1, 5);
+    expect(face.dot(cam.clone().sub(moonWorld).normalize())).toBeCloseTo(1, 5);
 
     const mat = dome.material as THREE.ShaderMaterial;
     expect((mat.uniforms.horizon.value as THREE.Color).getHex()).toBe(0x87ceeb);
     expect((mat.uniforms.zenith.value as THREE.Color).getHex()).toBe(0x3d6fc9);
   });
 
-  it('setSky tracks a moving sun across the cycle', () => {
+  it('re-anchors the dome to each new camera position (never exceeds the far plane)', () => {
+    const { sky, dome } = setup();
+    const colors = { zenith: 0x3d6fc9, horizon: 0x87ceeb };
+    const world = new THREE.Vector3();
+    sky.setSky({ x: 0, y: 1, z: 0 }, colors, { x: 150, y: 80, z: -220 });
+    dome.getWorldPosition(world);
+    expect(world.x).toBeCloseTo(150, 10);
+    expect(world.y).toBeCloseTo(80, 10);
+    expect(world.z).toBeCloseTo(-220, 10);
+    sky.setSky({ x: 0, y: 1, z: 0 }, colors, { x: -40, y: 70, z: 500 });
+    dome.getWorldPosition(world);
+    expect(world.x).toBeCloseTo(-40, 10);
+    expect(world.y).toBeCloseTo(70, 10);
+    expect(world.z).toBeCloseTo(500, 10);
+  });
+
+  it('setSky tracks a moving sun across the cycle (camera-relative)', () => {
     const { sky, sun, moon } = setup();
     const camPos = { x: 0, y: 64, z: 0 };
     sky.setSky({ x: 0, y: 0, z: 1 }, { zenith: 0x05070f, horizon: 0x0a0e1a }, camPos);
-    expect(sun.position.z).toBeCloseTo(800, 10);
+    expect(sun.position.z).toBeCloseTo(800, 10); // camPos.z + 1·800
+    expect(sun.position.y).toBeCloseTo(64, 10); // camera height carried along
     expect(moon.position.z).toBeCloseTo(-800, 10);
     sky.setSky({ x: 0, y: -1, z: 0 }, { zenith: 0x05070f, horizon: 0x0a0e1a }, camPos);
-    expect(sun.position.y).toBeCloseTo(-800, 10);
-    expect(moon.position.y).toBeCloseTo(800, 10);
+    expect(sun.position.y).toBeCloseTo(-736, 10); // camPos.y + (−1)·800
+    expect(moon.position.y).toBeCloseTo(864, 10); // camPos.y + 1·800
   });
 
   it('dispose() detaches every mesh and frees them without throwing', () => {
