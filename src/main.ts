@@ -1213,19 +1213,21 @@ gs.renderer.setAnimationLoop(() => {
         dig.reset();
       }
       // Task 4: dig chips — one 2-particle batch per accumulated 0.1 s of
-      // progress, spawned at the block centre pushed half a block along the
-      // hit normal (i.e. on the face being dug). digTarget is null on the
-      // frame a block breaks (and every non-digging frame), so the timer
-      // resets there and chips never spawn from an already-broken block.
+      // progress, spawned half a block OUTSIDE the hit face: block centre
+      // (block coords + 0.5) plus normal·1 — the face plane sits at
+      // centre + normal·0.5, so +0.5 more clears the still-solid block.
+      // digTarget is null on the frame a block breaks (and every non-digging
+      // frame), so the timer resets there and chips never spawn from an
+      // already-broken block.
       if (digTarget) {
         digChipAcc += dt;
         if (digChipAcc >= DIG_CHIP_INTERVAL_SEC) {
           digChipAcc = 0;
           const chipId = world.getBlock(digTarget.x, digTarget.y, digTarget.z);
           particles = spawnDigChip(particles, chipId, {
-            x: digTarget.x + 0.5 + digTarget.nx * 0.5,
-            y: digTarget.y + 0.5 + digTarget.ny * 0.5,
-            z: digTarget.z + 0.5 + digTarget.nz * 0.5,
+            x: digTarget.x + 0.5 + digTarget.nx,
+            y: digTarget.y + 0.5 + digTarget.ny,
+            z: digTarget.z + 0.5 + digTarget.nz,
           });
         }
       } else {
