@@ -1550,6 +1550,13 @@ gs.renderer.setAnimationLoop(() => {
         setState('inventory');
         document.exitPointerLock?.();
       }
+      // 全螢幕短按 Esc（Keyboard Lock 下送達的 keydown）：開暫停選單並釋放
+      // pointer，讓選單按鈕可點。隨後的 pointerlockchange 因 state 已是
+      // 'paused' 而成為 no-op，不會重複觸發。
+      if (input.consumeRequestPause() && state === 'playing') {
+        setState('paused');
+        document.exitPointerLock?.();
+      }
 
       const inSlot = input.state.slot;
       if (inSlot !== selected) {

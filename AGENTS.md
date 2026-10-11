@@ -21,5 +21,6 @@
 ## 3. 完成前驗證門檻（有證據才算過）
 - `npm run typecheck`、`npm test`、`npm run build` 全過
 - 用 repo 內已 pinning 的固定工具（`.playroom/` 的 ZIP+lock，不自行指定版本）執行 `pack-game.mjs` + `validate-game.mjs` 全過
+- 動到 iframe／全螢幕／pointer lock／保留鍵行為時，加跑 Playwright 真實瀏覽器驗收（靜態伺服 `dist/` + Chromium headful：平台 checkout 自帶 `playwright-core` 可驅動、`xvfb-run` 跑有頭模式；probe 腳本放 repo 外，不污染工作區）。CDP 合成按鍵不走瀏覽器保留鍵路由，無法複刻的條件（跨來源 iframe＋頂層 Keyboard Lock＋原生全螢幕）列為未驗證，不宣稱通過
 - 回報區分：程式完成 / ZIP 驗證 / Release / 平台上架；未做的列為未驗證，不推測通過。
 - 無授權不推 tag、不建 Release、不調發布 API。

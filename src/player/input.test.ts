@@ -34,6 +34,34 @@ afterEach(() => {
   canvas.remove();
 });
 
+describe('Escape requests pause while locked', () => {
+  it('locked Escape keydown sets the requestPause pulse (once)', () => {
+    down('Escape');
+    expect(ctrl.consumeRequestPause()).toBe(true);
+    expect(ctrl.consumeRequestPause()).toBe(false); // pulse consumed
+    up('Escape');
+  });
+
+  it('unlocked Escape never sets requestPause', () => {
+    Object.defineProperty(document, 'pointerLockElement', { configurable: true, get: () => null });
+    document.dispatchEvent(new Event('pointerlockchange'));
+    down('Escape');
+    expect(ctrl.consumeRequestPause()).toBe(false);
+    up('Escape');
+  });
+
+  it('held Escape (repeat) does not re-arm the pulse', () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', repeat: true }));
+    expect(ctrl.consumeRequestPause()).toBe(false);
+  });
+
+  it('Escape does not leak into movement keys', () => {
+    down('Escape');
+    up('Escape');
+    expect(ctrl.state.fwd).toBe(0);
+    expect(ctrl.state.jump).toBe(false);
+  });
+});
 describe('double-tap Space flight gate', () => {
   it('fresh controller defaults to flight disabled (never calls setFlyEnabled)', () => {
     // the FIRST test of the file: no setFlyEnabled anywhere before the taps —

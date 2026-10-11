@@ -61,6 +61,13 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.code === 'F3' || e.code === 'F5') e.preventDefault();
     if (!locked) return;
+    if (e.code === 'Escape') {
+      // 全螢幕下平台以 Keyboard Lock 接管 Esc：短按變成 keydown 送達遊戲、
+      // pointer lock 不解除（短按留給遊戲）。非全螢幕則由瀏覽器解除
+      // pointer lock，經 pointerlockchange 暫停——兩路徑互斥，不會重複暫停。
+      if (!e.repeat) state.requestPause = true;
+      return; // 不進入移動鍵集合
+    }
     if (e.code === 'Space' && !e.repeat && flyEnabled) {
       // Armed only: taps while flight is disarmed (survival jumps) must NOT
       // record a last-tap time — otherwise one survival jump <300 ms before a
