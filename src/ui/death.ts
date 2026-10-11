@@ -4,13 +4,39 @@ import './ui.css';
  *  quit-to-title buttons. Same factory pattern as menus/hud — and, per
  *  Decision A (Task 5), it never imports the bus: `main.ts` calls `show(opts)`
  *  on the state transition into 'dead' and the button clicks travel back
- *  through the callbacks (callback-opts, mirroring `menus.showPause(opts)`). */
+ *  through the callbacks (callback-opts, mirroring `menus.showPause(opts)`).
+ *  Task 13 adds an optional cause-of-death line (`.death-cause`) under the title. */
+/** Cause of death (Task 13): tracked in main.ts (`deathCause`) and rendered
+ *  as a `.death-cause` line under the title. `unknown` covers a mobId with no
+ *  matching live mob; `null` (no cause recorded) renders no line at all. */
+export type DamageSource = 'fall' | 'zombie' | 'skeleton' | 'starve' | 'unknown';
+
+/** Traditional Chinese death line per source; `null` → `''` (no line). */
+export function deathMessageFor(source: DamageSource | null): string {
+  switch (source) {
+    case 'fall':
+      return '你從高處摔落';
+    case 'zombie':
+      return '你被殭屍殺死了';
+    case 'skeleton':
+      return '你被骷髏射死了';
+    case 'starve':
+      return '你餓死了';
+    case 'unknown':
+      return '你死了';
+    case null:
+      return '';
+  }
+}
+
 export interface DeathScreen {
   /** Mount the overlay wired to `opts`: `onRespawn` fires once per Respawn
    *  click, `onQuit` once per quit click (label `回到標題`, same wording as the
    *  pause menu) — neither fires the other. Re-showing while visible replaces
-   *  the overlay — never duplicates it. */
-  show(opts: { onRespawn: () => void; onQuit: () => void }): void;
+   *  the overlay — never duplicates it.
+   *  `cause` (Task 13): a non-empty death line rendered as `.death-cause`
+   *  under the title; empty/missing → no such node. */
+  show(opts: { onRespawn: () => void; onQuit: () => void; cause?: string }): void;
   /** Remove the overlay (idempotent — safe to call when already hidden). */
   hide(): void;
   isVisible(): boolean;
@@ -33,14 +59,21 @@ export function createDeathScreen(uiRoot: HTMLElement): DeathScreen {
   };
 
   return {
-    show({ onRespawn, onQuit }) {
+    show({ onRespawn, onQuit, cause }) {
       clear(); // idempotent: a double show swaps the node, never stacks two
       const el = document.createElement('div');
       el.className = 'death-screen interactive';
       const title = document.createElement('h1');
       title.className = 'death-title';
       title.textContent = 'You died!';
-      el.append(title, btn('Respawn', onRespawn), btn('回到標題', onQuit));
+      el.appendChild(title);
+      if (cause) {
+        const line = document.createElement('p');
+        line.className = 'death-cause';
+        line.textContent = cause;
+        el.appendChild(line);
+      }
+      el.append(btn('Respawn', onRespawn), btn('回到標題', onQuit));
       current = el;
       uiRoot.appendChild(el);
     },

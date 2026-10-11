@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createDeathScreen } from './death';
+import { createDeathScreen, deathMessageFor } from './death';
 
 beforeEach(() => {
   document.getElementById('ui-root')?.remove();
@@ -77,5 +77,36 @@ describe('death screen', () => {
     respawnBtn().click(); // still the single wired button
     expect(first).toHaveBeenCalledTimes(1);
     death.hide();
+  });
+
+  it('deathMessageFor maps every source to its Traditional Chinese line', () => {
+    expect(deathMessageFor('fall')).toBe('你從高處摔落');
+    expect(deathMessageFor('zombie')).toBe('你被殭屍殺死了');
+    expect(deathMessageFor('skeleton')).toBe('你被骷髏射死了');
+    expect(deathMessageFor('starve')).toBe('你餓死了');
+    expect(deathMessageFor('unknown')).toBe('你死了');
+    expect(deathMessageFor(null)).toBe('');
+  });
+
+  it('show with a cause renders the .death-cause line under the title, without stacking', () => {
+    const death = createDeathScreen(root());
+    death.show({ onRespawn: () => {}, onQuit: () => {}, cause: '你被殭屍殺死了' });
+    death.show({ onRespawn: () => {}, onQuit: () => {}, cause: '你被殭屍殺死了' });
+    expect(root().querySelectorAll('.death-screen').length).toBe(1);
+    const cause = root().querySelector('.death-cause');
+    expect(cause).not.toBeNull();
+    expect(cause!.textContent).toBe('你被殭屍殺死了');
+    death.hide();
+  });
+
+  it('show without a cause renders no .death-cause node; hide clears it', () => {
+    const death = createDeathScreen(root());
+    death.show({ onRespawn: () => {}, onQuit: () => {} });
+    expect(root().querySelector('.death-cause')).toBeNull();
+    death.show({ onRespawn: () => {}, onQuit: () => {}, cause: '你餓死了' });
+    expect(root().querySelector('.death-cause')).not.toBeNull();
+    death.hide();
+    expect(root().querySelector('.death-screen')).toBeNull();
+    expect(root().querySelector('.death-cause')).toBeNull();
   });
 });

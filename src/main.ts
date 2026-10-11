@@ -50,7 +50,7 @@ import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
-import { createDeathScreen } from './ui/death';
+import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
 import { createToasts } from './ui/toast';
@@ -281,6 +281,14 @@ const SPRINT_EXHAUST_PER_SEC = 0.05;
 const JUMP_EXHAUST = 0.15;
 /** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
 let attackCd = 0;
+/** Cause of the current life's death (Task 13): set whenever survival damage
+ *  lands (fall → 'fall', melee → the live mob's kind by mobId / 'unknown',
+ *  arrows → 'skeleton', starvation ticks → 'starve' — last write wins) and
+ *  read once at the `setState('dead')` transition via
+ *  `deathMessageFor(deathCause)`. Reset to null on every fresh spawn
+ *  (`resetPlayerToSpawn`, which startGame/respawn/quit flow through) and on
+ *  Continue (which builds its own player without that helper). */
+let deathCause: DamageSource | null = null;
 /** Apex (peak y) of the current airborne span for fall damage (plan 9.1) —
  *  pure lifecycle in player/fallstate.ts: advanced every frame by `updateFall`
  *  from a PRE-physics y capture, and reset via `resetFall()` on respawn (a
@@ -508,13 +516,23 @@ function spawnTick(): void {
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
  *  `setVitals` path (creative → vitals null → no-op), which emits
  *  `vitals-changed` when an integer hp/hunger value moves (Task 9 producer);
- *  shoot spawns an Arrow entity. */
-function applyMobEvent(ev: MobEvent): void {
+ *  shoot spawns an Arrow entity.
+ *  Task 13: melee/arrow damage also records `deathCause` — arrows always come
+ *  from skeletons, while melee looks up the live mob's kind by `mobId`
+ *  (despawned/killed since → 'unknown'). Shoot events deal no damage yet, so
+ *  they record nothing. */
+function applyMobEvent(ev: MobEvent, fromArrow = false): void {
   if (ev.type === 'shoot') {
     arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
     return;
   }
   if (!vitals) return; // creative (or dead) — nothing to hurt
+  if (fromArrow) {
+    deathCause = 'skeleton';
+  } else {
+    const kind = mobs.find((m) => m.id === ev.mobId)?.kind;
+    deathCause = kind ?? 'unknown';
+  }
   setVitals(damage(vitals, ev.amount));
 }
 
@@ -715,6 +733,7 @@ function setState(next: GameState): void {
     deathScreen.show({
       onRespawn: handleRespawn,
       onQuit: handleQuitToTitle,
+      cause: deathMessageFor(deathCause), // Task 13: null → '' → no .death-cause line
     });
     // Freeze behavior (Task 9) unchanged: the pointer unlocks (the lock-change
     // handler pauses only from 'playing', so this can't bounce into the pause
@@ -766,6 +785,7 @@ function setState(next: GameState): void {
 function resetPlayerToSpawn(): void {
   const sp = spawnPoint();
   player = createPlayer(sp.x, sp.y, sp.z);
+  deathCause = null; // fresh life — the next death records its own cause (Task 13)
   // Session-scoped state (review Critical #1 + Minor #5): a stale apex from
   // quitting mid-fall would turn the fresh spawn's drop into a one-shot kill
   // (max(staleApex, y)), and a carried attackCd would swallow the next
@@ -912,6 +932,7 @@ function startGame(): void {
   craftGrid = [];
   craftExcess = [];
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
+  deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -956,6 +977,7 @@ function continueGame(payload: SavePayload): void {
   // carried attack cooldown must not leak into the restored session).
   fallState = resetFall();
   attackCd = 0;
+  deathCause = null; // Task 13: Continue restores a living player — no death cause
 
   currentMode = payload.player.mode; // 3. mode
   input.setFlyEnabled(currentMode === 'creative'); // survival save → stay grounded
@@ -1184,7 +1206,10 @@ gs.renderer.setAnimationLoop(() => {
     fallState = fall.fall;
     if (fall.distance !== null && currentMode === 'survival' && vitals) {
       const amount = fallDamage(fall.distance);
-      if (amount > 0) setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+      if (amount > 0) {
+        deathCause = 'fall'; // Task 13: fall damage landed (last write wins toward the death line)
+        setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+      }
     }
 
     // ---- 音效：腳步（Phase 3 Task 10）----
@@ -1254,7 +1279,7 @@ gs.renderer.setAnimationLoop(() => {
     for (const ev of stepped.events) applyMobEvent(ev);
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
-    for (const ev of shot.events) applyMobEvent(ev);
+    for (const ev of shot.events) applyMobEvent(ev, true);
     // dead mobs vanish (no loot this phase); distance despawn past 48 blocks
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
@@ -1267,12 +1292,17 @@ gs.renderer.setAnimationLoop(() => {
     // death transition is checked right after (Task 10 owns the screen).
     if (vitals) {
       let v = vitals;
+      const hpBeforeTick = v.hp;
       const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
       if (input.state.sprint && moving && !player.flying && !player.inWater) {
         v = exhaust(v, dt * SPRINT_EXHAUST_PER_SEC); // 0.05 exhaustion/s while sprinting
       }
       if (jumpStarted) v = exhaust(v, JUMP_EXHAUST); // 0.15 once per ground launch
       v = tickVitals(v, dt); // regen (hunger ≥ 18) / starve: 1 hp per 4 s
+      // Task 13: the only hp drop possible here is the starvation tick
+      // (exhaust never touches hp, regen only heals) — an hp loss at ~0 hunger
+      // marks this life's death cause as starvation.
+      if (v.hp < hpBeforeTick && v.hunger <= 0) deathCause = 'starve';
       setVitals(v); // repaint + emit only on an integer change (see setVitals)
       if (isPlayerDead(v) && state === 'playing') {
         setState('dead'); // death screen + player-died emit + freeze (Task 10)

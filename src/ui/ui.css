@@ -163,6 +163,13 @@
   color: #fff;
   text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
 }
+/* Cause-of-death line (Task 13): Traditional Chinese subtitle under the title. */
+.death-screen .death-cause {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+  margin: 0;
+}
 
 .ui-inventory {
   position: absolute;
