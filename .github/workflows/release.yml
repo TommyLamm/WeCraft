@@ -14,9 +14,6 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
-      GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
     defaults:
       run:
         shell: bash
@@ -68,6 +65,8 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, `TOOLS_ARCHIVE=${path.resolve(expected)}\nTOOLS_VERSION=${lock.toolsVersion}\nTOOLS_SHA256=${actual}\n`);
           JS
       - name: Extract and verify pinned tools
+        env:
+          PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
         run: |
           mkdir -p "$PLATFORM_DIR"
           unzip -q "$TOOLS_ARCHIVE" -d "$PLATFORM_DIR"
@@ -85,8 +84,11 @@ jobs:
           console.log(`Playroom tools ${metadata.toolsVersion}, SHA-256 ${process.env.TOOLS_SHA256}`);
           JS
       - name: Pack and fully validate release ZIP
-        working-directory: ${{ env.PLATFORM_DIR }}
+        env:
+          PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
+          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
         run: |
+          cd "$PLATFORM_DIR"
           node pack-game.mjs "$GAME_PATH" "$GAME_ZIP"
           node validate-game.mjs "$GAME_ZIP"
           printf 'tools=%s\nsha256=%s\n' "$TOOLS_VERSION" "$TOOLS_SHA256" >> "$GITHUB_STEP_SUMMARY"
@@ -95,4 +97,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_REPO: ${{ github.repository }}
+          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
         run: gh release create "$RELEASE_TAG" "$GAME_ZIP" --repo "$RELEASE_REPO" --verify-tag --generate-notes --prerelease="$RELEASE_PRERELEASE"
