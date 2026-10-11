@@ -32,7 +32,7 @@ const KEY = 'wecraft.settings';
 const finite = (v: unknown, fallback: number) =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 
-function clampSettings(s: Settings): Settings {
+export function clampSettings(s: Settings): Settings {
   const seed = finite(s.seed, DEFAULT_SETTINGS.seed);
   return {
     seed: Math.floor(seed) || 0,

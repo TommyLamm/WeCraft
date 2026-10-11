@@ -1,0 +1,197 @@
+// Cloud-save data rules (pure — no window/localStorage/IndexedDB/DOM/Three).
+// This module owns the serializable progress payload and the guard/classify
+// semantics Task 4 wires to the platform SDK. Modified voxels are NOT part of
+// the payload (brief ruling); the cap keeps uploads within the 64 KiB budget.
+
+import type { Vitals } from '../player/survival';
+import type { ItemStack } from './items';
+import { sanitizeAdvancements, type AdvancementState } from './advancements';
+import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
+
+/** Payload schema version. Must match game.json `writeFormat` (Task 5). */
+export const CLOUD_FORMAT_VERSION = 1 as const;
+
+/** Upload budget: 64 KiB of UTF-8 JSON. */
+export const CLOUD_MAX_BYTES = 65536 as const;
+
+/** Settings subset that travels in the cloud payload (seed lives top-level). */
+export interface CloudSettings {
+  renderDistance: number;
+  sensitivity: number;
+  volume: number;
+  mode: 'survival' | 'creative';
+  dayLengthSec: number;
+  shadows: boolean;
+  clouds: boolean;
+}
+
+export interface CloudData {
+  seed: number;
+  pos: [number, number, number];
+  yaw: number;
+  vitals: Vitals | null;
+  clockT: number;
+  inventory: (ItemStack | null)[];
+  advancements: AdvancementState;
+  settings: CloudSettings;
+}
+
+export interface CloudBuildSource {
+  seed: number;
+  pos: readonly [number, number, number];
+  yaw: number;
+  vitals: Vitals | null;
+  clockT: number;
+  inventory: (ItemStack | null)[];
+  advancements: AdvancementState;
+  settings: Settings;
+}
+
+/** Snapshot live state into a fresh payload. Deep-copies every nested value
+ *  (fresh arrays/objects) so later live mutations never leak into the data.
+ *  Non-finite pos (any component, or a non-triple at runtime) → [0,0,0] and
+ *  non-finite yaw → 0; never throws. seed/clockT pass through untouched —
+ *  malformed values are rejected downstream by `validateCloudData`. */
+export function buildCloudData(src: CloudBuildSource): CloudData {
+  const pos: [number, number, number] =
+    Array.isArray(src.pos) &&
+    src.pos.length === 3 &&
+    src.pos.every((n) => typeof n === 'number' && Number.isFinite(n))
+      ? [src.pos[0], src.pos[1], src.pos[2]]
+      : [0, 0, 0];
+  const yaw = typeof src.yaw === 'number' && Number.isFinite(src.yaw) ? src.yaw : 0;
+  return {
+    seed: src.seed,
+    pos,
+    yaw,
+    vitals: src.vitals === null ? null : { ...src.vitals },
+    clockT: src.clockT,
+    inventory: src.inventory.map((s) => (s === null ? null : { ...s })),
+    advancements: { done: { ...src.advancements.done }, nightSeen: src.advancements.nightSeen },
+    settings: {
+      renderDistance: src.settings.renderDistance,
+      sensitivity: src.settings.sensitivity,
+      volume: src.settings.volume,
+      mode: src.settings.mode,
+      dayLengthSec: src.settings.dayLengthSec,
+      shadows: src.settings.shadows,
+      clouds: src.settings.clouds,
+    },
+  };
+}
+
+/** UTF-8 byte length of the JSON payload. Unknown/extra fields count — the
+ *  budget applies to what is actually uploaded, not the known schema. */
+export function byteSizeOf(data: CloudData): number {
+  return new TextEncoder().encode(JSON.stringify(data)).length;
+}
+
+const isFiniteNum = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+/** Structural check for an untrusted payload. Unknown extra fields are
+ *  allowed (forwards-compatible); advancements only needs to be an object
+ *  because `sanitizeAdvancements` normalizes it on the accept path. */
+export function validateCloudData(x: unknown): x is CloudData {
+  if (typeof x !== 'object' || x === null) return false;
+  const r = x as Record<string, unknown>;
+  if (!isFiniteNum(r.seed)) return false;
+  if (!Array.isArray(r.pos) || r.pos.length !== 3 || !r.pos.every(isFiniteNum)) return false;
+  if (!isFiniteNum(r.yaw)) return false;
+  if (!isFiniteNum(r.clockT)) return false;
+  if (!Array.isArray(r.inventory)) return false;
+  for (const slot of r.inventory) {
+    if (slot === null) continue;
+    if (typeof slot !== 'object' || slot === null) return false;
+    const s = slot as Record<string, unknown>;
+    if (typeof s.item !== 'string' || !isFiniteNum(s.count)) return false;
+  }
+  if (r.vitals !== null) {
+    if (typeof r.vitals !== 'object' || r.vitals === null) return false;
+    if (!isFiniteNum((r.vitals as Record<string, unknown>).hp)) return false;
+  }
+  if (typeof r.advancements !== 'object' || r.advancements === null) return false;
+  if (typeof r.settings !== 'object' || r.settings === null) return false;
+  const s = r.settings as Record<string, unknown>;
+  if (!isFiniteNum(s.renderDistance)) return false;
+  if (!isFiniteNum(s.sensitivity)) return false;
+  if (!isFiniteNum(s.volume)) return false;
+  if (s.mode !== 'survival' && s.mode !== 'creative') return false;
+  if (!isFiniteNum(s.dayLengthSec)) return false;
+  if (typeof s.shadows !== 'boolean') return false;
+  if (typeof s.clouds !== 'boolean') return false;
+  return true;
+}
+
+/** Validate then return a normalized fresh copy, or null when invalid.
+ *  Normalization: advancements via `sanitizeAdvancements` (unknown ids and
+ *  non-boolean values dropped), settings via the settings.ts clamp logic
+ *  (seeded with defaults, seed stripped back off). Illegal inventory item ids
+ *  are KEPT as strings — the main-side inventory model discards them. */
+export function acceptCloudData(x: unknown): CloudData | null {
+  if (!validateCloudData(x)) return null;
+  const clamped = clampSettings({ ...DEFAULT_SETTINGS, ...x.settings });
+  return {
+    seed: x.seed,
+    pos: [x.pos[0], x.pos[1], x.pos[2]],
+    yaw: x.yaw,
+    vitals: x.vitals === null ? null : { ...x.vitals },
+    clockT: x.clockT,
+    inventory: x.inventory.map((s) => (s === null ? null : { ...s })),
+    advancements: sanitizeAdvancements(x.advancements),
+    settings: {
+      renderDistance: clamped.renderDistance,
+      sensitivity: clamped.sensitivity,
+      volume: clamped.volume,
+      mode: clamped.mode,
+      dayLengthSec: clamped.dayLengthSec,
+      shadows: clamped.shadows,
+      clouds: clamped.clouds,
+    },
+  };
+}
+
+/** Revision observed by the last successful cloud read (null = never read). */
+export type CloudSaveGuard = { revision: number | null };
+
+/** A failed/unread revision must never overwrite the cloud slot — even the
+ *  first read of an empty slot (revision 0) is an explicit allow. */
+export function shouldAllowSave(g: CloudSaveGuard): boolean {
+  return g.revision !== null;
+}
+
+export type CloudErrorKind =
+  | 'CONFLICT'
+  | 'FORMAT'
+  | 'REQUEST_REUSED'
+  | 'AUTH'
+  | 'NETWORK'
+  | 'UNAVAILABLE';
+
+/** Classify a platform SDK failure. Precedence: known machineCodes first,
+ *  then auth signals, then the conservative bare-409 rule (a bare 409 with
+ *  no machineCode is treated as CONFLICT; FORMAT is ONLY ever assigned from
+ *  its machineCode), then unavailable, else network. */
+export function classifyCloudError(err: unknown): CloudErrorKind {
+  if (err === null || err === undefined) return 'UNAVAILABLE';
+  const rec =
+    typeof err === 'object' || typeof err === 'function'
+      ? (err as Record<string, unknown>)
+      : {};
+  const machineCode = typeof rec.machineCode === 'string' ? rec.machineCode : null;
+  if (machineCode === 'SAVE_REVISION_CONFLICT') return 'CONFLICT';
+  if (machineCode === 'SAVE_FORMAT_INCOMPATIBLE') return 'FORMAT';
+  if (machineCode === 'REQUEST_ID_REUSED') return 'REQUEST_REUSED';
+  if (rec.code === 401 || rec.code === 403 || rec.status === 401 || rec.status === 403) {
+    return 'AUTH';
+  }
+  if (
+    machineCode !== null &&
+    (machineCode.includes('AUTH') || machineCode.includes('PERMISSION'))
+  ) {
+    return 'AUTH';
+  }
+  const code = typeof err === 'number' ? err : rec.code;
+  if (code === 409 || rec.status === 409) return 'CONFLICT';
+  return 'NETWORK';
+}
