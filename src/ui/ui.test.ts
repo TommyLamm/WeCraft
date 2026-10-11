@@ -256,6 +256,36 @@ describe('pause menu', () => {
     expect(menus.isVisible()).toBe(false);
   });
 
+  it('Escape resumes via the same path as 繼續遊戲', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onResume = vi.fn(() => menus.hideAll());
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(menus.isVisible()).toBe(false);
+  });
+
+  it('Escape handler is removed on hide (no stale resume)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onResume = vi.fn(() => menus.hideAll());
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.hideAll();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
+  it('non-Escape keys do not resume', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onResume = vi.fn(() => menus.hideAll());
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w' }));
+    expect(onResume).not.toHaveBeenCalled();
+    menus.hideAll();
+  });
+
   it('quit invokes callback', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);

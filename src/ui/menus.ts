@@ -69,8 +69,17 @@ function sliderRow(label: string, opts: SliderOpts, onChange: (v: number) => voi
 
 export function createMenus(uiRoot: HTMLElement): Menus {
   let current: HTMLElement | null = null;
+  let escHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  const clearEsc = () => {
+    if (escHandler) {
+      document.removeEventListener('keydown', escHandler);
+      escHandler = null;
+    }
+  };
 
   const clear = () => {
+    clearEsc();
     current?.remove();
     current = null;
   };
@@ -147,6 +156,19 @@ export function createMenus(uiRoot: HTMLElement): Menus {
     },
     showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows, onToggleClouds }) {
       clear();
+      // Esc resumes via the identical path as 繼續遊戲 (incl. relock).
+      // Same overlay-Esc lifecycle as inventory/crafting: registered here and
+      // after every renderPause re-render (which clears first), removed in
+      // clear() so no stale handler survives a transition.
+      const registerEsc = () => {
+        clearEsc();
+        escHandler = (e: KeyboardEvent) => {
+          if (e.code !== 'Escape') return;
+          onResume();
+          relockCanvas();
+        };
+        document.addEventListener('keydown', escHandler);
+      };
       const renderPause = () => {
         clear();
         const el = document.createElement('div');
@@ -187,6 +209,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           btn('回到標題', onQuit),
         );
         mount(el);
+        registerEsc();
       };
       renderPause();
     },
