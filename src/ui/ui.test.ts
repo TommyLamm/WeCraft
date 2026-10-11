@@ -249,7 +249,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -260,7 +260,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
     menus.hideAll();
@@ -271,7 +271,7 @@ describe('pause menu', () => {
     const menus = createMenus(root);
     const onSaveQuit = vi.fn();
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onSaveQuit });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit });
     expect(root.textContent).toContain('儲存並離開');
     btnByText(root, '儲存並離開').click();
     expect(onSaveQuit).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ describe('pause menu', () => {
         mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
       });
     });
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
@@ -307,7 +307,7 @@ describe('pause menu', () => {
     const onResume = vi.fn();
     const onQuit = vi.fn();
     const onToggleMode = vi.fn();
-    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, '繼續遊戲').click();
     btnByText(root, '回到標題').click();
     btnByText(root, 'Mode: Survival').click();
@@ -329,6 +329,7 @@ describe('pause menu', () => {
       onQuit: () => {},
       onToggleMode: () => {},
       onToggleShadows,
+      onToggleClouds: () => {},
       onSaveQuit: () => {},
     });
     expect(root.textContent).toContain('陰影：開'); // default is on
@@ -341,6 +342,31 @@ describe('pause menu', () => {
     menus.hideAll();
   });
 
+  it('cloud toggle shows current state and calls onToggleClouds (Phase 3 Task 7)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // realistic wiring: main.ts persists via saveSettings inside the callback
+    const onToggleClouds = vi.fn(() => {
+      saveSettings({ clouds: !loadSettings().clouds });
+    });
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => {},
+      onToggleMode: () => {},
+      onToggleShadows: () => {},
+      onToggleClouds,
+      onSaveQuit: () => {},
+    });
+    expect(root.textContent).toContain('雲：開'); // default is on
+    btnByText(root, '雲：開').click();
+    expect(onToggleClouds).toHaveBeenCalledTimes(1);
+    // pause re-renders from settings → label flips without reopening the menu
+    btnByText(root, '雲：關').click();
+    expect(onToggleClouds).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain('雲：開');
+    menus.hideAll();
+  });
+
   it('settings sliders persist via saveSettings on change only', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
@@ -349,6 +375,7 @@ describe('pause menu', () => {
       onQuit: () => {},
       onToggleMode: () => {},
       onToggleShadows: () => {},
+      onToggleClouds: () => {},
       onSaveQuit: () => {},
     });
     btnByText(root, '設定').click();

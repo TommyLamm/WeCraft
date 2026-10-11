@@ -12,6 +12,8 @@ export interface Settings {
   dayLengthSec: number;
   /** Dynamic sun shadows (Phase 3 Task 5). Default on; non-boolean → default. */
   shadows: boolean;
+  /** Blocky cloud layer (Phase 3 Task 7). Default on; non-boolean → default. */
+  clouds: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = Object.freeze({
@@ -22,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   mode: 'survival',
   dayLengthSec: DEFAULT_DAY_LENGTH_SEC,
   shadows: true,
+  clouds: true,
 });
 
 const KEY = 'wecraft.settings';
@@ -46,6 +49,8 @@ function clampSettings(s: Settings): Settings {
     ),
     // anything that isn't exactly a boolean falls back to the default (on)
     shadows: typeof s.shadows === 'boolean' ? s.shadows : DEFAULT_SETTINGS.shadows,
+    // same guard for the cloud toggle (Phase 3 Task 7)
+    clouds: typeof s.clouds === 'boolean' ? s.clouds : DEFAULT_SETTINGS.clouds,
   };
 }
 

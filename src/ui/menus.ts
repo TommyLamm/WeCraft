@@ -24,6 +24,8 @@ export interface Menus {
      *  the callback persists + applies; the re-render re-reads settings so the
      *  label reflects the new state. */
     onToggleShadows: () => void;
+    /** Phase 3 Task 7: cloud-layer toggle — same contract as `onToggleShadows`. */
+    onToggleClouds: () => void;
   }): void;
   hideAll(): void;
   isVisible(): boolean;
@@ -119,6 +121,9 @@ export function createMenus(uiRoot: HTMLElement): Menus {
   /** Phase 3 Task 5: sun-shadow toggle label, re-read from settings each render. */
   const shadowsName = (): string => (loadSettings().shadows ? '開' : '關');
 
+  /** Phase 3 Task 7: cloud toggle label, re-read from settings each render. */
+  const cloudsName = (): string => (loadSettings().clouds ? '開' : '關');
+
   const modeLine = (className: string): HTMLElement => {
     const el = document.createElement('div');
     el.className = className;
@@ -140,7 +145,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
     },
-    showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows }) {
+    showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows, onToggleClouds }) {
       clear();
       const renderPause = () => {
         clear();
@@ -166,6 +171,11 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           // — main.ts persists + applies, the label re-reads settings
           btn(`陰影：${shadowsName()}`, () => {
             onToggleShadows();
+            renderPause();
+          }),
+          // cloud toggle (Phase 3 Task 7): same notify + re-render pattern
+          btn(`雲：${cloudsName()}`, () => {
+            onToggleClouds();
             renderPause();
           }),
           btn('設定', () => {

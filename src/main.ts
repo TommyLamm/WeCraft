@@ -4,6 +4,7 @@ import { ChunkRenderer } from './render/chunk-renderer';
 import { createCrackOverlay } from './render/crack';
 import { createParticleRenderer } from './render/particles';
 import { createSky } from './render/sky';
+import { createClouds } from './render/clouds';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
@@ -82,6 +83,9 @@ const crackOverlay = createCrackOverlay(gs.scene);
 // Phase 3 Task 6: sky dome gradient + sun/moon quads; main feeds it the raw
 // skyColors (zenith + horizon) and the sun direction every playing frame
 const sky = createSky(gs.scene);
+// Phase 3 Task 7: blocky volumetric cloud layer — one instanced 512×512 tile,
+// re-anchored to the camera in whole periods every frame (render/clouds.ts)
+const clouds = createClouds(gs.scene, settings.seed);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -381,6 +385,10 @@ applyRenderDistanceFog();
 // 陰影 toggle persists + applies live (setShadowsEnabled in its callback).
 gs.setShadowsEnabled(settings.shadows);
 
+// Phase 3 Task 7: cloud layer — boot state from settings; the pause menu's
+// 雲 toggle persists + applies live (setEnabled in its callback).
+clouds.setEnabled(settings.clouds);
+
 // ---- 區塊佇列（preserves shipped Task 11/12 fixes: generated-keyed, gen r+1,
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
@@ -618,6 +626,14 @@ function setState(next: GameState): void {
         settings.shadows = next; // keep in-memory settings fresh (menus re-reads localStorage)
         saveSettings({ shadows: next });
         gs.setShadowsEnabled(next);
+      },
+      // cloud toggle (Phase 3 Task 7): persist + apply live; menus re-renders
+      // its 雲 label from settings after this callback returns
+      onToggleClouds: () => {
+        const next = !loadSettings().clouds;
+        settings.clouds = next; // keep in-memory settings fresh (menus re-reads localStorage)
+        saveSettings({ clouds: next });
+        clouds.setEnabled(next);
       },
     });
   } else if (next === 'dead') {
@@ -1379,6 +1395,10 @@ gs.renderer.setAnimationLoop(() => {
   // stores x/z and the next setDayNight snaps it to the 2-block grid
   // (shadowFollow), so the shadow box follows without subpixel swim.
   gs.setSunFocus(cam.x, cam.z);
+
+  // Phase 3 Task 7: re-anchor the cloud tile to the camera (whole-period snap
+  // combined with the time drift; the matching tile period hides the snaps).
+  clouds.update(cam.x, cam.z, now / 1000);
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
