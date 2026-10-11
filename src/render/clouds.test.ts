@@ -128,7 +128,7 @@ describe('createClouds', () => {
     expect(scene.getObjectByName('clouds')).toBeUndefined();
   });
 
-  it('update() snaps the group to whole periods and moves < 2 cells between frames', () => {
+  it('update() snaps to whole periods plus a continuous drift (< 2 cells per frame)', () => {
     const { clouds, group } = setup();
     const t = 10;
     const camX = 1536.5; // positive world side
@@ -137,22 +137,32 @@ describe('createClouds', () => {
 
     const driftX = (t * 0.6) % PERIOD;
     const driftZ = (t * 0.1) % PERIOD;
-    // whole-period snap on both axes …
-    expect(Math.abs(group.position.x % PERIOD)).toBe(0);
-    expect(Math.abs(group.position.z % PERIOD)).toBe(0);
-    // … and the drift-shifted camera lands INSIDE the snapped tile:
-    // offset ≤ cam − drift < offset + period
-    expect(group.position.x).toBe(cloudFieldOffset(camX, driftX));
-    expect(group.position.z).toBe(cloudFieldOffset(camZ, driftZ));
-    expect(camX - driftX - group.position.x).toBeGreaterThanOrEqual(0);
-    expect(camX - driftX - group.position.x).toBeLessThan(PERIOD);
-    expect(camZ - driftZ - group.position.z).toBeGreaterThanOrEqual(0);
-    expect(camZ - driftZ - group.position.z).toBeLessThan(PERIOD);
+    // group position = whole-period snap of (cam − drift) PLUS the drift …
+    const snappedX = group.position.x - driftX;
+    const snappedZ = group.position.z - driftZ;
+    expect(Math.abs(snappedX % PERIOD)).toBeCloseTo(0, 6); // multiple of the period
+    expect(Math.abs(snappedZ % PERIOD)).toBeCloseTo(0, 6);
+    expect(snappedX).toBeCloseTo(cloudFieldOffset(camX, driftX), 10);
+    expect(snappedZ).toBeCloseTo(cloudFieldOffset(camZ, driftZ), 10);
+    // … and the tile still covers the camera: 0 ≤ cam − position < period
+    expect(camX - group.position.x).toBeGreaterThanOrEqual(0);
+    expect(camX - group.position.x).toBeLessThan(PERIOD);
+    expect(camZ - group.position.z).toBeGreaterThanOrEqual(0);
+    expect(camZ - group.position.z).toBeLessThan(PERIOD);
 
-    // one 60 fps step later (same camera) the group must not lurch
+    // one 60 fps step later (same camera, no period boundary crossed) the field
+    // moves by exactly the drift delta — visible movement, capped at 2 cells
     const before = { x: group.position.x, z: group.position.z };
     clouds.update(camX, camZ, t + 1 / 60);
-    expect(Math.abs(group.position.x - before.x)).toBeLessThan(TWO_CELLS);
-    expect(Math.abs(group.position.z - before.z)).toBeLessThan(TWO_CELLS);
+    const dx = group.position.x - before.x;
+    const dz = group.position.z - before.z;
+    const deltaX = ((t + 1 / 60) * 0.6) % PERIOD - driftX;
+    const deltaZ = ((t + 1 / 60) * 0.1) % PERIOD - driftZ;
+    expect(dx).toBeCloseTo(deltaX, 10);
+    expect(dz).toBeCloseTo(deltaZ, 10);
+    expect(dx).toBeGreaterThan(0); // the field visibly drifts east …
+    expect(dz).toBeGreaterThan(0); // … and south
+    expect(Math.abs(dx)).toBeLessThan(TWO_CELLS);
+    expect(Math.abs(dz)).toBeLessThan(TWO_CELLS);
   });
 });

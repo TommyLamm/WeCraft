@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { hash2 } from '../core/noise';
 
 // Phase 3 Task 7: blocky volumetric cloud layer. ONE 512×512 pattern tile of
-// white boxes, built once as an InstancedMesh and re-anchored to the camera in
-// whole-period steps each frame. The tile repeats on the same 512 period, so
-// the period snaps are invisible and the layer reads as world-anchored.
+// white boxes, built once as an InstancedMesh and re-anchored to the camera
+// each frame: a whole-period snap PLUS the continuous time drift. The tile
+// repeats on the same 512 period, so the period snaps are invisible and the
+// layer reads as a world-anchored field drifting overhead.
 
 /** One cloud box in tile-local coordinates: `x`/`z` are the box ORIGIN (the
  *  cell's 2-block margin included), `w`/`d` its footprint, `h` its height
@@ -44,9 +45,9 @@ export function cloudPattern(seed: number, period = 512, cell = 16, density = 0.
 }
 
 /** Whole-period tile origin for one axis: the tile slice that contains
- *  `cam − drift`. The drift only chooses WHERE the snap boundary sits (it is
- *  continuous in world coordinates); the group itself always lands on an
- *  integer period, and the matching tile period keeps that invisible. */
+ *  `cam − drift`. The caller adds the drift back on top (see `update`), so the
+ *  field moves continuously in world coordinates while this snapped origin
+ *  only steps by whole periods — invisible because the tile repeats. */
 export function cloudFieldOffset(cam: number, drift: number, period = 512): number {
   return Math.floor((cam - drift) / period) * period;
 }
@@ -60,8 +61,9 @@ const DRIFT_X_PER_SEC = 0.6;
 const DRIFT_Z_PER_SEC = 0.1;
 
 export interface Clouds {
-  /** Re-anchor the tile to the camera: each axis snaps to a whole period of
-   *  `cam − drift(t)` — call once per rendered frame. */
+  /** Re-anchor the tile to the camera: each axis = the whole-period snap of
+   *  `cam − drift(t)` PLUS the drift itself, so the field drifts continuously
+   *  in world coordinates — call once per rendered frame. */
   update(camX: number, camZ: number, timeSec: number): void;
   /** Show/hide the whole layer (settings toggle). */
   setEnabled(on: boolean): void;
@@ -99,7 +101,15 @@ export function createClouds(scene: THREE.Scene, seed: number): Clouds {
     update(camX, camZ, timeSec) {
       const driftX = (timeSec * DRIFT_X_PER_SEC) % PERIOD;
       const driftZ = (timeSec * DRIFT_Z_PER_SEC) % PERIOD;
-      group.position.set(cloudFieldOffset(camX, driftX), 0, cloudFieldOffset(camZ, driftZ));
+      // Controller ruling (Task 7): the group keeps the whole-period snap PLUS
+      // the continuous drift, so the field visibly moves in world coordinates;
+      // the one-period jump when the floor decrements stays invisible because
+      // the tile repeats every period.
+      group.position.set(
+        cloudFieldOffset(camX, driftX) + driftX,
+        0,
+        cloudFieldOffset(camZ, driftZ) + driftZ,
+      );
     },
     setEnabled(on) {
       group.visible = on;
