@@ -16,8 +16,8 @@ npm run dev        # 開啟 http://localhost:5173
 # Description
 
 一個用 TypeScript 撰寫、Three.js 渲染的體素（voxel）遊戲。世界由 16×16 區塊組成，
-方塊經貪婪網格化（greedy meshing）+ texture array 合批繪製；兩期開發皆已完成並通過
-瀏覽器走查（11/11 項）。
+方塊經貪婪網格化（greedy meshing）+ texture array 合批繪製；三期開發皆已完成並通過
+瀏覽器走查（第三期 13/13 項，見 `.superpowers/sdd/2026-10-10-wecraft-phase3/task-14-report.md`）。
 
 ## 遊戲特色
 
@@ -25,6 +25,8 @@ npm run dev        # 開啟 http://localhost:5173
 - 區塊化地形（貪婪網格化 + `sampler2DArray` 紋理陣列，F3 顯示每幀三角數）
 - 日 → 暮 → 夜 → 晝循環，天空、霧、光照同步變化
 - 半透明水面 + 水下霧效
+- 第三期：方塊太陽／月亮＋天空漸層、方形體積雲（可開關、會飄移）、即時陰影（可開關）、
+  逐頂點 AO、霧色隨生物群系／時間變化
 
 **創造模式**
 - 即時挖掘、熱鍵欄無限方塊、無血量／飢餓
@@ -37,9 +39,11 @@ npm run dev        # 開啟 http://localhost:5173
 - 方塊挖破後掉落地面，走近自動拾取（熱鍵欄即全部背包）
 - 夜晚出怪：殭屍近戰追擊、骷髏保持距離射箭；飢餓回血、墜落傷害
 - 合成：背包 2×2（木板／木棍／工作台）＋ 放置工作台右鍵 3×3 製作工具（9 份配方）
-- 死亡畫面 → 重生：血量飢餓回滿、回到出生點、物品保留
+- 死亡畫面 → 重生：血量飢餓回滿、回到出生點、物品保留（附死因文案：墜落／殭屍／骷髏／飢餓）
 - 暫停選單可雙向切換創造／生存（創造進入會補滿 9×64 方塊）
 - IndexedDB 存檔（`wecraft-save`）：改動方塊 + 玩家狀態 → Save & Quit → Continue 全還原
+- 第三期：程序化音效（挖掘／放置／腳步／風聲／鳥叫，音量設定、背景分頁自動靜音）、
+  挖掘裂紋＋破壞粒子、第一人稱手持模型（挖掘揮動）、進度系統＋右上 toast 通知
 
 **介面**
 - 熱鍵欄、背包、合成介面、暫停選單、死亡畫面（皆純 DOM，經 `bus` 與遊戲核心通訊）
@@ -113,7 +117,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 529 tests / 28 files 全綠
+npm test           # vitest run — 672 tests / 42 files 全綠
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -122,6 +126,8 @@ npm run lint       # eslint .
 # 專案狀態
 
 - **Phase 1**（創造沙盒、地形、互動）與 **Phase 2**（生存模式全套）皆完成並合入 `master`。
+- **Phase 3**（0.2.0：陰影／AO／雲／天空／音效／粒子／手持／進度／死因）完成並通過最終驗證，
+  成品 `dist/`（`game.zip` 驗證通過、尚未發布）。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 
