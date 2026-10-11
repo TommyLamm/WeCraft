@@ -1,0 +1,164 @@
+// Task 3: Playroom cloud client adapter tests.
+// All SDK access is injected via loaders — no network, jsdom-safe.
+import { describe, expect, it, vi } from 'vitest';
+import { createCloudClient } from './playroom';
+import type { PlayroomModule, PlayroomReady } from './playroom-sdk-types';
+
+const AUTH_READY: PlayroomReady = {
+  available: true,
+  progressAvailable: true,
+  mode: 'authenticated',
+  sdkVersion: '1.1.0',
+  protocolVersion: 1,
+  capabilities: ['scoring', 'progress'],
+};
+
+const GUEST_READY: PlayroomReady = {
+  available: false,
+  progressAvailable: false,
+  mode: 'guest',
+  sdkVersion: '1.1.0',
+  protocolVersion: 1,
+  capabilities: [],
+};
+
+function modWith(ready: PlayroomReady, impl: Partial<PlayroomModule>): PlayroomModule {
+  return {
+    ready: async () => ready,
+    loadProgress: async () => null,
+    saveProgress: async () => null,
+    ...impl,
+  };
+}
+
+describe('createCloudClient', () => {
+  it('default loader never throws in jsdom and inits to guest/unsupported', async () => {
+    const c = createCloudClient();
+    const s = await c.init();
+    expect(['guest', 'unsupported']).toContain(s);
+    expect(['guest', 'unsupported']).toContain(c.status);
+  });
+
+  it('null loader inits to guest/unsupported with null load/save', async () => {
+    const c = createCloudClient({ loadModule: async () => null });
+    const s = await c.init();
+    expect(['guest', 'unsupported']).toContain(s);
+    await expect(c.load()).resolves.toBeNull();
+    await expect(c.save({}, 0, 1, 'req-1')).resolves.toBeNull();
+  });
+
+  it('guest (progressAvailable false) inits to guest and never calls saveProgress', async () => {
+    const saveProgress = vi.fn(async (_input: { data: unknown; revision: number; formatVersion: number; requestId?: string }) => null);
+    const loadProgress = vi.fn(async () => null);
+    const m = modWith(GUEST_READY, { saveProgress, loadProgress });
+    const c = createCloudClient({ loadModule: async () => m });
+    await expect(c.init()).resolves.toBe('guest');
+    expect(c.status).toBe('guest');
+    await expect(c.save({ a: 1 }, 1, 1, 'r-1')).resolves.toBeNull();
+    expect(saveProgress).not.toHaveBeenCalled();
+    await expect(c.load()).resolves.toBeNull();
+    expect(loadProgress).not.toHaveBeenCalled();
+  });
+
+  it('authenticated load passes through data/revision/formatVersion', async () => {
+    const fixture = {
+      data: { pos: [1, 2, 3] },
+      revision: 7,
+      formatVersion: 1,
+      gameVersion: '0.3.0',
+      updatedAt: '2026-10-11T00:00:00.000Z',
+    };
+    const m = modWith(AUTH_READY, { loadProgress: async () => fixture });
+    const c = createCloudClient({ loadModule: async () => m });
+    await expect(c.init()).resolves.toBe('ready');
+    await expect(c.load()).resolves.toEqual({
+      data: fixture.data,
+      revision: 7,
+      formatVersion: 1,
+    });
+  });
+
+  it('authenticated save resolves the new revision and forwards requestId', async () => {
+    let seen: { data: unknown; revision: number; formatVersion: number; requestId?: string } | undefined;
+    const m = modWith(AUTH_READY, {
+      saveProgress: async (input) => {
+        seen = input;
+        return {
+          data: input.data,
+          revision: 8,
+          formatVersion: input.formatVersion,
+          gameVersion: '0.3.0',
+          updatedAt: '2026-10-11T00:00:01.000Z',
+          saved: true as const,
+        };
+      },
+    });
+    const c = createCloudClient({ loadModule: async () => m });
+    await expect(c.init()).resolves.toBe('ready');
+    await expect(c.save({ k: 1 }, 7, 1, 'req-123')).resolves.toEqual({ revision: 8 });
+    expect(seen).toMatchObject({ revision: 7, formatVersion: 1, requestId: 'req-123' });
+  });
+
+  it('SAVE_REVISION_CONFLICT rethrows the original error and sets conflict', async () => {
+    const err = Object.assign(new Error('revision conflict'), {
+      machineCode: 'SAVE_REVISION_CONFLICT',
+    });
+    const m = modWith(AUTH_READY, {
+      saveProgress: async () => {
+        throw err;
+      },
+    });
+    const c = createCloudClient({ loadModule: async () => m });
+    await c.init();
+    await expect(c.save({}, 7, 1, 'r-1')).rejects.toBe(err);
+    expect(c.status).toBe('conflict');
+  });
+
+  it('REQUEST_ID_REUSED and bare 409 map to conflict', async () => {
+    const reused = Object.assign(new Error('request id reused'), {
+      machineCode: 'REQUEST_ID_REUSED',
+    });
+    const m1 = modWith(AUTH_READY, {
+      saveProgress: async () => {
+        throw reused;
+      },
+    });
+    const c1 = createCloudClient({ loadModule: async () => m1 });
+    await c1.init();
+    await expect(c1.save({}, 1, 1, 'dup')).rejects.toBe(reused);
+    expect(c1.status).toBe('conflict');
+
+    const m2 = modWith(AUTH_READY, {
+      saveProgress: async () => {
+        throw 409;
+      },
+    });
+    const c2 = createCloudClient({ loadModule: async () => m2 });
+    await c2.init();
+    await expect(c2.save({}, 1, 1, 'x')).rejects.toBe(409);
+    expect(c2.status).toBe('conflict');
+  });
+
+  it('SAVE_FORMAT_INCOMPATIBLE sets format and rethrows', async () => {
+    const err = Object.assign(new Error('bad format'), {
+      machineCode: 'SAVE_FORMAT_INCOMPATIBLE',
+    });
+    const m = modWith(AUTH_READY, {
+      saveProgress: async () => {
+        throw err;
+      },
+    });
+    const c = createCloudClient({ loadModule: async () => m });
+    await c.init();
+    await expect(c.save({}, 1, 1, 'r-1')).rejects.toBe(err);
+    expect(c.status).toBe('format');
+  });
+
+  it('null saveProgress result passes through as null without changing status', async () => {
+    const m = modWith(AUTH_READY, { saveProgress: async () => null });
+    const c = createCloudClient({ loadModule: async () => m });
+    await expect(c.init()).resolves.toBe('ready');
+    await expect(c.save({}, 1, 1, 'r-1')).resolves.toBeNull();
+    expect(c.status).toBe('ready');
+  });
+});
