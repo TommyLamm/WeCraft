@@ -200,3 +200,116 @@ export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataAr
   tex.needsUpdate = true;
   return tex;
 }
+
+/** Task 4: the ONE shared GPU texture array (chunk terrain, particle
+ *  billboards — later the held-item viewmodel). Memoized: the first caller
+ *  builds it from `drawAtlas()` and every later caller gets the same
+ *  instance, so the atlas bytes are uploaded once. Owners must NOT dispose
+ *  it (chunk unload/teardown would break every other consumer).
+ *  `buildTextureArray` is deliberately left untouched — it still returns a
+ *  fresh object per call for tests and one-off callers. */
+let cachedTextureArray: THREE.DataArrayTexture | null = null;
+
+export function getTextureArray(): THREE.DataArrayTexture {
+  if (!cachedTextureArray) cachedTextureArray = buildTextureArray(drawAtlas());
+  return cachedTextureArray;
+}
+
+// ---- Task 3: mining crack overlay stage textures ----
+
+/** Crack-line alpha (both brief and test pin it): semi-transparent black so
+ *  the block texture stays readable under the crack. */
+const CRACK_LINE_ALPHA = 120;
+/** Pixel budget the walk may visit — the stage-9 ink count. */
+const CRACK_PIXEL_BUDGET = 96;
+/** Ink floor for stage 0: a single pixel would read as a texture glitch, not
+ *  "dig started"; also keeps the prefix strictly growing. */
+const CRACK_MIN_INK = 8;
+/** Chance to turn instead of going straight — mostly-straight runs is what
+ *  makes the walk read as a crack rather than noise. */
+const CRACK_TURN_CHANCE = 0.2;
+/** Chance per step to sprout a side strand. */
+const CRACK_BRANCH_CHANCE = 0.4;
+/** Main strand length in steps (branches add the rest of the budget). */
+const CRACK_TRUNK_STEPS = 60;
+
+/** Ordered crack-pixel list (memoized): a seeded random walk from the tile
+ *  centre with momentum + two levels of branches. Every listed pixel is
+ *  unique and index k is the k-th pixel the walk discovered, so painting a
+ *  growing PREFIX of this list makes later stages strictly denser
+ *  (test-pinned ink(0) < … < ink(9)). */
+let crackOrder: number[] | null = null;
+
+function crackPixelOrder(): number[] {
+  if (crackOrder) return crackOrder;
+  const rnd = mulberry(0x1a2b3c);
+  const seen = new Set<number>();
+  const order: number[] = [];
+  const key = (x: number, y: number) => y * TILE_PX + x;
+  const open = (x: number, y: number) =>
+    x >= 0 && x < TILE_PX && y >= 0 && y < TILE_PX && !seen.has(key(x, y));
+  const add = (x: number, y: number) => {
+    seen.add(key(x, y));
+    order.push(key(x, y));
+  };
+
+  /** One crack strand: step pixel by pixel, turning when blocked or at
+   *  random; sprout shorter side strands on the way (depth-capped recursion). */
+  function walk(x: number, y: number, dx: number, dy: number, steps: number, depth: number): void {
+    for (let i = 0; i < steps && order.length < CRACK_PIXEL_BUDGET; i++) {
+      if (rnd() < CRACK_TURN_CHANCE || !open(x + dx, y + dy)) {
+        // Prefer a perpendicular heading; reverse is the last resort so a
+        // strand doubles back instead of dying in a one-way dead end.
+        const perpA: [number, number] = [dy, -dx];
+        const perpB: [number, number] = [-dy, dx];
+        const back: [number, number] = [-dx, -dy];
+        const choices = rnd() < 0.5 ? [perpA, perpB, back] : [perpB, perpA, back];
+        const pick = choices.find(([cx, cy]) => open(x + cx, y + cy));
+        if (!pick) return; // fully boxed in
+        dx = pick[0];
+        dy = pick[1];
+      }
+      add(x + dx, y + dy);
+      x += dx;
+      y += dy;
+      if (depth > 0 && rnd() < CRACK_BRANCH_CHANCE) {
+        const b: [number, number] = rnd() < 0.5 ? [dy, -dx] : [-dy, dx];
+        if (open(x + b[0], y + b[1])) {
+          add(x + b[0], y + b[1]);
+          walk(x + b[0], y + b[1], b[0], b[1], 3 + Math.floor(rnd() * 4), depth - 1);
+        }
+      }
+    }
+  }
+
+  const cx = TILE_PX / 2; // 8 — centre seed, cracks radiate from the impact
+  const cy = TILE_PX / 2;
+  add(cx, cy);
+  const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const [dx, dy] = dirs[Math.floor(rnd() * dirs.length)];
+  add(cx + dx, cy + dy);
+  walk(cx + dx, cy + dy, dx, dy, CRACK_TRUNK_STEPS, 2);
+  crackOrder = order;
+  return order;
+}
+
+/** Task 3: one 16×16 RGBA crack texture for dig stage `stage` (0..9; clamped,
+ *  non-finite → 0). Transparent background, black crack lines at
+ *  `CRACK_LINE_ALPHA`; higher stages strictly denser (prefix of
+ *  `crackPixelOrder`). Canvas-free and deterministic like `drawAtlas` —
+ *  `createCrackOverlay` uploads the bytes. */
+export function drawCrackStage(stage: number): Uint8ClampedArray {
+  const s = Number.isFinite(stage) ? Math.max(0, Math.min(9, Math.floor(stage))) : 0;
+  const order = crackPixelOrder();
+  const minInk = Math.min(CRACK_MIN_INK, order.length);
+  const ink = minInk + Math.round(((order.length - minInk) * s) / 9);
+  const data = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
+  for (let i = 0; i < ink; i++) {
+    const p = order[i] * 4;
+    data[p] = 0; // black line
+    data[p + 1] = 0;
+    data[p + 2] = 0;
+    data[p + 3] = CRACK_LINE_ALPHA;
+  }
+  return data;
+}

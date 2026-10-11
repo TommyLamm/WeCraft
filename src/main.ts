@@ -1,11 +1,15 @@
 import './style.css';
 import { createGameScene, createDropRenderer, createMobRenderer } from './render/scene';
 import { ChunkRenderer } from './render/chunk-renderer';
-import { drawAtlas } from './render/textures';
+import { createCrackOverlay } from './render/crack';
+import { createParticleRenderer } from './render/particles';
+import { createSky } from './render/sky';
+import { createClouds } from './render/clouds';
+import { createViewmodel } from './render/viewmodel';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
-import { raycast, reachFor } from './world/raycast';
+import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { blockFromItem, stackName, maxStack, starterSlots, type ItemId, type ItemStack } from './core/items';
 import { emptyGrid } from './core/recipes';
@@ -22,11 +26,13 @@ import {
   spawnBlockDrop,
   toolSpeed,
   digStep,
+  getBreakTime,
   toolDamage,
   hitMobId,
   attackMob,
 } from './player/interact';
 import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
+import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
   stepMobs,
   stepArrows,
@@ -44,15 +50,28 @@ import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
 import { createMenus } from './ui/menus';
-import { createDeathScreen } from './ui/death';
+import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
+import { createToasts } from './ui/toast';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
-import { generateChunk, surfaceHeight } from './world/terrain';
+import { applyBiomeTint } from './core/biome-fog';
+import { generateChunk, surfaceHeight, biomeAt } from './world/terrain';
+// Phase 3 Task 10: audio facade + pure helpers — all wiring lives here in main
+// (composition root); the engine is gesture-gated and inert until ensureStarted.
+import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
+// Task 11–12: progress core (pure rules/state) + the unlock-event/toast wiring
+// below — `applyAdvancement` is the single feed point for every unlock event.
+import {
+  emptyAdvancements,
+  checkAdvancements,
+  ADVANCEMENTS,
+  type AdvancementEvent,
+} from './core/advancements';
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
@@ -64,11 +83,25 @@ const uiRoot = document.getElementById('ui-root') as HTMLElement;
 const gs = createGameScene(canvas);
 const settings = loadSettings();
 const world = new World();
-const chunkRenderer = new ChunkRenderer(gs.scene, drawAtlas());
+const chunkRenderer = new ChunkRenderer(gs.scene); // Task 4: shared texture array
 // Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 // Task 8: mobs + arrows — blocky humanoids and oriented boxes
 const mobRenderer = createMobRenderer(gs.scene);
+// Task 4: break/dig debris — billboard quads over the shared block texture array
+const particleRenderer = createParticleRenderer(gs.scene);
+// Task 3: mining crack overlay — one quad + 10 stage textures, driven per
+// frame from the dig loop (hidden while not playing)
+const crackOverlay = createCrackOverlay(gs.scene);
+// Phase 3 Task 6: sky dome gradient + sun/moon quads; main feeds it the raw
+// skyColors (zenith + horizon) and the sun direction every playing frame
+const sky = createSky(gs.scene);
+// Phase 3 Task 7: blocky volumetric cloud layer — one instanced 512×512 tile,
+// re-anchored to the camera in whole periods every frame (render/clouds.ts)
+const clouds = createClouds(gs.scene, settings.seed);
+// Phase 3 Task 8: first-person held item — camera-attached block cube / icon
+// plane; the icon factory is injected (render/ never imports ui/)
+const viewmodel = createViewmodel(gs.scene, gs.camera, itemIcon);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -78,6 +111,15 @@ const inv = createInventory(uiRoot);
 const craftUi = createCrafting(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
+// Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
+const toasts = createToasts(uiRoot);
+// Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
+// built lazily on the first gesture); every game sound below routes through it.
+const audio = createGameAudio();
+// Phase 3 Task 10: first canvas press arms the engine (autoplay policy). The
+// title/pause buttons live in ui-root — startGame/continueGame arm the engine
+// from their own click gestures instead (see the session entry/exit below).
+canvas.addEventListener('pointerdown', () => audio.ensureStarted(), { once: true });
 
 // ---- 遊戲事件匯流排 ----
 // `GameEvents` payload-map type lives in core/bus.ts next to the GameEvent union
@@ -112,6 +154,25 @@ const dig = new DigProgress();
 // inventory — retried on the next reset, so items are never destroyed.
 let craftGrid: Array<ItemStack | null> = [];
 let craftExcess: ItemStack[] = [];
+
+// ---- Progress state (Task 11–12) ----
+// Advancement progress: fresh on New Game, restored on Continue, snapshotted
+// into every save. The unlock events (obtain/mob-killed/phase) all route
+// through `applyAdvancement` below; this section owns the state lifecycle.
+let advancements = emptyAdvancements();
+
+/** THE single feed point for unlock events (Task 12 brief 12.3): the rules stay
+ *  pure in core/advancements — this wrapper owns the state swap and the
+ *  ADVANCEMENTS → toast lookup. Creative suppression lives inside
+ *  checkAdvancements, so callers just pass the current mode. */
+function applyAdvancement(ev: AdvancementEvent): void {
+  const r = checkAdvancements(advancements, ev);
+  advancements = r.state;
+  for (const id of r.unlocked) {
+    const def = ADVANCEMENTS.find((a) => a.id === id);
+    if (def) toasts.push({ title: def.title, description: def.description, icon: def.icon });
+  }
+}
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
@@ -198,6 +259,9 @@ function craftingParams(size: 2 | 3): CraftingParams {
       if (!inventory.fits(result.item, result.count)) return false; // full → blocked, grid untouched
       giveItem(result.item, result.count);
       hud.setHotbar(hotbar, selected);
+      // Task 12: a successful craft take is an obtain event (creative never
+      // reaches this path, and checkAdvancements would suppress it anyway).
+      applyAdvancement({ type: 'obtain', item: result.item, mode: currentMode });
       return true;
     },
   };
@@ -217,6 +281,14 @@ const SPRINT_EXHAUST_PER_SEC = 0.05;
 const JUMP_EXHAUST = 0.15;
 /** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
 let attackCd = 0;
+/** Cause of the current life's death (Task 13): set whenever survival damage
+ *  lands (fall → 'fall', melee → the live mob's kind by mobId / 'unknown',
+ *  arrows → 'skeleton', starvation ticks → 'starve' — last write wins) and
+ *  read once at the `setState('dead')` transition via
+ *  `deathMessageFor(deathCause)`. Reset to null on every fresh spawn
+ *  (`resetPlayerToSpawn`, which startGame/respawn/quit flow through) and on
+ *  Continue (which builds its own player without that helper). */
+let deathCause: DamageSource | null = null;
 /** Apex (peak y) of the current airborne span for fall damage (plan 9.1) —
  *  pure lifecycle in player/fallstate.ts: advanced every frame by `updateFall`
  *  from a PRE-physics y capture, and reset via `resetFall()` on respawn (a
@@ -236,10 +308,43 @@ let mobs: Mob[] = [];
 let arrows: Arrow[] = [];
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 
+// ---- 破壞/挖掘粒子（Task 4）----
+// Pure particle sim (world/particles.ts) stepped each playing frame; the
+// billboard renderer (render/particles.ts) syncs every frame. digChipAcc
+// paces the dig spray to one 2-particle batch per 0.1 s of dig progress.
+let particles: Particle[] = [];
+let digChipAcc = 0;
+const DIG_CHIP_INTERVAL_SEC = 0.1;
+
+// ---- 手持模型（Phase 3 Task 8）----
+// The viewmodel follows the selected slot (cached compare) and swings on
+// attack/place/break; while mining it re-triggers once per swing, so waves
+// chain. `digSwingAcc` rests "due" (one full interval) so the first mining
+// frame swings at once; one swing length is 0.25 s (core/viewmodel).
+const MINE_SWING_INTERVAL_SEC = 0.25;
+let heldViewmodelItem: ItemId | null = null;
+let digSwingAcc = MINE_SWING_INTERVAL_SEC;
+
+// ---- 音效（Phase 3 Task 10）----
+// main only ROUTES events to the Task 9 facade; all voicing lives in audio/.
+// `digSoundAcc` paces the dig scrape to one sound per DIG_SOUND_INTERVAL_SEC of
+// real dig progress; `stepAcc` counts grounded seconds toward the next step.
+let digSoundAcc = 0;
+const DIG_SOUND_INTERVAL_SEC = 0.25;
+let stepAcc = 0;
+
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
 // `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
 let clock: Clock = createClock(settings.dayLengthSec);
+
+// ---- 生物群系（Phase 3 Task 6）----
+// Biome under the player — drives the fog/background tint and the F3 Biome
+// line. Re-sampled at most every 0.5 s (two fbm2 lookups each, memoized
+// Noise): a step across a biome border recolors within half a second.
+let biomeNow = biomeAt(player.position.x, player.position.z, settings.seed);
+let biomeAcc = 0;
+const BIOME_SAMPLE_INTERVAL_SEC = 0.5;
 
 // ---- 存檔 / 繼續（Task 14）----
 /** Last known save: loaded ONCE at boot (gates the title's Continue button —
@@ -348,6 +453,19 @@ function applyRenderDistanceFog(): void {
 }
 applyRenderDistanceFog();
 
+// Phase 3 Task 5: sun shadows — boot state from settings; the pause menu's
+// 陰影 toggle persists + applies live (setShadowsEnabled in its callback).
+gs.setShadowsEnabled(settings.shadows);
+
+// Phase 3 Task 7: cloud layer — boot state from settings; the pause menu's
+// 雲 toggle persists + applies live (setEnabled in its callback).
+clouds.setEnabled(settings.clouds);
+
+// Phase 3 Task 10: audio boot volume — the engine remembers it pre-start, so
+// the first sound after the gesture already uses the saved level (the pause
+// menu re-applies it live on resume via loadSettings).
+audio.setVolume(settings.volume);
+
 // ---- 區塊佇列（preserves shipped Task 11/12 fixes: generated-keyed, gen r+1,
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
@@ -398,13 +516,23 @@ function spawnTick(): void {
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
  *  `setVitals` path (creative → vitals null → no-op), which emits
  *  `vitals-changed` when an integer hp/hunger value moves (Task 9 producer);
- *  shoot spawns an Arrow entity. */
-function applyMobEvent(ev: MobEvent): void {
+ *  shoot spawns an Arrow entity.
+ *  Task 13: melee/arrow damage also records `deathCause` — arrows always come
+ *  from skeletons, while melee looks up the live mob's kind by `mobId`
+ *  (despawned/killed since → 'unknown'). Shoot events deal no damage yet, so
+ *  they record nothing. */
+function applyMobEvent(ev: MobEvent, fromArrow = false): void {
   if (ev.type === 'shoot') {
     arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
     return;
   }
   if (!vitals) return; // creative (or dead) — nothing to hurt
+  if (fromArrow) {
+    deathCause = 'skeleton';
+  } else {
+    const kind = mobs.find((m) => m.id === ev.mobId)?.kind;
+    deathCause = kind ?? 'unknown';
+  }
   setVitals(damage(vitals, ev.amount));
 }
 
@@ -540,6 +668,7 @@ function setState(next: GameState): void {
         // settings edited in the pause menu persist to localStorage — live-apply on resume
         const prevRd = settings.renderDistance;
         Object.assign(settings, loadSettings());
+        audio.setVolume(settings.volume); // Phase 3 Task 10: live-apply the saved volume
         if (settings.renderDistance !== prevRd) applyRenderDistanceFog();
         // menus relocks the canvas after onResume returns (click gesture)
         setState('playing');
@@ -578,6 +707,22 @@ function setState(next: GameState): void {
         const next: GameMode = currentMode === 'survival' ? 'creative' : 'survival';
         bus.emit('mode-changed', { mode: next });
       },
+      // sun-shadow toggle (Phase 3 Task 5): persist + apply live; menus
+      // re-renders its 陰影 label from settings after this callback returns
+      onToggleShadows: () => {
+        const next = !loadSettings().shadows;
+        settings.shadows = next; // keep in-memory settings fresh (menus re-reads localStorage)
+        saveSettings({ shadows: next });
+        gs.setShadowsEnabled(next);
+      },
+      // cloud toggle (Phase 3 Task 7): persist + apply live; menus re-renders
+      // its 雲 label from settings after this callback returns
+      onToggleClouds: () => {
+        const next = !loadSettings().clouds;
+        settings.clouds = next; // keep in-memory settings fresh (menus re-reads localStorage)
+        saveSettings({ clouds: next });
+        clouds.setEnabled(next);
+      },
     });
   } else if (next === 'dead') {
     // Death screen + respawn (Task 10). Callback-opts like menus.showPause —
@@ -588,6 +733,7 @@ function setState(next: GameState): void {
     deathScreen.show({
       onRespawn: handleRespawn,
       onQuit: handleQuitToTitle,
+      cause: deathMessageFor(deathCause), // Task 13: null → '' → no .death-cause line
     });
     // Freeze behavior (Task 9) unchanged: the pointer unlocks (the lock-change
     // handler pauses only from 'playing', so this can't bounce into the pause
@@ -639,6 +785,7 @@ function setState(next: GameState): void {
 function resetPlayerToSpawn(): void {
   const sp = spawnPoint();
   player = createPlayer(sp.x, sp.y, sp.z);
+  deathCause = null; // fresh life — the next death records its own cause (Task 13)
   // Session-scoped state (review Critical #1 + Minor #5): a stale apex from
   // quitting mid-fall would turn the fresh spawn's drop into a one-shot kill
   // (max(staleApex, y)), and a carried attackCd would swallow the next
@@ -686,6 +833,7 @@ function sessionSavePayload(): SavePayload | null {
     },
     vitals,
     clockT: clock.t,
+    advancements,
   });
 }
 
@@ -711,6 +859,7 @@ function persistNow(): void {
  *  one-chunk island (Task 17 CR fix). No save happens here — saving is the
  *  explicit job of 儲存並離開 / autosave / beforeunload (Task 14 settled). */
 function quitToTitle(): void {
+  audio.stopAmbience(); // Phase 3 Task 10: kill the wind bed + chirp/cricket timer
   sessionStarted = false;
   resetPlayerToSpawn();
   setState('title');
@@ -775,8 +924,15 @@ function startGame(): void {
   hud.setHotbar(hotbar, selected);
   setVitals(currentMode === 'survival' ? createVitals() : null);
   clock = createClock(settings.dayLengthSec);
+  // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
+  // bed and pin the ambience phase to the fresh clock (day).
+  audio.ensureStarted();
+  audio.startAmbience();
+  audio.setPhase(phaseOf(clock.t));
   craftGrid = [];
   craftExcess = [];
+  advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
+  deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -821,6 +977,7 @@ function continueGame(payload: SavePayload): void {
   // carried attack cooldown must not leak into the restored session).
   fallState = resetFall();
   attackCd = 0;
+  deathCause = null; // Task 13: Continue restores a living player — no death cause
 
   currentMode = payload.player.mode; // 3. mode
   input.setFlyEnabled(currentMode === 'creative'); // survival save → stay grounded
@@ -845,7 +1002,17 @@ function continueGame(payload: SavePayload): void {
       : null,
   );
 
+  // Progress (Task 11): restore the saved advancement state. The payload is
+  // always normalized v2 (loadGame migrates v1 / sanitizes v2), and the state
+  // is treated immutably everywhere — handing over the cached reference is safe.
+  advancements = payload.advancements;
+
   clock.t = payload.time.t; // 4. time-of-day
+  // Phase 3 Task 10: arm + start audio for the restored session (the Continue
+  // click IS the gesture); ambience follows the restored time-of-day.
+  audio.ensureStarted();
+  audio.startAmbience();
+  audio.setPhase(phaseOf(clock.t));
 
   sessionStarted = true;
   setState('playing'); // same entry tail as startGame
@@ -919,6 +1086,9 @@ document.addEventListener('pointerlockerror', () => {
 // hidden/visible flips can't spam IDB. `sessionStarted` keeps the title
 // screen with no session from ever writing. Page-lifetime listener.
 document.addEventListener('visibilitychange', () => {
+  // Phase 3 Task 10: auto-mute in background tabs (suspend/resume the audio
+  // context on hide/show); the save logic below is deliberately untouched.
+  audio.handleVisibility(document.visibilityState === 'hidden');
   if (document.visibilityState !== 'hidden' || !sessionStarted) return;
   const now = Date.now();
   if (now - lastBgSave < BG_SAVE_DEBOUNCE_MS) return;
@@ -982,8 +1152,29 @@ gs.renderer.setAnimationLoop(() => {
     const prevPhase = phaseOf(clock.t);
     clock = tickClock(clock, dt);
     const phase = phaseOf(clock.t);
-    gs.setDayNight(sunDirection(clock.t), skyColors(clock.t));
-    if (phase !== prevPhase) bus.emit('time-changed', { phase, t: clock.t });
+    // Phase 3 Task 6: 0.5 s-throttled biome sample → tint the fog/background;
+    // the dome keeps the raw sky (horizon + zenith) so the gradient stays the
+    // sunset ramp while the haze picks up the biome hue.
+    biomeAcc += dt;
+    if (biomeAcc >= BIOME_SAMPLE_INTERVAL_SEC) {
+      biomeAcc = 0;
+      biomeNow = biomeAt(player.position.x, player.position.z, settings.seed);
+    }
+    const sunDir = sunDirection(clock.t);
+    const c = skyColors(clock.t);
+    const tinted = {
+      ...c,
+      fog: applyBiomeTint(c.fog, biomeNow),
+      sky: applyBiomeTint(c.sky, biomeNow),
+    };
+    gs.setDayNight(sunDir, tinted);
+    sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
+    if (phase !== prevPhase) {
+      bus.emit('time-changed', { phase, t: clock.t });
+      // Task 12: phase events feed first_night (day after a seen night).
+      applyAdvancement({ type: 'phase', phase });
+      audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
+    }
 
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
     // onGround; water swim-strikes and active flight aren't discrete jumps,
@@ -1015,7 +1206,31 @@ gs.renderer.setAnimationLoop(() => {
     fallState = fall.fall;
     if (fall.distance !== null && currentMode === 'survival' && vitals) {
       const amount = fallDamage(fall.distance);
-      if (amount > 0) setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+      if (amount > 0) {
+        deathCause = 'fall'; // Task 13: fall damage landed (last write wins toward the death line)
+        setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+      }
+    }
+
+    // ---- 音效：腳步（Phase 3 Task 10）----
+    // Grounded walk/run only (airborne, flying and swimming are silent); the
+    // cadence comes from horizontal speed (footstepInterval), the material from
+    // the block 0.05 below the feet.
+    const horSpeed = Math.hypot(player.velocity.x, player.velocity.z);
+    if (player.onGround && !player.flying && !player.inWater && horSpeed > 0.5) {
+      stepAcc += dt;
+      if (stepAcc >= footstepInterval(horSpeed)) {
+        stepAcc = 0;
+        const groundId = world.getBlock(
+          Math.floor(player.position.x),
+          Math.floor(player.position.y - 0.05),
+          Math.floor(player.position.z),
+        );
+        audio.play('step', materialGroup(groundId), {
+          pos: player.position,
+          listener: player.position,
+        });
+      }
     }
 
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
@@ -1029,19 +1244,32 @@ gs.renderer.setAnimationLoop(() => {
     if (currentMode !== 'creative') {
       const near = pickable(drops, player.position);
       let pickedUp = false;
+      // Task 12: record which items actually entered the inventory; the unlock
+      // events fire AFTER the loop (the drop entities are gone by then).
+      const obtained: ItemId[] = [];
       // back-to-front: removing index i must not shift the ones still to process
       for (let i = near.length - 1; i >= 0; i--) {
         const idx = near[i];
+        const item = drops[idx]?.item;
         const countBefore = drops[idx]?.count ?? 0;
         const res = pickup(drops, idx, inventory);
         drops = res.drops;
-        if (res.overflow < countBefore) pickedUp = true; // at least 1 item entered the inventory
+        if (item && res.overflow < countBefore) {
+          pickedUp = true; // at least 1 item entered the inventory
+          obtained.push(item);
+        }
       }
       if (pickedUp) {
         hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
         bus.emit('drops-changed', {});
       }
+      for (const item of obtained) {
+        applyAdvancement({ type: 'obtain', item, mode: currentMode });
+      }
     }
+
+    // ---- 粒子（Task 4）：same solidity test as the player (water falls through)
+    particles = stepParticles(particles, dt, (x, y, z) => world.isSolid(x, y, z));
 
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
     const mobsBefore = mobs.length;
@@ -1051,7 +1279,7 @@ gs.renderer.setAnimationLoop(() => {
     for (const ev of stepped.events) applyMobEvent(ev);
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
-    for (const ev of shot.events) applyMobEvent(ev);
+    for (const ev of shot.events) applyMobEvent(ev, true);
     // dead mobs vanish (no loot this phase); distance despawn past 48 blocks
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
@@ -1064,12 +1292,17 @@ gs.renderer.setAnimationLoop(() => {
     // death transition is checked right after (Task 10 owns the screen).
     if (vitals) {
       let v = vitals;
+      const hpBeforeTick = v.hp;
       const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
       if (input.state.sprint && moving && !player.flying && !player.inWater) {
         v = exhaust(v, dt * SPRINT_EXHAUST_PER_SEC); // 0.05 exhaustion/s while sprinting
       }
       if (jumpStarted) v = exhaust(v, JUMP_EXHAUST); // 0.15 once per ground launch
       v = tickVitals(v, dt); // regen (hunger ≥ 18) / starve: 1 hp per 4 s
+      // Task 13: the only hp drop possible here is the starvation tick
+      // (exhaust never touches hp, regen only heals) — an hp loss at ~0 hunger
+      // marks this life's death cause as starvation.
+      if (v.hp < hpBeforeTick && v.hunger <= 0) deathCause = 'starve';
       setVitals(v); // repaint + emit only on an integer change (see setVitals)
       if (isPlayerDead(v) && state === 'playing') {
         setState('dead'); // death screen + player-died emit + freeze (Task 10)
@@ -1152,6 +1385,7 @@ gs.renderer.setAnimationLoop(() => {
             toolDamage(heldStack?.item ?? null),
             dir, // knockback along the look direction (damageMob normalizes XZ)
           );
+          viewmodel.startSwing(); // Phase 3 Task 8: every attack attempt swings
           if (atk.hitId !== null) {
             attacking = true;
             mobs = atk.mobs;
@@ -1159,16 +1393,27 @@ gs.renderer.setAnimationLoop(() => {
             mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
             const beforeKill = mobs.length;
             mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
-            if (mobs.length !== beforeKill) bus.emit('mobs-changed', { count: mobs.length });
+            if (mobs.length !== beforeKill) {
+              bus.emit('mobs-changed', { count: mobs.length });
+              // Task 12: the kill filter actually removed a mob → unlock event
+              applyAdvancement({ type: 'mob-killed', mode: currentMode });
+            }
           }
         }
       }
 
+      // Task 3: crack overlay target — the block being dug this frame, when it
+      // CAN break (bedrock/water never accumulate progress, so never crack).
+      // Phase 3 Task 10: pre-update progress — the dig scrape below fires only
+      // on frames where this frame's digStep actually advanced it.
+      const digProgressBefore = dig.progress;
+      let digTarget: RayHit | null = null;
       if (hit && input.state.dig && !attacking) {
         const id = world.getBlock(hit.x, hit.y, hit.z);
         // digStep owns the mode branch (creative ignores `speed` → instant break;
         // survival is timed × toolSpeed) — no mode check needed here (review #4)
         const speed = toolSpeed(id, hotbar[selected]);
+        if (Number.isFinite(getBreakTime(id))) digTarget = hit;
         if (digStep(currentMode, dig, id, hit, dt, speed)) {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
           // Task 7: the broken block becomes a world drop (survival only; creative
@@ -1178,10 +1423,73 @@ gs.renderer.setAnimationLoop(() => {
           });
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
+          // Task 4: break burst — 12 debris particles in BOTH modes (creative
+          // keeps the visual payoff; only the drop is survival-gated).
+          particles = spawnBreakBurst(particles, id, {
+            x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
+          });
+          viewmodel.startSwing(); // Phase 3 Task 8: the break lands with a swing
+          // Phase 3 Task 10: break crack — material from the broken id, at the
+          // block centre (now air); distance to the eye attenuates the gain.
+          audio.play('break', materialGroup(id), {
+            pos: { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 },
+            listener: player.position,
+          });
           dig.reset(); // post-break bookkeeping — clears survival progress after isDone
+          digTarget = null; // block is gone: no crack quad hanging on air this frame
         }
       } else {
         dig.reset();
+      }
+      // Task 4: dig chips — one 2-particle batch per accumulated 0.1 s of
+      // progress, spawned half a block OUTSIDE the hit face: block centre
+      // (block coords + 0.5) plus normal·1 — the face plane sits at
+      // centre + normal·0.5, so +0.5 more clears the still-solid block.
+      // digTarget is null on the frame a block breaks (and every non-digging
+      // frame), so the timer resets there and chips never spawn from an
+      // already-broken block.
+      if (digTarget) {
+        digChipAcc += dt;
+        if (digChipAcc >= DIG_CHIP_INTERVAL_SEC) {
+          digChipAcc = 0;
+          const chipId = world.getBlock(digTarget.x, digTarget.y, digTarget.z);
+          particles = spawnDigChip(particles, chipId, {
+            x: digTarget.x + 0.5 + digTarget.nx,
+            y: digTarget.y + 0.5 + digTarget.ny,
+            z: digTarget.z + 0.5 + digTarget.nz,
+          });
+        }
+      } else {
+        digChipAcc = 0;
+      }
+      // Phase 3 Task 10: dig scrape — one sound per DIG_SOUND_INTERVAL_SEC of
+      // REAL progress (digProgressBefore compare above; the breaking frame
+      // resets progress, so it stays silent and the break crack alone lands).
+      if (digTarget && dig.progress > digProgressBefore) {
+        digSoundAcc += dt;
+        if (digSoundAcc >= DIG_SOUND_INTERVAL_SEC) {
+          digSoundAcc = 0;
+          const digId = world.getBlock(digTarget.x, digTarget.y, digTarget.z);
+          audio.play('dig', materialGroup(digId), {
+            pos: { x: digTarget.x + 0.5, y: digTarget.y + 0.5, z: digTarget.z + 0.5 },
+            listener: player.position,
+          });
+        }
+      }
+      // stage follows dig.progress (stage 9 just below a break); hidden when the
+      // target is null — no cracks for miss/attack/unbreakable/off-hand frames
+      crackOverlay.set(digTarget, dig.progress);
+
+      // Phase 3 Task 8: while mining, re-trigger the swing once per 0.25 s; the
+      // accumulator rests "due" so the first mining frame swings at once.
+      if (digTarget) {
+        digSwingAcc += dt;
+        if (digSwingAcc >= MINE_SWING_INTERVAL_SEC) {
+          digSwingAcc = 0;
+          viewmodel.startSwing();
+        }
+      } else {
+        digSwingAcc = MINE_SWING_INTERVAL_SEC; // due again on the next dig frame
       }
 
       // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
@@ -1199,6 +1507,7 @@ gs.renderer.setAnimationLoop(() => {
           setState('crafting');
           document.exitPointerLock?.(); // same order as the inventory open below
         } else {
+          viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
           const t = placeTarget(hit);
           const held = hotbar[selected];
           const placeId = held ? blockFromItem(held.item) : null;
@@ -1209,6 +1518,11 @@ gs.renderer.setAnimationLoop(() => {
             if (inventory.spendFromSlot(selected, 1)) {
               world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
               hud.setHotbar(hotbar, selected);
+              // Phase 3 Task 10: material-accurate place thud at the target
+              // centre (listener defaults to pos → full volume).
+              audio.play('place', materialGroup(placeId), {
+                pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
+              });
             }
           }
         }
@@ -1244,6 +1558,7 @@ gs.renderer.setAnimationLoop(() => {
             z: p.z,
             chunks: world.chunks.size,
             seed: settings.seed,
+            biome: biomeNow,
             mode: currentMode,
             flying: player.flying,
             triangles: gs.renderer.info.render.triangles,
@@ -1280,8 +1595,38 @@ gs.renderer.setAnimationLoop(() => {
     world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER,
   );
 
+  // Phase 3 Task 5: keep the sun shadow focus on the camera — setSunFocus
+  // stores x/z and the next setDayNight snaps it to the 2-block grid
+  // (shadowFollow), so the shadow box follows without subpixel swim.
+  gs.setSunFocus(cam.x, cam.z);
+
+  // Phase 3 Task 7: re-anchor the cloud tile to the camera (whole-period snap
+  // combined with the time drift; the matching tile period hides the snaps).
+  clouds.update(cam.x, cam.z, now / 1000);
+
+  // Phase 3 Task 8: held-item viewmodel — a cheap cached compare tracks the
+  // selected slot (this tail runs after spendFromSlot/slot switches, so the
+  // model swaps the same frame), then the swing/bob pose is applied. Swing and
+  // bob advance only while playing; third person and every non-playing state
+  // hide the group.
+  const heldItem = hotbar[selected]?.item ?? null;
+  if (heldItem !== heldViewmodelItem) {
+    heldViewmodelItem = heldItem;
+    viewmodel.setItem(heldItem);
+  }
+  viewmodel.update(
+    state === 'playing' ? dt : 0,
+    state === 'playing' && !thirdPerson,
+    Math.hypot(player.velocity.x, player.velocity.z),
+  );
+
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
+  particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
+  // Task 3: cracks belong to the dig loop only — the playing branch above
+  // drives set(digTarget, dig.progress); every other state (title/paused/
+  // inventory/crafting/dead) clears any quad left hanging on the frozen view.
+  if (state !== 'playing') crackOverlay.set(null, 0);
   gs.renderer.render(gs.scene, gs.camera);
 });

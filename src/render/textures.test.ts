@@ -6,6 +6,8 @@ import {
   TILES_PER_ROW,
   buildTextureArray,
   drawAtlas,
+  drawCrackStage,
+  getTextureArray,
   tileIndexAt,
   type AtlasImage,
 } from './textures';
@@ -274,5 +276,65 @@ describe('buildTextureArray', () => {
         expect(layerPixel(tex, layer, x, y), `layer ${layer} px ${x},${y}`).toEqual(MAGENTA);
       }
     }
+  });
+});
+
+// ---- Task 3: mining crack overlay stage textures ----
+
+describe('drawCrackStage', () => {
+  /** Non-transparent pixel count of a stage texture ("ink"). */
+  function ink(stage: number): number {
+    const data = drawCrackStage(stage);
+    let n = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) n++;
+    return n;
+  }
+
+  it('is a 16×16 RGBA buffer: transparent background, black lines alpha=120', () => {
+    for (let stage = 0; stage <= 9; stage++) {
+      const data = drawCrackStage(stage);
+      expect(data.length, `stage ${stage}`).toBe(TILE_PX * TILE_PX * 4); // 1024
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] === 0) continue; // transparent background pixel
+        expect(data[i + 3], `stage ${stage} alpha @${i}`).toBe(120);
+        expect([data[i], data[i + 1], data[i + 2]], `stage ${stage} rgb @${i}`).toEqual([0, 0, 0]);
+      }
+    }
+  });
+
+  it('higher stages are strictly denser: ink(9) > ink(4) > ink(0) > 0', () => {
+    const counts = Array.from({ length: 10 }, (_, s) => ink(s));
+    expect(counts[9]).toBeGreaterThan(counts[4]);
+    expect(counts[4]).toBeGreaterThan(counts[0]);
+    expect(counts[0]).toBeGreaterThan(0);
+    // the full stage ladder: every step grows
+    for (let s = 1; s < counts.length; s++) {
+      expect(counts[s], `stage ${s} vs ${s - 1}`).toBeGreaterThan(counts[s - 1]);
+    }
+  });
+
+  it('is deterministic — the same stage twice yields identical buffers', () => {
+    for (const stage of [0, 4, 9]) {
+      expect(Array.from(drawCrackStage(stage)), `stage ${stage}`).toEqual(
+        Array.from(drawCrackStage(stage)),
+      );
+    }
+  });
+
+  it('clamps the stage: NaN and -1 paint stage 0', () => {
+    expect(Array.from(drawCrackStage(NaN))).toEqual(Array.from(drawCrackStage(0)));
+    expect(Array.from(drawCrackStage(-1))).toEqual(Array.from(drawCrackStage(0)));
+  });
+});
+
+// ---- Task 4: shared memoized texture array (chunks + particles) ----
+
+describe('getTextureArray', () => {
+  it('memoizes ONE shared instance; buildTextureArray keeps returning fresh objects', () => {
+    const first = getTextureArray();
+    expect(first).toBeInstanceOf(THREE.DataArrayTexture);
+    expect(getTextureArray()).toBe(first); // same ref every call
+    expect(buildTextureArray()).not.toBe(buildTextureArray()); // build stays fresh
+    expect(getTextureArray()).toBe(first); // fresh builds never replace the memo
   });
 });

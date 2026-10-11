@@ -167,6 +167,7 @@ describe('formatDebugLines', () => {
     z: -3.25,
     chunks: 12,
     seed: 1337,
+    biome: 'plains' as const,
     mode: 'survival' as const,
     flying: false,
     triangles: 42,
@@ -175,6 +176,12 @@ describe('formatDebugLines', () => {
   it('reports the triangle count on its own line (F3 baseline check)', () => {
     const lines = formatDebugLines(base);
     expect(lines.some((l) => /^Triangles: 42$/.test(l))).toBe(true);
+  });
+
+  it('renders the Biome line between Seed and Triangles (Phase 3 Task 6)', () => {
+    const lines = formatDebugLines(base);
+    expect(lines.indexOf('Biome: plains')).toBe(lines.indexOf('Seed: 1337') + 1);
+    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Biome: plains') + 1);
   });
 
   it('keeps the fps and XYZ line formats byte-for-byte', () => {
@@ -197,6 +204,7 @@ describe('formatDebugLines', () => {
       'Block: 1 64 -4',
       'Chunks: 12',
       'Seed: 1337',
+      'Biome: plains',
       'Triangles: 42',
       'Mode: survival',
     ]);
@@ -241,7 +249,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -252,7 +260,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
     menus.hideAll();
@@ -263,7 +271,7 @@ describe('pause menu', () => {
     const menus = createMenus(root);
     const onSaveQuit = vi.fn();
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onSaveQuit });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit });
     expect(root.textContent).toContain('儲存並離開');
     btnByText(root, '儲存並離開').click();
     expect(onSaveQuit).toHaveBeenCalledTimes(1);
@@ -283,7 +291,7 @@ describe('pause menu', () => {
         mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
       });
     });
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
@@ -299,13 +307,63 @@ describe('pause menu', () => {
     const onResume = vi.fn();
     const onQuit = vi.fn();
     const onToggleMode = vi.fn();
-    menus.showPause({ onResume, onQuit, onToggleMode, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
     btnByText(root, '繼續遊戲').click();
     btnByText(root, '回到標題').click();
     btnByText(root, 'Mode: Survival').click();
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(onQuit).toHaveBeenCalledTimes(1);
     expect(onToggleMode).toHaveBeenCalledTimes(1);
+    menus.hideAll();
+  });
+
+  it('shadow toggle shows current state and calls onToggleShadows (Phase 3 Task 5)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // realistic wiring: main.ts persists via saveSettings inside the callback
+    const onToggleShadows = vi.fn(() => {
+      saveSettings({ shadows: !loadSettings().shadows });
+    });
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => {},
+      onToggleMode: () => {},
+      onToggleShadows,
+      onToggleClouds: () => {},
+      onSaveQuit: () => {},
+    });
+    expect(root.textContent).toContain('陰影：開'); // default is on
+    btnByText(root, '陰影：開').click();
+    expect(onToggleShadows).toHaveBeenCalledTimes(1);
+    // pause re-renders from settings → label flips without reopening the menu
+    btnByText(root, '陰影：關').click();
+    expect(onToggleShadows).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain('陰影：開');
+    menus.hideAll();
+  });
+
+  it('cloud toggle shows current state and calls onToggleClouds (Phase 3 Task 7)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    // realistic wiring: main.ts persists via saveSettings inside the callback
+    const onToggleClouds = vi.fn(() => {
+      saveSettings({ clouds: !loadSettings().clouds });
+    });
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => {},
+      onToggleMode: () => {},
+      onToggleShadows: () => {},
+      onToggleClouds,
+      onSaveQuit: () => {},
+    });
+    expect(root.textContent).toContain('雲：開'); // default is on
+    btnByText(root, '雲：開').click();
+    expect(onToggleClouds).toHaveBeenCalledTimes(1);
+    // pause re-renders from settings → label flips without reopening the menu
+    btnByText(root, '雲：關').click();
+    expect(onToggleClouds).toHaveBeenCalledTimes(2);
+    expect(root.textContent).toContain('雲：開');
     menus.hideAll();
   });
 
@@ -316,6 +374,8 @@ describe('pause menu', () => {
       onResume: () => {},
       onQuit: () => {},
       onToggleMode: () => {},
+      onToggleShadows: () => {},
+      onToggleClouds: () => {},
       onSaveQuit: () => {},
     });
     btnByText(root, '設定').click();

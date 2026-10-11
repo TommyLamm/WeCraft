@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { generateChunk, surfaceHeight, SEA_LEVEL } from './terrain';
+import { generateChunk, surfaceHeight, pickBiome, biomeAt, SEA_LEVEL } from './terrain';
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
+import { Noise } from '../core/noise';
 
 // Known desert chunk for seed 1337 (scanned cx,cz in [-8,8): (3,-2) has 256 sand columns).
 const SAND_SEED = 1337;
@@ -206,5 +207,65 @@ describe('generateChunk', () => {
     }
     expect(coalLow).toBeGreaterThan(0);
     expect(iron).toBeGreaterThan(0);
+  });
+});
+
+describe('pickBiome', () => {
+  it('classifies the four biomes', () => {
+    expect(pickBiome(0.4, -0.2)).toBe('desert');
+    expect(pickBiome(-0.4, 0)).toBe('snow');
+    expect(pickBiome(0, 0.2)).toBe('forest');
+    expect(pickBiome(0, 0)).toBe('plains');
+  });
+
+  it('uses strict thresholds — boundary values fall through', () => {
+    expect(pickBiome(0.35, -0.2)).toBe('plains'); // desert needs temp > 0.35
+    expect(pickBiome(0.4, -0.1)).toBe('plains'); // desert needs moist < −0.1
+    expect(pickBiome(-0.35, 0.5)).toBe('forest'); // snow needs temp < −0.35
+    expect(pickBiome(0, 0.15)).toBe('plains'); // forest needs moist > 0.15
+  });
+
+  it('checks snow before forest (priority)', () => {
+    expect(pickBiome(-0.4, 0.5)).toBe('snow');
+  });
+});
+
+describe('biomeAt', () => {
+  it("matches generateChunk's noise construction exactly (deterministic)", () => {
+    const seed = 1337;
+    const n = new Noise(seed ^ 0x9e3779b9);
+    const points: Array<[number, number]> = [
+      [0, 0],
+      [8, 8],
+      [123, -45],
+      [-17.5, 3.25],
+      [1e4, -1e4],
+    ];
+    for (const [x, z] of points) {
+      const expected = pickBiome(
+        n.fbm2(x * 0.004, z * 0.004, 2),
+        n.fbm2(x * 0.004 + 50, z * 0.004 + 50, 2),
+      );
+      expect(biomeAt(x, z, seed)).toBe(expected);
+      expect(biomeAt(x, z, seed)).toBe(expected); // memoized Noise stays stable
+    }
+  });
+
+  it('agrees with the generated surface material at sampled columns', () => {
+    const seed = 1337;
+    const c = generateChunk(0, 0, seed);
+    let checked = 0;
+    for (let lz = 0; lz < CHUNK_SIZE; lz += 5) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx += 5) {
+        const y = topTerrainY(c, lx, lz);
+        const id = c[chunkIndex(lx, y, lz)];
+        const biome = biomeAt(lx, lz, seed);
+        if (biome === 'desert') expect(id).toBe(BLOCK.SAND);
+        else if (biome === 'snow') expect(id).toBe(BLOCK.SNOW);
+        else expect(id).toBe(BLOCK.GRASS);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });

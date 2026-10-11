@@ -20,6 +20,14 @@ export interface GameScene {
    *  stored on the day fog even while submerged, so a change made underwater
    *  isn't lost (scene.fog is the FogExp2 there and has no `far`). */
   setDayFogFar(far: number): void;
+  /** Phase 3 Task 5: store the sun-shadow focus (world x/z). `setDayNight`
+   *  repositions `sunLight` + its target from this focus every frame via
+   *  `shadowFollow` (snapped to the 2-block grid there). */
+  setSunFocus(x: number, z: number): void;
+  /** Phase 3 Task 5: toggle `renderer.shadowMap.enabled` and force every
+   *  material to recompile once (three caches the shadow shader variant per
+   *  material, so without `needsUpdate` a toggle wouldn't take effect). */
+  setShadowsEnabled(on: boolean): void;
   dispose(): void;
 }
 
@@ -40,6 +48,29 @@ export interface GameScene {
  *  `setDayNight`. */
 export function sunLightPosition(sunDir: Vec3, dist = 100): Vec3 {
   return { x: sunDir.x * dist, y: Math.abs(sunDir.y) * dist, z: sunDir.z * dist };
+}
+
+/** Phase 3 Task 5: sun-light position + shadow target FOLLOWING a focus point
+ *  (the camera). The focus snaps to a 2-block grid, so the shadow box only
+ *  ever moves in 2-block steps — no subpixel shadow swim while walking. The
+ *  light keeps `sunLightPosition`'s azimuth + above-horizon y-mirror, just
+ *  offset relative to the snapped focus instead of the world origin (a
+ *  directional light colors the world uniformly; only the shadow box cares
+ *  about its position). Leaves/alphaTest blocks still cast full-cell
+ *  rectangles (accepted approximation). */
+export function shadowFollow(
+  focusX: number,
+  focusZ: number,
+  sunDir: Vec3,
+  dist = 100,
+): { light: Vec3; target: Vec3 } {
+  const fx = Math.round(focusX / 2) * 2;
+  const fz = Math.round(focusZ / 2) * 2;
+  const p = sunLightPosition(sunDir, dist); // y = |sunDir.y| — shared night mirror
+  return {
+    light: { x: fx + p.x, y: p.y, z: fz + p.z },
+    target: { x: fx, y: 0, z: fz },
+  };
 }
 
 // ---- Task 16: underwater fog, composed with Task 6's day/night fog ----
@@ -115,6 +146,9 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Phase 3 Task 5: PCF soft-edged sun shadows. `shadowMap.enabled` is applied
+  // by setShadowsEnabled from settings (main.ts boot + pause toggle).
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(DEFAULT_SKY_FOG);
@@ -128,10 +162,31 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
   // position = sunLightPosition(sunDir) — the vertical component is mirrored
   // at night so the light never dips below the horizon, with azimuth (and
   // therefore dusk/dawn continuity) preserved (deferred Task 6 fix).
+  //
+  // Phase 3 Task 5: the sun now CASTS shadows. The shadow camera is an ortho
+  // box ±56 (112×112 blocks) that travels with the (2-block-snapped) focus —
+  // see shadowFollow + setSunFocus; 2048² map keeps it crisp. The light's
+  // target must live in the scene graph for its world matrix to update.
   const sunLight = new THREE.DirectionalLight(0xffffff, 0.9);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  const shadowCam = sunLight.shadow.camera;
+  shadowCam.left = -56;
+  shadowCam.right = 56;
+  shadowCam.top = 56;
+  shadowCam.bottom = -56;
+  shadowCam.near = 1;
+  shadowCam.far = 300; // deep enough for the light's dist=100 offset + terrain
+  shadowCam.updateProjectionMatrix();
   scene.add(sunLight);
+  scene.add(sunLight.target);
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
   scene.add(ambientLight);
+
+  // Phase 3 Task 5: shadow focus (world x/z). setSunFocus stores it; every
+  // setDayNight call repositions the light + target via shadowFollow.
+  let focusX = 0;
+  let focusZ = 0;
 
   const camera = new THREE.PerspectiveCamera(
     70,
@@ -155,12 +210,34 @@ export function createGameScene(canvas: HTMLCanvasElement): GameScene {
       renderer.setSize(w, h);
     },
     setDayNight(sunDir, colors) {
-      const p = sunLightPosition(sunDir); // y = |sunDir.y| — never below horizon
-      sunLight.position.set(p.x, p.y, p.z);
+      // Phase 3 Task 5: light + shadow target follow the stored focus (snapped
+      // to the 2-block grid); y stays |sunDir.y| — never below the horizon
+      const f = shadowFollow(focusX, focusZ, sunDir);
+      sunLight.position.set(f.light.x, f.light.y, f.light.z);
+      sunLight.target.position.set(f.target.x, f.target.y, f.target.z);
       sunLight.intensity = colors.sunIntensity;
       ambientLight.intensity = colors.ambient;
       if (scene.background instanceof THREE.Color) scene.background.setHex(colors.sky);
       fogCtl.setDayFogColor(colors.fog); // stored even while underwater
+    },
+    setSunFocus(x, z) {
+      focusX = x;
+      focusZ = z;
+    },
+    setShadowsEnabled(on) {
+      renderer.shadowMap.enabled = on;
+      // three compiles shadows into each material's program: after flipping
+      // `shadowMap.enabled`, every material needs `needsUpdate = true` once so
+      // the next render rebuilds its program with/without the shadow code.
+      scene.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return; // only meshes carry lit materials
+        const material = obj.material;
+        if (Array.isArray(material)) {
+          for (const m of material) m.needsUpdate = true;
+        } else {
+          material.needsUpdate = true;
+        }
+      });
     },
     setUnderwater(inside) {
       fogCtl.setUnderwater(inside);
@@ -353,6 +430,12 @@ export function createMobRenderer(scene: THREE.Scene): MobRenderer {
     const armL = limb(limbGeo, armMat, 0.375, 1.5, 'armL'); // shoulder pivot, spans 0.75–1.5
     const armR = limb(limbGeo, armMat, -0.375, 1.5, 'armR');
     group.add(legL, legR, armL, armR);
+
+    // Phase 3 Task 5: every mob box casts a sun shadow (set at build time; a
+    // later dispose/rebuild covers the flag automatically).
+    group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.castShadow = true;
+    });
 
     return { kind, group, legL, legR, armL, armR, materials, phase: 0, swing: 0, flash: 0 };
   }

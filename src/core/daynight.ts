@@ -21,9 +21,12 @@ export interface Vec3 {
 }
 
 /** Per-frame render inputs derived from `t`: colors as 0xRRGGBB hex numbers
- *  (scene.ts converts to `THREE.Color`), light intensities as plain numbers. */
+ *  (scene.ts converts to `THREE.Color`), light intensities as plain numbers.
+ *  `sky` is the horizon color, `zenith` the top of the sky dome (Phase 3
+ *  Task 6 — no golden window on it, so dawn/dusk only warm the horizon). */
 export interface DayNightColors {
   sky: number;
+  zenith: number;
   fog: number;
   ambient: number;
   sunIntensity: number;
@@ -40,6 +43,11 @@ export const MAX_DAY_LENGTH_SEC = 3600;
 
 const DAY_SKY = 0x87ceeb;
 const NIGHT_SKY = 0x0a0e1a;
+/** Sky-dome zenith colors (Phase 3 Task 6): deep blue by day, near-black by
+ *  night. The zenith lerps with `dayF` ONLY — the golden dawn/dusk window is
+ *  a horizon effect (`sky`) and deliberately never touches the dome top. */
+const DAY_ZENITH = 0x3d6fc9;
+const NIGHT_ZENITH = 0x05070f;
 /** Dawn/dusk horizon glow blended over the base sky. */
 const GOLDEN_SKY = 0xff9a5c;
 /** Circular window half-width around t=0 (dawn) and t=0.5 (dusk) where the
@@ -114,6 +122,8 @@ function windowWeight(t: number, center: number): number {
  *    elevation); drives base sky lerp plus ambient/sun intensities.
  *  - Golden `#ff9a5c` window blends over the base sky around dawn (t≈0) and
  *    dusk (t≈0.5), so the day→night sky fall always reads as a sunset.
+ *  - `zenith` lerps night→day on the same `dayF` with NO golden window — the
+ *    sunset stays on the horizon (`sky`), the dome top goes straight to dusk.
  *  `fog` always equals `sky` (Phase 1 scene keeps both in lockstep). */
 export function skyColors(t: number): DayNightColors {
   const elev = Math.cos((t - 0.25) * Math.PI * 2); // sun elevation (= sunDirection(t).y)
@@ -121,8 +131,10 @@ export function skyColors(t: number): DayNightColors {
   const base = lerpColor(NIGHT_SKY, DAY_SKY, dayF);
   const orangeW = Math.max(windowWeight(t, 0), windowWeight(t, 0.5));
   const sky = lerpColor(base, GOLDEN_SKY, orangeW * ORANGE_PEAK);
+  const zenith = lerpColor(NIGHT_ZENITH, DAY_ZENITH, dayF);
   return {
     sky,
+    zenith,
     fog: sky,
     ambient: lerp(NIGHT_AMBIENT, DAY_AMBIENT, dayF),
     sunIntensity: lerp(NIGHT_SUN, DAY_SUN, dayF),

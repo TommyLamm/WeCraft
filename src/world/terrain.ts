@@ -4,9 +4,12 @@ import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 
 export const SEA_LEVEL = 62;
 
-type Biome = 'plains' | 'desert' | 'forest' | 'snow';
+export type Biome = 'plains' | 'desert' | 'forest' | 'snow';
 
-function pickBiome(temp: number, moist: number): Biome {
+/** Biome from the temperature / moisture noise pair (strict thresholds; order
+ *  matters — desert needs BOTH hot and dry, snow outranks forest). Exported
+ *  for tests; `biomeAt` applies the same classification at a world column. */
+export function pickBiome(temp: number, moist: number): Biome {
   if (temp > 0.35 && moist < -0.1) return 'desert';
   if (temp < -0.35) return 'snow';
   if (moist > 0.15) return 'forest';
@@ -24,6 +27,20 @@ function heightNoise(seed: number): Noise {
   return n;
 }
 
+const biomeNoiseCache = new Map<number, Noise>();
+
+/** Biome noise for `seed` — `new Noise(seed ^ 0x9e3779b9)`, memoized by the
+ *  ORIGINAL seed like `heightNoise` (the constructor shuffles 256 entries, so
+ *  the 0.5 s F3/ fog sampling must not rebuild it). */
+function biomeNoise(seed: number): Noise {
+  let n = biomeNoiseCache.get(seed);
+  if (!n) {
+    n = new Noise(seed ^ 0x9e3779b9);
+    biomeNoiseCache.set(seed, n);
+  }
+  return n;
+}
+
 export function surfaceHeight(x: number, z: number, seed: number): number {
   const heightN = heightNoise(seed);
   const cont = heightN.fbm2(x * 0.0035, z * 0.0035, 4);
@@ -33,9 +50,20 @@ export function surfaceHeight(x: number, z: number, seed: number): number {
   return Math.max(4, Math.min(CHUNK_HEIGHT - 10, Math.floor(h)));
 }
 
+/** Biome at a world column — the exact same noise + sampling as
+ *  `generateChunk` (same construction, same 0.004 scale / +50 moisture
+ *  offset), so the F3 line and fog tint always agree with the generated
+ *  terrain. Memoized noise: cheap to call from the 0.5 s main-loop sample. */
+export function biomeAt(x: number, z: number, seed: number): Biome {
+  const n = biomeNoise(seed);
+  const temp = n.fbm2(x * 0.004, z * 0.004, 2);
+  const moist = n.fbm2(x * 0.004 + 50, z * 0.004 + 50, 2);
+  return pickBiome(temp, moist);
+}
+
 export function generateChunk(cx: number, cz: number, seed: number): Uint8Array {
   const data = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
-  const biomeN = new Noise(seed ^ 0x9e3779b9);
+  const biomeN = biomeNoise(seed);
   const caveN = new Noise(seed ^ 0x51ed270b);
 
   const baseX = cx * CHUNK_SIZE;

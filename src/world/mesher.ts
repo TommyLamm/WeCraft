@@ -11,7 +11,7 @@ export interface MeshData {
   // quad; RepeatWrapping re-samples the tile once per block so merged faces
   // look exactly like the old one-quad-per-block faces
   texIndex: Float32Array; // 1 per vert (texture-array layer = atlas tile)
-  shades: Float32Array; // 1 per vert (face brightness 0..1 → vertex color)
+  shades: Float32Array; // 1 per vert (face brightness × AO, 0..1 → vertex color)
   indices: Uint32Array;
   quadCount: number;
 }
@@ -55,18 +55,29 @@ const FACES: GreedyFace[] = [
 /** Chunk extent per axis: [x, y, z]. */
 const AXIS_SIZE: readonly [number, number, number] = [CHUNK_SIZE, CHUNK_HEIGHT, CHUNK_SIZE];
 
-/** Signature flag: this face belongs to the water mesh (Task 16 pass). */
-const WATER_BIT = 1 << 24;
+/** Per-vertex occlusion levels 0..3 (unshadowed) → shade multiplier. */
+const AO_FACTORS = [0.5, 0.7, 0.85, 1.0];
 
-/** Merge signature of one visible face: block id | tile<<8 | shade<<16 |
- *  water-bit. Faces merge only on an exact match — different block ids never
- *  merge even when they share a texture. The shade bits are RESERVED for
- *  per-cell light (AO/skylight): today the shade is constant per face
- *  direction (it comes from the FACES table), so it can never split a merge —
- *  but a future per-cell light term entering this key will keep differently
- *  lit faces from welding across a light seam. */
-function faceSignature(id: number, tile: number, shadeKey: number, isWater: boolean): number {
-  return id | (tile << 8) | (shadeKey << 16) | (isWater ? WATER_BIT : 0);
+/** Bit 23 of the signature: start of the packed per-corner AO (2 bits per
+ *  corner, emitQuad order). `shadeKey` ≤ 100 occupies 7 bits below it. */
+const AO_SHIFT = 23;
+
+/** Signature flag: this face belongs to the water mesh (Task 16 pass).
+ *  Bit 31 so the AO bits below it stay intact in the Int32 mask. */
+const WATER_BIT = 1 << 31;
+
+/** Merge signature of one visible face: id | tile<<8 | shadeKey<<16 |
+ *  aoKey<<23 | water-bit<<31. Faces merge only on an exact match — different
+ *  block ids never merge even when they share a texture, and a per-corner AO
+ *  difference keeps differently shadowed faces from welding across the seam. */
+function faceSignature(
+  id: number,
+  tile: number,
+  shadeKey: number,
+  aoKey: number,
+  isWater: boolean,
+): number {
+  return id | (tile << 8) | (shadeKey << 16) | (aoKey << AO_SHIFT) | (isWater ? WATER_BIT : 0);
 }
 
 function faceVisible(id: number, neighbor: number): boolean {
@@ -76,46 +87,107 @@ function faceVisible(id: number, neighbor: number): boolean {
   return true; // 鄰居透明 → 畫（含固體貼玻璃）
 }
 
-/** The four neighbouring chunks' data (undefined = not loaded → acts as AIR). */
+/** The eight neighbouring chunks' data (undefined = not loaded → acts as
+ *  AIR). Diagonals exist for the per-vertex AO samples that reach a corner
+ *  across both chunk axes at once. */
 interface NeighborChunks {
   xp: Uint8Array | undefined;
   xm: Uint8Array | undefined;
   zp: Uint8Array | undefined;
   zm: Uint8Array | undefined;
+  xpzp: Uint8Array | undefined;
+  xpzm: Uint8Array | undefined;
+  xmzp: Uint8Array | undefined;
+  xmzm: Uint8Array | undefined;
 }
 
-/** Block id at `cell + dir`; x/z may spill into the four neighbour chunks,
- *  out-of-height is AIR (same rule the old per-block mesher used). */
-function neighborId(
+/** Block id at `cell + d`; x/z may spill into a neighbour chunk — a single
+ *  axis or a diagonal step; out-of-height is AIR (same rule the old
+ *  per-block mesher used). */
+function sampleAt(
   data: Uint8Array,
   cell: readonly [number, number, number],
-  dir: readonly [number, number, number],
+  d: readonly [number, number, number],
   neighbors: NeighborChunks,
 ): number {
-  const nx = cell[0] + dir[0];
-  const ny = cell[1] + dir[1];
-  const nz = cell[2] + dir[2];
+  const nx = cell[0] + d[0];
+  const ny = cell[1] + d[1];
+  const nz = cell[2] + d[2];
   if (ny < 0 || ny >= CHUNK_HEIGHT) return BLOCK.AIR;
-  if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE) {
-    return data[chunkIndex(nx, ny, nz)];
-  }
+  const sx = nx < 0 ? -1 : nx >= CHUNK_SIZE ? 1 : 0;
+  const sz = nz < 0 ? -1 : nz >= CHUNK_SIZE ? 1 : 0;
+  if (sx === 0 && sz === 0) return data[chunkIndex(nx, ny, nz)];
   let nd: Uint8Array | undefined;
-  let nlx = nx;
-  let nlz = nz;
-  if (nx < 0) {
-    nd = neighbors.xm;
-    nlx = nx + CHUNK_SIZE;
-  } else if (nx >= CHUNK_SIZE) {
-    nd = neighbors.xp;
-    nlx = nx - CHUNK_SIZE;
-  } else if (nz < 0) {
-    nd = neighbors.zm;
-    nlz = nz + CHUNK_SIZE;
-  } else {
-    nd = neighbors.zp;
-    nlz = nz - CHUNK_SIZE;
+  if (sx === 0) nd = sz < 0 ? neighbors.zm : neighbors.zp;
+  else if (sz === 0) nd = sx < 0 ? neighbors.xm : neighbors.xp;
+  else if (sx < 0) nd = sz < 0 ? neighbors.xmzm : neighbors.xmzp;
+  else nd = sz < 0 ? neighbors.xpzm : neighbors.xpzp;
+  return nd ? nd[chunkIndex(nx - sx * CHUNK_SIZE, ny, nz - sz * CHUNK_SIZE)] : BLOCK.AIR;
+}
+
+/** The three occluder samples hugging one emitted corner: the edge step
+ *  along u, the edge step along v, and their diagonal — all on the face's
+ *  front plane (one block off the face). */
+type CornerSamples = [
+  readonly [number, number, number],
+  readonly [number, number, number],
+  readonly [number, number, number],
+];
+
+/** Sample offsets of `face`'s four corners in emit order (u0v0, u1v0, u0v1,
+ *  u1v1). `uFlip`/`vFlip` mirror the in-plane steps so each sample points
+ *  inward from the corner actually being emitted. */
+function faceCornerSamples(face: GreedyFace): CornerSamples[] {
+  const a = face.uFlip ? 1 : -1;
+  const b = face.vFlip ? 1 : -1;
+  const su = [a, -a, a, -a];
+  const sv = [b, b, -b, -b];
+  const out: CornerSamples[] = [];
+  for (let k = 0; k < 4; k++) {
+    // every sample starts one block into the face's front plane
+    const u: [number, number, number] = [0, 0, 0];
+    u[face.nAxis] = face.dir[face.nAxis];
+    u[face.uAxis] = su[k];
+    const v: [number, number, number] = [0, 0, 0];
+    v[face.nAxis] = face.dir[face.nAxis];
+    v[face.vAxis] = sv[k];
+    const d: [number, number, number] = [0, 0, 0];
+    d[face.nAxis] = face.dir[face.nAxis];
+    d[face.uAxis] = su[k];
+    d[face.vAxis] = sv[k];
+    out.push([u, v, d]);
   }
-  return nd ? nd[chunkIndex(nlx, ny, nlz)] : BLOCK.AIR;
+  return out;
+}
+
+/** AO level 0..3 of one corner: both edge neighbours blocked → 0 (a hard
+ *  corner), otherwise one step of darkening per blocked sample. Only opaque
+ *  blocks occlude — glass/water/leaves are transparent. */
+function cornerAo(
+  data: Uint8Array,
+  cell: readonly [number, number, number],
+  samples: CornerSamples,
+  neighbors: NeighborChunks,
+): number {
+  const occU = !isTransparent(sampleAt(data, cell, samples[0], neighbors));
+  const occV = !isTransparent(sampleAt(data, cell, samples[1], neighbors));
+  const occD = !isTransparent(sampleAt(data, cell, samples[2], neighbors));
+  if (occU && occV) return 0;
+  return 3 - (occU ? 1 : 0) - (occV ? 1 : 0) - (occD ? 1 : 0);
+}
+
+/** Packed AO of one face cell: 2 bits per emitted corner, corner order =
+ *  emitQuad. Identical packs merge; a corner-level difference splits the
+ *  merge along the shadow seam. */
+function faceAoKey(
+  data: Uint8Array,
+  cell: readonly [number, number, number],
+  samples: readonly CornerSamples[],
+  neighbors: NeighborChunks,
+): number {
+  let key = 0;
+  for (let k = 0; k < 4; k++) key |= cornerAo(data, cell, samples[k], neighbors) << (2 * k);
+  return key;
 }
 
 interface MeshBuilder {
@@ -155,7 +227,10 @@ function finish(b: MeshBuilder): MeshData {
 /** Append one merged quad covering cells [u-edge0..u-edge1] × [v-edge0..v-edge1]
  *  on the face plane. UVs are tile units (0/extent), so a 16-wide quad spans
  *  uv 0..16 and RepeatWrapping shows the tile 16 times — every block keeps the
- *  exact texture it had before greedy merging. */
+ *  exact texture it had before greedy merging. `aoKey` is the anchor cell's
+ *  packed per-corner AO — the levels for the rect's four corners in emit
+ *  order. Every cell of the rect carries the same pack (equal signature), so
+ *  those corner levels are exact for all of them, not an approximation. */
 function emitQuad(
   b: MeshBuilder,
   face: GreedyFace,
@@ -165,6 +240,7 @@ function emitQuad(
   v0: number,
   v1: number,
   tile: number,
+  aoKey: number,
   baseX: number,
   baseZ: number,
 ): void {
@@ -192,7 +268,7 @@ function emitQuad(
     b.normals.push(face.dir[0], face.dir[1], face.dir[2]);
     b.uvs.push(uvs[i][0], uvs[i][1]);
     b.texIndex.push(tile);
-    b.shades.push(face.shade);
+    b.shades.push(face.shade * AO_FACTORS[(aoKey >> (2 * i)) & 3]);
   }
   b.indices.push(vertBase, vertBase + 1, vertBase + 2, vertBase + 2, vertBase + 1, vertBase + 3);
   b.quadCount++;
@@ -233,9 +309,10 @@ function greedySweep(
 }
 
 /** Greedy-mesh one chunk. Per face direction (±x/±y/±z) and per slice along
- *  the normal axis, visible faces form a 2D mask keyed by merge signature;
- *  rectangles of identical signature collapse into one quad. Water cells are
- *  split into their own mesh (Task 16 renders them translucently). */
+ *  the normal axis, visible faces form a 2D mask keyed by merge signature
+ *  (block, tile, face brightness, packed per-corner AO); rectangles of
+ *  identical signature collapse into one quad. Water cells are split into
+ *  their own mesh (Task 16 renders them translucently). */
 export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) {
@@ -248,6 +325,10 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     xm: world.getChunk(cx - 1, cz)?.data,
     zp: world.getChunk(cx, cz + 1)?.data,
     zm: world.getChunk(cx, cz - 1)?.data,
+    xpzp: world.getChunk(cx + 1, cz + 1)?.data,
+    xpzm: world.getChunk(cx + 1, cz - 1)?.data,
+    xmzp: world.getChunk(cx - 1, cz + 1)?.data,
+    xmzm: world.getChunk(cx - 1, cz - 1)?.data,
   };
   const baseX = cx * CHUNK_SIZE;
   const baseZ = cz * CHUNK_SIZE;
@@ -258,9 +339,10 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     const nDim = AXIS_SIZE[face.nAxis];
     const uDim = AXIS_SIZE[face.uAxis];
     const vDim = AXIS_SIZE[face.vAxis];
-    // Reserved per-cell light slot in the signature — constant per direction
-    // today (FACES.shade; no AO/skylight exists yet), so it never splits merges
+    // Face brightness (constant per direction) keeps its signature slots;
+    // the per-cell AO pack sits just above it and can split merges.
     const shadeKey = Math.round(face.shade * 100);
+    const samples = faceCornerSamples(face);
     const mask = new Int32Array(uDim * vDim);
     const cell: [number, number, number] = [0, 0, 0];
 
@@ -274,9 +356,10 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           cell[face.vAxis] = av;
           const id = data[chunkIndex(cell[0], cell[1], cell[2])];
           if (id === BLOCK.AIR) continue;
-          if (!faceVisible(id, neighborId(data, cell, face.dir, neighbors))) continue;
+          if (!faceVisible(id, sampleAt(data, cell, face.dir, neighbors))) continue;
           const tile = getBlockDef(id)[face.tileKey];
-          mask[au + av * uDim] = faceSignature(id, tile, shadeKey, id === BLOCK.WATER);
+          const aoKey = faceAoKey(data, cell, samples, neighbors);
+          mask[au + av * uDim] = faceSignature(id, tile, shadeKey, aoKey, id === BLOCK.WATER);
           any = true;
         }
       }
@@ -291,11 +374,12 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           (sig) => sig !== 0 && ((sig & WATER_BIT) !== 0) === wantWater,
           (au, av, w, h, sig) => {
             const tile = (sig >> 8) & 0xff;
+            const aoKey = (sig >> AO_SHIFT) & 0xff;
             const u0 = face.uFlip ? au + w : au;
             const u1 = face.uFlip ? au : au + w;
             const v0 = face.vFlip ? av + h : av;
             const v1 = face.vFlip ? av : av + h;
-            emitQuad(b, face, slicePlane, u0, u1, v0, v1, tile, baseX, baseZ);
+            emitQuad(b, face, slicePlane, u0, u1, v0, v1, tile, aoKey, baseX, baseZ);
           },
         );
       };

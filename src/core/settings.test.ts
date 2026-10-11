@@ -117,4 +117,46 @@ describe('settings', () => {
       expect(loadSettings().dayLengthSec).toBe(DEFAULT_DAY_LENGTH_SEC);
     });
   });
+
+  describe('shadows (Phase 3 Task 5)', () => {
+    it('defaults to true', () => {
+      expect(DEFAULT_SETTINGS.shadows).toBe(true);
+      expect(loadSettings().shadows).toBe(true);
+    });
+
+    it('persists and reloads', () => {
+      saveSettings({ shadows: false });
+      expect(loadSettings().shadows).toBe(false);
+      saveSettings({ shadows: true });
+      expect(loadSettings().shadows).toBe(true);
+    });
+
+    it('falls back to the default for non-boolean stored values', () => {
+      for (const bad of ['off', 0, 1, null, {}]) {
+        localStorage.setItem('wecraft.settings', JSON.stringify({ shadows: bad }));
+        expect(loadSettings().shadows).toBe(true);
+      }
+    });
+  });
+
+  describe('clouds (Phase 3 Task 7)', () => {
+    it('defaults to true', () => {
+      expect(DEFAULT_SETTINGS.clouds).toBe(true);
+      expect(loadSettings().clouds).toBe(true);
+    });
+
+    it('persists and reloads', () => {
+      saveSettings({ clouds: false });
+      expect(loadSettings().clouds).toBe(false);
+      saveSettings({ clouds: true });
+      expect(loadSettings().clouds).toBe(true);
+    });
+
+    it('falls back to the default for non-boolean stored values', () => {
+      for (const bad of ['off', 0, 1, null, {}]) {
+        localStorage.setItem('wecraft.settings', JSON.stringify({ clouds: bad }));
+        expect(loadSettings().clouds).toBe(true);
+      }
+    });
+  });
 });
