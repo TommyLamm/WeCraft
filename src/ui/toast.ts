@@ -2,7 +2,7 @@ import './ui.css';
 import type { ItemId } from '../core/items';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
 
-/** Advancement toasts (Task 12): the top-right notification stack for unfolds
+/** Advancement toasts (Task 12): the top-right notification stack for unlocks
  *  handed in by `main.ts`'s central `applyAdvancement` path. Same factory shape
  *  as the other ui modules (hud/menus/death): main owns the instance and the
  *  data; this module owns only the DOM + auto-remove timers. */

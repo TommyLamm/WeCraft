@@ -43,6 +43,14 @@ const AMBIENCE_SEC: Record<Phase, [number, number]> = {
   night: [3, 7],
 };
 
+/** Minimum gap between two 'break' cracks (ms) — Task 14 T10 ruling: creative
+ *  instant-breaks fire one break per frame (probe
+ *  /tmp/opencode/wecraft-p3-shots/14-3-10-t10probe.json: 13/s at 10 fps
+ *  headless ≈ 60/s at 60 fps), stacking overlapping one-shots into harsh
+ *  noise; survival breaks are seconds apart so the gate never touches them.
+ *  Only 'break' is gated — dig/place/step keep every call. */
+export const BREAK_SOUND_MIN_INTERVAL_MS = 80;
+
 export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   const engine = createAudioEngine(deps);
 
@@ -51,6 +59,9 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   let wind: { stop(): void } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let phase: Phase = 'day';
+  /** Last played 'break' timestamp (deps.now / performance.now); reset on dispose. */
+  let lastBreakAt = Number.NEGATIVE_INFINITY;
+  const now = deps.now ?? (() => performance.now());
 
   function noiseBuffer(ctx: BaseAudioContext): AudioBuffer {
     if (!noise) noise = createNoiseBuffer(ctx);
@@ -83,6 +94,11 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     const ctx = engine.context;
     const dest = engine.master;
     if (!ctx || !dest) return;
+    if (kind === 'break') {
+      const t = now();
+      if (t - lastBreakAt < BREAK_SOUND_MIN_INTERVAL_MS) return;
+      lastBreakAt = t;
+    }
     const from = opts.listener ?? opts.pos;
     const distance =
       from && opts.pos
@@ -123,6 +139,7 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   function dispose(): void {
     stopAmbience();
     noise = null;
+    lastBreakAt = Number.NEGATIVE_INFINITY;
     engine.dispose();
   }
 

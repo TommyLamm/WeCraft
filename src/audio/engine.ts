@@ -7,6 +7,8 @@
 export interface AudioEngineDeps {
   /** Test seam / custom factory; falls back to window.AudioContext. */
   createContext?: () => AudioContext;
+  /** Test seam for the break-sound throttle clock; defaults to performance.now. */
+  now?: () => number;
 }
 
 export interface AudioEngine {

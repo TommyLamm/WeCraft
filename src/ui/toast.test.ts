@@ -64,8 +64,29 @@ describe('createToasts', () => {
     const t = createToasts(root()); // default max = 5
     for (let i = 0; i < 6; i++) push(t, `t${i}`);
     expect(titles()).toEqual(['t1', 't2', 't3', 't4', 't5']); // t0 evicted on the push
-    vi.advanceTimersByTime(4000); // the evicted toast's cancelled timer must not linger
+    // Task 14 T12: the evicted toast's timer is cancelled — exactly max pending
+    expect(vi.getTimerCount()).toBe(5);
+    vi.advanceTimersByTime(4000); // no stale timer fires against the DOM
     expect(toasts()).toHaveLength(0);
+  });
+
+  it('push after dispose is a no-op (no orphans, no timers)', () => {
+    const t = createToasts(root());
+    t.dispose();
+    push(t, 'late');
+    expect(toasts()).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(4000);
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it('double dispose is idempotent (no throw, still no timers)', () => {
+    const t = createToasts(root());
+    push(t, 'a');
+    t.dispose();
+    t.dispose();
+    expect(root().querySelector('.toasts')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('dispose removes the container and toasts and cancels every pending timer', () => {

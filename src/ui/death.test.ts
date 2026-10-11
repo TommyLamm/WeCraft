@@ -109,4 +109,19 @@ describe('death screen', () => {
     expect(root().querySelector('.death-screen')).toBeNull();
     expect(root().querySelector('.death-cause')).toBeNull();
   });
+
+  it('show with an empty-string cause renders no .death-cause node (Task 14 T13)', () => {
+    const death = createDeathScreen(root());
+    death.show({ onRespawn: () => {}, onQuit: () => {}, cause: '' });
+    expect(root().querySelector('.death-cause')).toBeNull();
+    death.hide();
+  });
+
+  it('the .death-cause line sits directly under the title, above the buttons (Task 14 T13)', () => {
+    const death = createDeathScreen(root());
+    death.show({ onRespawn: () => {}, onQuit: () => {}, cause: '你從高處摔落' });
+    const order = [...root().querySelector('.death-screen')!.children].map((el) => el.className);
+    expect(order).toEqual(['death-title', 'death-cause', 'ui-btn interactive', 'ui-btn interactive']);
+    death.hide();
+  });
 });

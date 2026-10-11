@@ -128,4 +128,34 @@ describe('createGameAudio', () => {
     audio.dispose(); // idempotent
     expect(fake.closeCalls).toBe(1);
   });
+
+  it("throttles rapid 'break' plays to one per 80 ms (Task 14 T10 ruling: creative instant-break machine-gun guard)", () => {
+    let t = 1000;
+    const fake = new FakeAudioContext();
+    const audio = createGameAudio({
+      createContext: () => fake as unknown as AudioContext,
+      now: () => t,
+    });
+    audio.ensureStarted();
+
+    audio.play('break', 'stone', { pos: { x: 0, y: 0, z: 0 } });
+    audio.play('break', 'stone', { pos: { x: 0, y: 0, z: 0 } });
+    audio.play('break', 'stone', { pos: { x: 0, y: 0, z: 0 } });
+    expect(fake.bufferSources).toHaveLength(1); // two swallowed inside the window
+
+    t += 79;
+    audio.play('break', 'stone', { pos: { x: 0, y: 0, z: 0 } });
+    expect(fake.bufferSources).toHaveLength(1); // still inside the window
+
+    t += 1;
+    audio.play('break', 'stone', { pos: { x: 0, y: 0, z: 0 } });
+    expect(fake.bufferSources).toHaveLength(2); // window elapsed → plays again
+
+    // other kinds are never throttled, even back-to-back
+    audio.play('dig', 'stone');
+    audio.play('dig', 'stone');
+    audio.play('place', 'stone');
+    expect(fake.bufferSources).toHaveLength(5);
+    audio.dispose();
+  });
 });
