@@ -5,6 +5,7 @@ import { createCrackOverlay } from './render/crack';
 import { createParticleRenderer } from './render/particles';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
+import { createViewmodel } from './render/viewmodel';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
@@ -86,6 +87,9 @@ const sky = createSky(gs.scene);
 // Phase 3 Task 7: blocky volumetric cloud layer — one instanced 512×512 tile,
 // re-anchored to the camera in whole periods every frame (render/clouds.ts)
 const clouds = createClouds(gs.scene, settings.seed);
+// Phase 3 Task 8: first-person held item — camera-attached block cube / icon
+// plane; the icon factory is injected (render/ never imports ui/)
+const viewmodel = createViewmodel(gs.scene, gs.camera, itemIcon);
 const terrain = new TerrainWorkerClient(settings.seed);
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
@@ -260,6 +264,15 @@ let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 let particles: Particle[] = [];
 let digChipAcc = 0;
 const DIG_CHIP_INTERVAL_SEC = 0.1;
+
+// ---- 手持模型（Phase 3 Task 8）----
+// The viewmodel follows the selected slot (cached compare) and swings on
+// attack/place/break; while mining it re-triggers once per swing, so waves
+// chain. `digSwingAcc` rests "due" (one full interval) so the first mining
+// frame swings at once; one swing length is 0.25 s (core/viewmodel).
+const MINE_SWING_INTERVAL_SEC = 0.25;
+let heldViewmodelItem: ItemId | null = null;
+let digSwingAcc = MINE_SWING_INTERVAL_SEC;
 
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
@@ -1228,6 +1241,7 @@ gs.renderer.setAnimationLoop(() => {
             toolDamage(heldStack?.item ?? null),
             dir, // knockback along the look direction (damageMob normalizes XZ)
           );
+          viewmodel.startSwing(); // Phase 3 Task 8: every attack attempt swings
           if (atk.hitId !== null) {
             attacking = true;
             mobs = atk.mobs;
@@ -1263,6 +1277,7 @@ gs.renderer.setAnimationLoop(() => {
           particles = spawnBreakBurst(particles, id, {
             x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
           });
+          viewmodel.startSwing(); // Phase 3 Task 8: the break lands with a swing
           dig.reset(); // post-break bookkeeping — clears survival progress after isDone
           digTarget = null; // block is gone: no crack quad hanging on air this frame
         }
@@ -1294,6 +1309,18 @@ gs.renderer.setAnimationLoop(() => {
       // target is null — no cracks for miss/attack/unbreakable/off-hand frames
       crackOverlay.set(digTarget, dig.progress);
 
+      // Phase 3 Task 8: while mining, re-trigger the swing once per 0.25 s; the
+      // accumulator rests "due" so the first mining frame swings at once.
+      if (digTarget) {
+        digSwingAcc += dt;
+        if (digSwingAcc >= MINE_SWING_INTERVAL_SEC) {
+          digSwingAcc = 0;
+          viewmodel.startSwing();
+        }
+      } else {
+        digSwingAcc = MINE_SWING_INTERVAL_SEC; // due again on the next dig frame
+      }
+
       // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
       const wantPlace = input.consumePlace();
       if (hit && wantPlace) {
@@ -1309,6 +1336,7 @@ gs.renderer.setAnimationLoop(() => {
           setState('crafting');
           document.exitPointerLock?.(); // same order as the inventory open below
         } else {
+          viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
           const t = placeTarget(hit);
           const held = hotbar[selected];
           const placeId = held ? blockFromItem(held.item) : null;
@@ -1399,6 +1427,22 @@ gs.renderer.setAnimationLoop(() => {
   // Phase 3 Task 7: re-anchor the cloud tile to the camera (whole-period snap
   // combined with the time drift; the matching tile period hides the snaps).
   clouds.update(cam.x, cam.z, now / 1000);
+
+  // Phase 3 Task 8: held-item viewmodel — a cheap cached compare tracks the
+  // selected slot (this tail runs after spendFromSlot/slot switches, so the
+  // model swaps the same frame), then the swing/bob pose is applied. Swing and
+  // bob advance only while playing; third person and every non-playing state
+  // hide the group.
+  const heldItem = hotbar[selected]?.item ?? null;
+  if (heldItem !== heldViewmodelItem) {
+    heldViewmodelItem = heldItem;
+    viewmodel.setItem(heldItem);
+  }
+  viewmodel.update(
+    state === 'playing' ? dt : 0,
+    state === 'playing' && !thirdPerson,
+    Math.hypot(player.velocity.x, player.velocity.z),
+  );
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
