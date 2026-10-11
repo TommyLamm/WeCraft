@@ -57,6 +57,9 @@ import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { applyBiomeTint } from './core/biome-fog';
 import { generateChunk, surfaceHeight, biomeAt } from './world/terrain';
+// Phase 3 Task 10: audio facade + pure helpers — all wiring lives here in main
+// (composition root); the engine is gesture-gated and inert until ensureStarted.
+import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
@@ -99,6 +102,13 @@ const inv = createInventory(uiRoot);
 const craftUi = createCrafting(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
+// Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
+// built lazily on the first gesture); every game sound below routes through it.
+const audio = createGameAudio();
+// Phase 3 Task 10: first canvas press arms the engine (autoplay policy). The
+// title/pause buttons live in ui-root — startGame/continueGame arm the engine
+// from their own click gestures instead (see the session entry/exit below).
+canvas.addEventListener('pointerdown', () => audio.ensureStarted(), { once: true });
 
 // ---- 遊戲事件匯流排 ----
 // `GameEvents` payload-map type lives in core/bus.ts next to the GameEvent union
@@ -274,6 +284,14 @@ const MINE_SWING_INTERVAL_SEC = 0.25;
 let heldViewmodelItem: ItemId | null = null;
 let digSwingAcc = MINE_SWING_INTERVAL_SEC;
 
+// ---- 音效（Phase 3 Task 10）----
+// main only ROUTES events to the Task 9 facade; all voicing lives in audio/.
+// `digSoundAcc` paces the dig scrape to one sound per DIG_SOUND_INTERVAL_SEC of
+// real dig progress; `stepAcc` counts grounded seconds toward the next step.
+let digSoundAcc = 0;
+const DIG_SOUND_INTERVAL_SEC = 0.25;
+let stepAcc = 0;
+
 // ---- 晝夜循環（Task 6）----
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
 // `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
@@ -401,6 +419,11 @@ gs.setShadowsEnabled(settings.shadows);
 // Phase 3 Task 7: cloud layer — boot state from settings; the pause menu's
 // 雲 toggle persists + applies live (setEnabled in its callback).
 clouds.setEnabled(settings.clouds);
+
+// Phase 3 Task 10: audio boot volume — the engine remembers it pre-start, so
+// the first sound after the gesture already uses the saved level (the pause
+// menu re-applies it live on resume via loadSettings).
+audio.setVolume(settings.volume);
 
 // ---- 區塊佇列（preserves shipped Task 11/12 fixes: generated-keyed, gen r+1,
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
@@ -594,6 +617,7 @@ function setState(next: GameState): void {
         // settings edited in the pause menu persist to localStorage — live-apply on resume
         const prevRd = settings.renderDistance;
         Object.assign(settings, loadSettings());
+        audio.setVolume(settings.volume); // Phase 3 Task 10: live-apply the saved volume
         if (settings.renderDistance !== prevRd) applyRenderDistanceFog();
         // menus relocks the canvas after onResume returns (click gesture)
         setState('playing');
@@ -781,6 +805,7 @@ function persistNow(): void {
  *  one-chunk island (Task 17 CR fix). No save happens here — saving is the
  *  explicit job of 儲存並離開 / autosave / beforeunload (Task 14 settled). */
 function quitToTitle(): void {
+  audio.stopAmbience(); // Phase 3 Task 10: kill the wind bed + chirp/cricket timer
   sessionStarted = false;
   resetPlayerToSpawn();
   setState('title');
@@ -845,6 +870,11 @@ function startGame(): void {
   hud.setHotbar(hotbar, selected);
   setVitals(currentMode === 'survival' ? createVitals() : null);
   clock = createClock(settings.dayLengthSec);
+  // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
+  // bed and pin the ambience phase to the fresh clock (day).
+  audio.ensureStarted();
+  audio.startAmbience();
+  audio.setPhase(phaseOf(clock.t));
   craftGrid = [];
   craftExcess = [];
   sessionStarted = true;
@@ -916,6 +946,11 @@ function continueGame(payload: SavePayload): void {
   );
 
   clock.t = payload.time.t; // 4. time-of-day
+  // Phase 3 Task 10: arm + start audio for the restored session (the Continue
+  // click IS the gesture); ambience follows the restored time-of-day.
+  audio.ensureStarted();
+  audio.startAmbience();
+  audio.setPhase(phaseOf(clock.t));
 
   sessionStarted = true;
   setState('playing'); // same entry tail as startGame
@@ -989,6 +1024,9 @@ document.addEventListener('pointerlockerror', () => {
 // hidden/visible flips can't spam IDB. `sessionStarted` keeps the title
 // screen with no session from ever writing. Page-lifetime listener.
 document.addEventListener('visibilitychange', () => {
+  // Phase 3 Task 10: auto-mute in background tabs (suspend/resume the audio
+  // context on hide/show); the save logic below is deliberately untouched.
+  audio.handleVisibility(document.visibilityState === 'hidden');
   if (document.visibilityState !== 'hidden' || !sessionStarted) return;
   const now = Date.now();
   if (now - lastBgSave < BG_SAVE_DEBOUNCE_MS) return;
@@ -1069,7 +1107,10 @@ gs.renderer.setAnimationLoop(() => {
     };
     gs.setDayNight(sunDir, tinted);
     sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
-    if (phase !== prevPhase) bus.emit('time-changed', { phase, t: clock.t });
+    if (phase !== prevPhase) {
+      bus.emit('time-changed', { phase, t: clock.t });
+      audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
+    }
 
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
     // onGround; water swim-strikes and active flight aren't discrete jumps,
@@ -1102,6 +1143,27 @@ gs.renderer.setAnimationLoop(() => {
     if (fall.distance !== null && currentMode === 'survival' && vitals) {
       const amount = fallDamage(fall.distance);
       if (amount > 0) setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+    }
+
+    // ---- 音效：腳步（Phase 3 Task 10）----
+    // Grounded walk/run only (airborne, flying and swimming are silent); the
+    // cadence comes from horizontal speed (footstepInterval), the material from
+    // the block 0.05 below the feet.
+    const horSpeed = Math.hypot(player.velocity.x, player.velocity.z);
+    if (player.onGround && !player.flying && !player.inWater && horSpeed > 0.5) {
+      stepAcc += dt;
+      if (stepAcc >= footstepInterval(horSpeed)) {
+        stepAcc = 0;
+        const groundId = world.getBlock(
+          Math.floor(player.position.x),
+          Math.floor(player.position.y - 0.05),
+          Math.floor(player.position.z),
+        );
+        audio.play('step', materialGroup(groundId), {
+          pos: player.position,
+          listener: player.position,
+        });
+      }
     }
 
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
@@ -1256,6 +1318,9 @@ gs.renderer.setAnimationLoop(() => {
 
       // Task 3: crack overlay target — the block being dug this frame, when it
       // CAN break (bedrock/water never accumulate progress, so never crack).
+      // Phase 3 Task 10: pre-update progress — the dig scrape below fires only
+      // on frames where this frame's digStep actually advanced it.
+      const digProgressBefore = dig.progress;
       let digTarget: RayHit | null = null;
       if (hit && input.state.dig && !attacking) {
         const id = world.getBlock(hit.x, hit.y, hit.z);
@@ -1278,6 +1343,12 @@ gs.renderer.setAnimationLoop(() => {
             x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
           });
           viewmodel.startSwing(); // Phase 3 Task 8: the break lands with a swing
+          // Phase 3 Task 10: break crack — material from the broken id, at the
+          // block centre (now air); distance to the eye attenuates the gain.
+          audio.play('break', materialGroup(id), {
+            pos: { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 },
+            listener: player.position,
+          });
           dig.reset(); // post-break bookkeeping — clears survival progress after isDone
           digTarget = null; // block is gone: no crack quad hanging on air this frame
         }
@@ -1304,6 +1375,20 @@ gs.renderer.setAnimationLoop(() => {
         }
       } else {
         digChipAcc = 0;
+      }
+      // Phase 3 Task 10: dig scrape — one sound per DIG_SOUND_INTERVAL_SEC of
+      // REAL progress (digProgressBefore compare above; the breaking frame
+      // resets progress, so it stays silent and the break crack alone lands).
+      if (digTarget && dig.progress > digProgressBefore) {
+        digSoundAcc += dt;
+        if (digSoundAcc >= DIG_SOUND_INTERVAL_SEC) {
+          digSoundAcc = 0;
+          const digId = world.getBlock(digTarget.x, digTarget.y, digTarget.z);
+          audio.play('dig', materialGroup(digId), {
+            pos: { x: digTarget.x + 0.5, y: digTarget.y + 0.5, z: digTarget.z + 0.5 },
+            listener: player.position,
+          });
+        }
       }
       // stage follows dig.progress (stage 9 just below a break); hidden when the
       // target is null — no cracks for miss/attack/unbreakable/off-hand frames
@@ -1347,6 +1432,11 @@ gs.renderer.setAnimationLoop(() => {
             if (inventory.spendFromSlot(selected, 1)) {
               world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
               hud.setHotbar(hotbar, selected);
+              // Phase 3 Task 10: material-accurate place thud at the target
+              // centre (listener defaults to pos → full volume).
+              audio.play('place', materialGroup(placeId), {
+                pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
+              });
             }
           }
         }
