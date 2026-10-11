@@ -1,10 +1,18 @@
 // Task 13: IndexedDB persistence for world modifications and player state.
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
+// Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 
 import type { Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
+import {
+  emptyAdvancements,
+  sanitizeAdvancements,
+  type AdvancementState,
+} from '../core/advancements';
 
-export interface SavePayload {
+/** Pre-v2 payload shape (Task 11): kept for the migration path so records
+ *  written by earlier builds still validate and load. */
+export interface SavePayloadV1 {
 	version: 1;
 	savedAt: number;
 	worldSeed: number;
@@ -19,6 +27,13 @@ export interface SavePayload {
 	time: { t: number };
 }
 
+/** Current payload (Task 11): v1 plus the advancement state. `loadGame` ALWAYS
+ *  returns this normalized shape — v1 records migrate with empty advancements. */
+export interface SavePayload extends Omit<SavePayloadV1, 'version'> {
+	version: 2;
+	advancements: AdvancementState;
+}
+
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
  *  tests pass plain objects while main.ts passes thin adapters. */
 export interface SaveSources {
@@ -31,6 +46,8 @@ export interface SaveSources {
 	};
 	vitals: Vitals | null;
 	clockT: number;
+	/** Live advancement state (Task 11) — copied into the payload. */
+	advancements: AdvancementState;
 	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
 	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
 	 *  value only matters for tests / pre-save inspection. */
@@ -39,12 +56,12 @@ export interface SaveSources {
 
 /** Assemble a {@link SavePayload} from live game state — PURE (no IDB, no DOM):
  *  every player-owned value is copied (fresh pos array, fresh stack/vitals
- *  objects) so later mutations of the live state never alias into an already
- *  captured payload. `modified` comes from `world.serializeModified()`, which
- *  already returns fresh tuples. */
+ *  objects, fresh advancements) so later mutations of the live state never
+ *  alias into an already captured payload. `modified` comes from
+ *  `world.serializeModified()`, which already returns fresh tuples. */
 export function collectSavePayload(args: SaveSources): SavePayload {
 	return {
-		version: 1,
+		version: 2,
 		savedAt: args.savedAt ?? Date.now(),
 		worldSeed: args.world.seed,
 		modified: args.world.serializeModified(),
@@ -56,25 +73,32 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 			inventory: args.player.inventory.map((s) => (s ? { ...s } : null)),
 		},
 		time: { t: args.clockT },
+		advancements: {
+			done: { ...args.advancements.done },
+			nightSeen: args.advancements.nightSeen,
+		},
 	};
 }
 
-/** Shape-validate an unknown value as a SavePayload (review #2). IndexedDB
- *  records can be written by an older or broken build — continueGame trusts
- *  this shape completely (destructuring, setBlock keys, DOM writes), so a
- *  record must prove: object, version 1, a player with a finite pos triple
- *  and finite yaw (a NaN yaw would reach camera render state without ever
- *  throwing), mode ∈ {survival, creative}, an inventory of null | {item: string,
- *  count: finite number}, vitals null | {hp: finite}, modified: array, and a
- *  finite clock. Light checks only — `modified` ENTRIES are additionally
- *  defended by applyModified's per-entry skip, and item ids by the inventory
- *  model. Pure: exported for tests, called by loadGame. */
-export function isValidSavePayload(x: unknown): x is SavePayload {
+/** Shape-validate an unknown value as a v1 or v2 save payload (review #2;
+ *  Task 11 widened the accepted versions — v1 records migrate in loadGame).
+ *  IndexedDB records can be written by an older or broken build — continueGame
+ *  trusts this shape completely (destructuring, setBlock keys, DOM writes), so
+ *  a record must prove: object, version ∈ {1, 2}, a player with a finite pos
+ *  triple and finite yaw (a NaN yaw would reach camera render state without
+ *  ever throwing), mode ∈ {survival, creative}, an inventory of null |
+ *  {item: string, count: finite number}, vitals null | {hp: finite},
+ *  modified: array, and a finite clock. Light checks only — `modified` ENTRIES
+ *  are additionally defended by applyModified's per-entry skip, and item ids by
+ *  the inventory model. v2 `advancements` is deliberately NOT part of this base
+ *  check: `loadGame` sanitizes it with `sanitizeAdvancements` before returning.
+ *  Pure: exported for tests, called by loadGame. */
+export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayload {
 	if (typeof x !== 'object' || x === null) return false;
-	const r = x as Partial<SavePayload>;
-	if (r.version !== 1) return false;
+	const r = x as Partial<SavePayloadV1>;
+	if (r.version !== 1 && r.version !== 2) return false;
 	// player: pos triple + yaw + mode + inventory + vitals
-	const p = r.player as SavePayload['player'] | undefined;
+	const p = r.player as SavePayloadV1['player'] | undefined;
 	if (typeof p !== 'object' || p === null) return false;
 	if (!Array.isArray(p.pos) || p.pos.length !== 3) return false;
 	if (!p.pos.every((n) => typeof n === 'number' && Number.isFinite(n))) return false;
@@ -95,7 +119,7 @@ export function isValidSavePayload(x: unknown): x is SavePayload {
 	}
 	// block edits + clock
 	if (!Array.isArray(r.modified)) return false;
-	const t = r.time as SavePayload['time'] | undefined;
+	const t = r.time as SavePayloadV1['time'] | undefined;
 	if (typeof t !== 'object' || t === null) return false;
 	if (typeof t.t !== 'number' || !Number.isFinite(t.t)) return false;
 	return true;
@@ -148,8 +172,12 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 }
 
 /** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
- *  Shape-validated (review #2): a version-1 record with a broken shape (missing
- *  player, non-finite pos, bad mode, NaN clock, …) reads as "no save". */
+ *  Shape-validated (review #2; v1/v2 Task 11): a supported-version record with
+ *  a broken shape (missing player, non-finite pos, bad mode, NaN clock, …)
+ *  reads as "no save". ALWAYS returns a normalized v2 payload — a v1 record
+ *  migrates to `{...v1, version: 2, advancements: emptyAdvancements()}` (old
+ *  saves keep loading; progress starts fresh); a v2 record's advancements are
+ *  sanitized against the current table. */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -158,7 +186,10 @@ export async function loadGame(): Promise<SavePayload | null> {
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
 			if (!isValidSavePayload(value)) return null;
-			return value;
+			if (value.version === 1) {
+				return { ...value, version: 2, advancements: emptyAdvancements() };
+			}
+			return { ...value, advancements: sanitizeAdvancements(value.advancements) };
 		} finally {
 			db.close();
 		}

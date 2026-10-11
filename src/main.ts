@@ -63,6 +63,9 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
+// Task 11: progress core (pure rules/state) — lifecycle wired below, unlock
+// events/toasts arrive in Task 12.
+import { emptyAdvancements } from './core/advancements';
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
@@ -143,6 +146,12 @@ const dig = new DigProgress();
 // inventory — retried on the next reset, so items are never destroyed.
 let craftGrid: Array<ItemStack | null> = [];
 let craftExcess: ItemStack[] = [];
+
+// ---- Progress state (Task 11) ----
+// Advancement progress: fresh on New Game, restored on Continue, snapshotted
+// into every save. The unlock-event wiring (obtain/mob-killed/phase checks →
+// toasts) is Task 12; this task owns only the state lifecycle.
+let advancements = emptyAdvancements();
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
@@ -780,6 +789,7 @@ function sessionSavePayload(): SavePayload | null {
     },
     vitals,
     clockT: clock.t,
+    advancements,
   });
 }
 
@@ -877,6 +887,7 @@ function startGame(): void {
   audio.setPhase(phaseOf(clock.t));
   craftGrid = [];
   craftExcess = [];
+  advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -944,6 +955,11 @@ function continueGame(payload: SavePayload): void {
         : createVitals()
       : null,
   );
+
+  // Progress (Task 11): restore the saved advancement state. The payload is
+  // always normalized v2 (loadGame migrates v1 / sanitizes v2), and the state
+  // is treated immutably everywhere — handing over the cached reference is safe.
+  advancements = payload.advancements;
 
   clock.t = payload.time.t; // 4. time-of-day
   // Phase 3 Task 10: arm + start audio for the restored session (the Continue

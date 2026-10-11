@@ -7,8 +7,10 @@ import {
   collectSavePayload,
   isValidSavePayload,
   type SavePayload,
+  type SavePayloadV1,
 } from './save';
 import { createVitals } from '../player/survival';
+import { emptyAdvancements } from '../core/advancements';
 import type { ItemStack } from '../core/items';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
@@ -26,7 +28,7 @@ function deleteSaveDb(): Promise<void> {
 
 function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
   return {
-    version: 1,
+    version: 2,
     savedAt: 0, // saveGame must stamp its own value
     worldSeed: 1337,
     modified: [
@@ -41,7 +43,30 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
       inventory: [{ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }],
     },
     time: { t: 0.42 },
+    // non-empty, so the round-trip deep-equal actually exercises progress state
+    advancements: {
+      done: { getting_wood: true, monster_hunter: true },
+      nightSeen: true,
+    },
     ...patch,
+  };
+}
+
+/** A raw v1 record exactly as a pre-Task-11 build wrote it (no advancements). */
+function makeV1Payload(): SavePayloadV1 {
+  return {
+    version: 1,
+    savedAt: 0,
+    worldSeed: 1337,
+    modified: [['5,70,5', 1]],
+    player: {
+      pos: [1.5, 64, -3.25],
+      yaw: 0.75,
+      mode: 'survival',
+      vitals: null,
+      inventory: [{ item: 'stone', count: 32 }],
+    },
+    time: { t: 0.42 },
   };
 }
 
@@ -110,6 +135,32 @@ describe('saveGame / loadGame', () => {
     expect((await loadGame())?.player.mode).toBe('creative');
   });
 
+  it('migrates a raw v1 record to a normalized v2 payload with empty advancements', async () => {
+    const v1 = makeV1Payload();
+    await putRawRecord(v1);
+    const loaded = await loadGame();
+    expect(loaded).toEqual({
+      ...v1,
+      version: 2,
+      advancements: emptyAdvancements(),
+    });
+    expect(loaded!.version).toBe(2);
+  });
+
+  it('loads a v2 payload with garbage advancements and sanitizes them', async () => {
+    await putRawRecord({
+      ...makePayload(),
+      advancements: {
+        done: { getting_wood: true, bogus: true, coal_miner: 'yes' },
+        nightSeen: 'yes',
+      },
+    });
+    const loaded = await loadGame();
+    // garbage dropped, valid entries kept, base payload intact
+    expect(loaded?.advancements).toEqual({ done: { getting_wood: true }, nightSeen: false });
+    expect(loaded?.player.pos).toEqual([1.5, 64, -3.25]);
+  });
+
   it('overwrites the previous save in the single slot', async () => {
     await saveGame(makePayload({ worldSeed: 1 }));
     await saveGame(makePayload({ worldSeed: 2 }));
@@ -120,8 +171,8 @@ describe('saveGame / loadGame', () => {
     expect(await loadGame()).toBeNull();
   });
 
-  it('returns null for a record with the wrong version', async () => {
-    await putRawRecord({ version: 99 });
+  it('returns null for a record with an unsupported version', async () => {
+    await putRawRecord({ version: 3 });
     expect(await loadGame()).toBeNull();
   });
 
@@ -140,10 +191,12 @@ describe('saveGame / loadGame', () => {
     await expect(saveGame(makePayload())).rejects.toBeDefined();
   });
 
-  it('loadGame rejects shape-corrupt records with version 1 (review #2)', async () => {
+  it('loadGame rejects shape-corrupt records (base validation, either version)', async () => {
     const base = makePayload();
-    // player missing entirely
+    // player missing entirely — both supported versions fail the base check
     await putRawRecord({ version: 1 });
+    expect(await loadGame()).toBeNull();
+    await putRawRecord({ version: 2 });
     expect(await loadGame()).toBeNull();
     // non-finite pos coordinate
     await putRawRecord({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } });
@@ -167,18 +220,19 @@ describe('saveGame / loadGame', () => {
  *  build — loadGame must validate the SHAPE before handing a payload to
  *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
 describe('isValidSavePayload', () => {
-  it('accepts a fully valid payload', () => {
+  it('accepts a fully valid payload (v1 and v2 both pass base validation)', () => {
     expect(isValidSavePayload(makePayload())).toBe(true);
     expect(
       isValidSavePayload(makePayload({ player: { ...makePayload().player, vitals: null } })),
     ).toBe(true);
+    expect(isValidSavePayload(makeV1Payload())).toBe(true); // migration input
   });
 
   it('rejects non-objects, wrong version and a missing player', () => {
     expect(isValidSavePayload(null)).toBe(false);
     expect(isValidSavePayload('garbage')).toBe(false);
     expect(isValidSavePayload(42)).toBe(false);
-    expect(isValidSavePayload({ ...makePayload(), version: 2 })).toBe(false);
+    expect(isValidSavePayload({ ...makePayload(), version: 3 })).toBe(false);
     expect(isValidSavePayload({ version: 1 })).toBe(false); // player missing
   });
 
@@ -262,34 +316,45 @@ describe('collectSavePayload', () => {
     ],
   };
 
-  it('assembles version, seed, modified and clock from the sources', () => {
+  it('assembles version, seed, modified, clock and advancements from the sources', () => {
+    const advancements = {
+      done: { getting_wood: true },
+      nightSeen: true,
+    };
     const payload = collectSavePayload({
       world,
       player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [] },
       vitals: null,
       clockT: 0.42,
+      advancements,
       savedAt: 123,
     });
-    expect(payload.version).toBe(1);
+    expect(payload.version).toBe(2);
     expect(payload.worldSeed).toBe(4242);
     expect(payload.modified).toEqual([
       ['5,70,5', 1],
       ['6,70,6', 0],
     ]);
     expect(payload.time).toEqual({ t: 0.42 });
+    expect(payload.advancements).toEqual(advancements);
     expect(payload.savedAt).toBe(123);
   });
 
-  it('copies the player sub-object — no aliasing of pos, stacks or vitals', () => {
+  it('copies the player sub-object and advancements — no aliasing', () => {
     const pos: [number, number, number] = [1, 2, 3];
     const stack: ItemStack = { item: 'stone', count: 32 };
     const inventory: Array<ItemStack | null> = [stack, null];
     const vitals = createVitals();
+    const advancements = {
+      done: { getting_wood: true },
+      nightSeen: false,
+    };
     const payload = collectSavePayload({
       world,
       player: { pos, yaw: -1.25, mode: 'survival', inventory },
       vitals,
       clockT: 0,
+      advancements,
       savedAt: 0,
     });
     // fresh pos array — mutating the source must not touch the payload
@@ -308,6 +373,13 @@ describe('collectSavePayload', () => {
     expect(payload.player.vitals).not.toBe(vitals);
     expect(payload.player.yaw).toBe(-1.25);
     expect(payload.player.mode).toBe('survival');
+    // fresh advancements copy — mutating the source must not touch the payload
+    expect(payload.advancements).toEqual({ done: { getting_wood: true }, nightSeen: false });
+    expect(payload.advancements.done).not.toBe(advancements.done);
+    advancements.done.getting_wood = false;
+    advancements.nightSeen = true;
+    expect(payload.advancements.done.getting_wood).toBe(true);
+    expect(payload.advancements.nightSeen).toBe(false);
   });
 
   it('carries null vitals (creative) and defaults savedAt to now when omitted', () => {
@@ -317,6 +389,7 @@ describe('collectSavePayload', () => {
       player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [] },
       vitals: null,
       clockT: 0.1,
+      advancements: emptyAdvancements(),
     });
     const after = Date.now();
     expect(payload.player.mode).toBe('creative');
