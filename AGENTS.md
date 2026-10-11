@@ -16,6 +16,7 @@
 ## 2. 修改前先讀現況，不轉述假設
 - `game.json`、`package.json`、`vite.config.ts`、`dist/`、`.github/workflows/`、`.playroom/` 先讀檔再下結論；派 subagent 時給驗證方法，不給「已知現狀」。
 - `id` 固定不變；版本變更遵守 `v<version>` 一致、不覆寫已發布。
+- workflow 複製上游模板後，確認無 job 層 `runner` 引用（該寫法會被 GitHub 判 invalid，改放各 step 的 `env`）；tag 觸發跑的是 tag 所指 commit 內的 workflow，修 workflow 必須重新打 tag 指向新 commit。
 
 ## 3. 完成前驗證門檻（有證據才算過）
 - `npm run typecheck`、`npm test`、`npm run build` 全過
