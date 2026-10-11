@@ -1,3 +1,7 @@
+# Copy into your game's .github/workflows/release.yml.
+# Set GAME_DIR once below to the deployable directory containing game.json.
+# Bootstrap: copy the built tools ZIP into .playroom/tools/ and its generated
+# templates/game-tools.lock.json into .playroom/game-tools.lock.json. Commit both.
 name: Release game
 on:
   push:
@@ -10,6 +14,9 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
+      GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
     defaults:
       run:
         shell: bash
@@ -46,23 +53,46 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, `GAME_PATH=${root}\n`);
           fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_PRERELEASE=${m.version.includes('-')}\n`);
           JS
-      - name: Install latest Playroom validation tools
-        env:
-          PLATFORM_DIR: ${{ runner.temp }}/playroom-platform-tools
+      - name: Verify pinned Playroom validation tools
         run: |
-          git clone --depth 1 --branch main --single-branch https://github.com/TommyLamm/playroom-platform.git "$PLATFORM_DIR"
-          (cd "$PLATFORM_DIR" && npm ci)
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          const lock = JSON.parse(fs.readFileSync('.playroom/game-tools.lock.json', 'utf8'));
+          if (!/^\d+\.\d+\.\d+$/.test(lock.toolsVersion) || !/^[a-f0-9]{64}$/.test(lock.sha256)) throw Error('Invalid tool lock');
+          const expected = `.playroom/tools/playroom-game-tools-${lock.toolsVersion}.zip`;
+          if (lock.archive !== expected) throw Error('Invalid pinned archive path');
+          const actual = createHash('sha256').update(fs.readFileSync(expected)).digest('hex');
+          if (actual !== lock.sha256) throw Error('Tool archive checksum differs');
+          fs.appendFileSync(process.env.GITHUB_ENV, `TOOLS_ARCHIVE=${path.resolve(expected)}\nTOOLS_VERSION=${lock.toolsVersion}\nTOOLS_SHA256=${actual}\n`);
+          JS
+      - name: Extract and verify pinned tools
+        run: |
+          mkdir -p "$PLATFORM_DIR"
+          unzip -q "$TOOLS_ARCHIVE" -d "$PLATFORM_DIR"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { createHash } from 'node:crypto';
+          const root = process.env.PLATFORM_DIR;
+          const metadata = JSON.parse(fs.readFileSync(path.join(root, 'metadata.json'), 'utf8'));
+          if (metadata.toolsVersion !== process.env.TOOLS_VERSION) throw Error('Tool metadata version differs');
+          for (const [name, hash] of Object.entries(metadata.files)) {
+            if (!/^[a-zA-Z0-9.-]+$/.test(name) || name === '.' || name === '..') throw Error('Invalid metadata filename');
+            if (createHash('sha256').update(fs.readFileSync(path.join(root, name))).digest('hex') !== hash) throw Error('Tool file checksum differs');
+          }
+          console.log(`Playroom tools ${metadata.toolsVersion}, SHA-256 ${process.env.TOOLS_SHA256}`);
+          JS
       - name: Pack and fully validate release ZIP
-        working-directory: ${{ runner.temp }}/playroom-platform-tools
-        env:
-          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
+        working-directory: ${{ env.PLATFORM_DIR }}
         run: |
-          npm run game:pack -- "$GAME_PATH" "$GAME_ZIP"
-          npm run game:validate -- "$GAME_ZIP"
+          node pack-game.mjs "$GAME_PATH" "$GAME_ZIP"
+          node validate-game.mjs "$GAME_ZIP"
+          printf 'tools=%s\nsha256=%s\n' "$TOOLS_VERSION" "$TOOLS_SHA256" >> "$GITHUB_STEP_SUMMARY"
       - name: Publish release asset
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_REPO: ${{ github.repository }}
-          GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
         run: gh release create "$RELEASE_TAG" "$GAME_ZIP" --repo "$RELEASE_REPO" --verify-tag --generate-notes --prerelease="$RELEASE_PRERELEASE"

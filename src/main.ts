@@ -1120,9 +1120,24 @@ let fps = 60;
 let fpsAcc = 0;
 let fpsCount = 0;
 
-window.addEventListener('resize', () =>
-  gs.setSize(window.innerWidth, window.innerHeight),
-);
+// 平台切換一般／原生全螢幕／沉浸模式不重載 iframe —— 尺寸變化只走這裡
+// （renderer 尺寸 + 相機 aspect + pixelRatio 一起同步；0 尺寸守衛避免 NaN aspect）。
+// window resize 覆蓋 iframe 尺寸變化；ResizeObserver 補容器 CSS 變化；
+// visualViewport 補瀏覽器工具列顯隱（desktop-only 下多為 no-op）。
+function syncViewportSize(): void {
+  const w = document.documentElement.clientWidth || window.innerWidth;
+  const h = document.documentElement.clientHeight || window.innerHeight;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return;
+  gs.setSize(w, h);
+  gs.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+}
+
+window.addEventListener('resize', syncViewportSize);
+if (typeof ResizeObserver !== 'undefined') {
+  const ro = new ResizeObserver(() => syncViewportSize());
+  ro.observe(document.documentElement);
+}
+window.visualViewport?.addEventListener('resize', syncViewportSize);
 
 hud.setHotbar(hotbar, selected);
 // Task 14: resolve save existence ONCE before the title mounts — Continue
