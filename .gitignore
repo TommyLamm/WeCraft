@@ -3,3 +3,4 @@ dist/
 artifacts/
 .superpowers/
 *.log
+.worktrees/
