@@ -81,9 +81,9 @@ async function defaultLoadModule(): Promise<PlayroomModule | null> {
 
 function statusForError(err: unknown): CloudStatus {
   const kind = classifyCloudError(err);
-  // REQUEST_REUSED is a retry-with-new-id signal; surface it as conflict
-  // alongside SAVE_REVISION_CONFLICT and the bare-409 rule from Task 2.
-  if (kind === 'CONFLICT' || kind === 'REQUEST_REUSED') return 'conflict';
+  // Authoritative behavior line: only CONFLICT -> conflict, FORMAT -> format;
+  // everything else (including REQUEST_REUSED) -> error.
+  if (kind === 'CONFLICT') return 'conflict';
   if (kind === 'FORMAT') return 'format';
   return 'error';
 }

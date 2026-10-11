@@ -114,7 +114,7 @@ describe('createCloudClient', () => {
     expect(c.status).toBe('conflict');
   });
 
-  it('REQUEST_ID_REUSED and bare 409 map to conflict', async () => {
+  it('REQUEST_ID_REUSED maps to error and bare 409 maps to conflict', async () => {
     const reused = Object.assign(new Error('request id reused'), {
       machineCode: 'REQUEST_ID_REUSED',
     });
@@ -126,7 +126,7 @@ describe('createCloudClient', () => {
     const c1 = createCloudClient({ loadModule: async () => m1 });
     await c1.init();
     await expect(c1.save({}, 1, 1, 'dup')).rejects.toBe(reused);
-    expect(c1.status).toBe('conflict');
+    expect(c1.status).toBe('error');
 
     const m2 = modWith(AUTH_READY, {
       saveProgress: async () => {
