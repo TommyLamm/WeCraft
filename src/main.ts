@@ -53,6 +53,7 @@ import { createMenus } from './ui/menus';
 import { createDeathScreen } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
+import { createToasts } from './ui/toast';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { applyBiomeTint } from './core/biome-fog';
@@ -63,9 +64,14 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
-// Task 11: progress core (pure rules/state) — lifecycle wired below, unlock
-// events/toasts arrive in Task 12.
-import { emptyAdvancements } from './core/advancements';
+// Task 11–12: progress core (pure rules/state) + the unlock-event/toast wiring
+// below — `applyAdvancement` is the single feed point for every unlock event.
+import {
+  emptyAdvancements,
+  checkAdvancements,
+  ADVANCEMENTS,
+  type AdvancementEvent,
+} from './core/advancements';
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
@@ -105,6 +111,8 @@ const inv = createInventory(uiRoot);
 const craftUi = createCrafting(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
+// Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
+const toasts = createToasts(uiRoot);
 // Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
 // built lazily on the first gesture); every game sound below routes through it.
 const audio = createGameAudio();
@@ -147,11 +155,24 @@ const dig = new DigProgress();
 let craftGrid: Array<ItemStack | null> = [];
 let craftExcess: ItemStack[] = [];
 
-// ---- Progress state (Task 11) ----
+// ---- Progress state (Task 11–12) ----
 // Advancement progress: fresh on New Game, restored on Continue, snapshotted
-// into every save. The unlock-event wiring (obtain/mob-killed/phase checks →
-// toasts) is Task 12; this task owns only the state lifecycle.
+// into every save. The unlock events (obtain/mob-killed/phase) all route
+// through `applyAdvancement` below; this section owns the state lifecycle.
 let advancements = emptyAdvancements();
+
+/** THE single feed point for unlock events (Task 12 brief 12.3): the rules stay
+ *  pure in core/advancements — this wrapper owns the state swap and the
+ *  ADVANCEMENTS → toast lookup. Creative suppression lives inside
+ *  checkAdvancements, so callers just pass the current mode. */
+function applyAdvancement(ev: AdvancementEvent): void {
+  const r = checkAdvancements(advancements, ev);
+  advancements = r.state;
+  for (const id of r.unlocked) {
+    const def = ADVANCEMENTS.find((a) => a.id === id);
+    if (def) toasts.push({ title: def.title, description: def.description, icon: def.icon });
+  }
+}
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
@@ -238,6 +259,9 @@ function craftingParams(size: 2 | 3): CraftingParams {
       if (!inventory.fits(result.item, result.count)) return false; // full → blocked, grid untouched
       giveItem(result.item, result.count);
       hud.setHotbar(hotbar, selected);
+      // Task 12: a successful craft take is an obtain event (creative never
+      // reaches this path, and checkAdvancements would suppress it anyway).
+      applyAdvancement({ type: 'obtain', item: result.item, mode: currentMode });
       return true;
     },
   };
@@ -1125,6 +1149,8 @@ gs.renderer.setAnimationLoop(() => {
     sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
     if (phase !== prevPhase) {
       bus.emit('time-changed', { phase, t: clock.t });
+      // Task 12: phase events feed first_night (day after a seen night).
+      applyAdvancement({ type: 'phase', phase });
       audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
     }
 
@@ -1193,17 +1219,27 @@ gs.renderer.setAnimationLoop(() => {
     if (currentMode !== 'creative') {
       const near = pickable(drops, player.position);
       let pickedUp = false;
+      // Task 12: record which items actually entered the inventory; the unlock
+      // events fire AFTER the loop (the drop entities are gone by then).
+      const obtained: ItemId[] = [];
       // back-to-front: removing index i must not shift the ones still to process
       for (let i = near.length - 1; i >= 0; i--) {
         const idx = near[i];
+        const item = drops[idx]?.item;
         const countBefore = drops[idx]?.count ?? 0;
         const res = pickup(drops, idx, inventory);
         drops = res.drops;
-        if (res.overflow < countBefore) pickedUp = true; // at least 1 item entered the inventory
+        if (item && res.overflow < countBefore) {
+          pickedUp = true; // at least 1 item entered the inventory
+          obtained.push(item);
+        }
       }
       if (pickedUp) {
         hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
         bus.emit('drops-changed', {});
+      }
+      for (const item of obtained) {
+        applyAdvancement({ type: 'obtain', item, mode: currentMode });
       }
     }
 
@@ -1327,7 +1363,11 @@ gs.renderer.setAnimationLoop(() => {
             mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
             const beforeKill = mobs.length;
             mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
-            if (mobs.length !== beforeKill) bus.emit('mobs-changed', { count: mobs.length });
+            if (mobs.length !== beforeKill) {
+              bus.emit('mobs-changed', { count: mobs.length });
+              // Task 12: the kill filter actually removed a mob → unlock event
+              applyAdvancement({ type: 'mob-killed', mode: currentMode });
+            }
           }
         }
       }
