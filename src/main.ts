@@ -18,7 +18,7 @@ import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { createVitals, damage, exhaust, tickVitals, isDead as isPlayerDead, fallDamage, type Vitals } from './player/survival';
+import { createVitals, damage, eat, exhaust, tickVitals, isDead as isPlayerDead, fallDamage, type Vitals } from './player/survival';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
@@ -32,6 +32,8 @@ import {
   hitMobId,
   attackMob,
 } from './player/interact';
+// Task 8: apple eating — pure slot consumption; vitals/sound/toast stay in main
+import { APPLE_FOOD, APPLE_SAT, eatFromSlot } from './player/eat';
 import { stepDrops, pickable, pickup, spawnDrop, type DropEntity } from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
@@ -2021,40 +2023,59 @@ gs.renderer.setAnimationLoop(() => {
 
       // consume even on miss so a right-click into air can't fire later (aim-then-place bug)
       const wantPlace = input.consumePlace();
-      if (hit && wantPlace) {
+      if (wantPlace) {
         // Task 11: interacting with a crafting table ALWAYS opens the 3×3 UI
         // (settled — never place a block onto the table itself, even while
         // holding one). creative: crafting hidden (plan 12.4) → the gate fails
         // and the click falls through to the normal place path (place AGAINST
         // the table when holding a block, otherwise nothing).
-        const hitBlock = world.getBlock(hit.x, hit.y, hit.z);
+        const hitBlock = hit ? world.getBlock(hit.x, hit.y, hit.z) : null;
         if (
           currentMode === 'survival' &&
+          hit &&
           hitBlock === BLOCK.CRAFTING_TABLE
         ) {
           setState('crafting');
           document.exitPointerLock?.(); // same order as the inventory open below
-        } else if (hitBlock === BLOCK.FURNACE) {
+        } else if (hit && hitBlock === BLOCK.FURNACE) {
           // Task 6: interacting with a furnace ALWAYS opens its panel (both
           // modes) — never place a block onto the furnace itself.
           openFurnaceAt(hit.x, hit.y, hit.z);
         } else {
-          viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
-          const t = placeTarget(hit);
-          const held = hotbar[selected];
-          const placeId = held ? blockFromItem(held.item) : null;
-          if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-            // no pay, no place: the stack is spent FIRST (creative's
-            // spendFromSlot is a free `true`), so a rejected spend never
-            // writes the world — unreachable in practice, structural defense
-            if (inventory.spendFromSlot(selected, 1)) {
-              world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
-              hud.setHotbar(hotbar, selected);
-              // Phase 3 Task 10: material-accurate place thud at the target
-              // centre (listener defaults to pos → full volume).
-              audio.play('place', materialGroup(placeId), {
-                pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
-              });
+          // Task 8: eat one apple — raycast miss OR a non-interactive face
+          // while holding an apple. eatFromSlot no-ops (ate false) for any
+          // other held item, so blocks/tools fall through to placing below.
+          // Full hunger still eats (overflow waste, Minecraft parity); the
+          // single setVitals path emits vitals-changed when hunger visibly
+          // moves and carries saturation silently otherwise (Task 9 gate).
+          // `v` is a const snapshot so the null guard below narrows for tsc.
+          const v = currentMode === 'survival' ? vitals : null;
+          const eaten = v !== null ? eatFromSlot(hotbar, selected) : null;
+          if (v !== null && eaten?.ate) {
+            inventory.setSlot(selected, eaten.slots[selected] ?? null);
+            setVitals(eat(v, APPLE_FOOD, APPLE_SAT));
+            hud.setHotbar(hotbar, selected);
+            // apple has no block form — reuse the soft place thud, no new timbre
+            audio.play('place', 'grass', { pos: player.position });
+            applyAdvancement({ type: 'ate', item: 'apple', mode: currentMode });
+          } else if (hit) {
+            viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
+            const t = placeTarget(hit);
+            const held = hotbar[selected];
+            const placeId = held ? blockFromItem(held.item) : null;
+            if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
+              // no pay, no place: the stack is spent FIRST (creative's
+              // spendFromSlot is a free `true`), so a rejected spend never
+              // writes the world — unreachable in practice, structural defense
+              if (inventory.spendFromSlot(selected, 1)) {
+                world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+                hud.setHotbar(hotbar, selected);
+                // Phase 3 Task 10: material-accurate place thud at the target
+                // centre (listener defaults to pos → full volume).
+                audio.play('place', materialGroup(placeId), {
+                  pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
+                });
+              }
             }
           }
         }
