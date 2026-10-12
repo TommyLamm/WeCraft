@@ -11,6 +11,7 @@ import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
+import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 import { blockFromItem, stackName, maxStack, starterSlots, type ItemId, type ItemStack } from './core/items';
 import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
@@ -31,7 +32,7 @@ import {
   hitMobId,
   attackMob,
 } from './player/interact';
-import { stepDrops, pickable, pickup, type DropEntity } from './world/drops';
+import { stepDrops, pickable, pickup, spawnDrop, type DropEntity } from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
   stepMobs,
@@ -53,6 +54,7 @@ import { createMenus } from './ui/menus';
 import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
+import { createFurnace } from './ui/furnace';
 import { createToasts } from './ui/toast';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
@@ -91,7 +93,8 @@ import {
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
 // handling as 'inventory' — the frame loop's final else keeps it static)
-type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'dead';
+// 'furnace' (Task 6): the furnace panel overlay (same frozen-world handling)
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'dead';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -129,6 +132,16 @@ const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
 // Task 11: standalone 3×3 crafting overlay (right-click on a crafting table)
 const craftUi = createCrafting(uiRoot);
+// Task 6: furnace overlay (right-click on a placed furnace) — callbacks only
+// (Decision A: ui never imports the bus).
+const furnaceUi = createFurnace(uiRoot, {
+  onTakeOutput: takeFurnaceOutput,
+  onSlotClick: clickFurnaceSlot,
+  onClose: () => {
+    setState('playing');
+    relockCanvas();
+  },
+});
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
 // Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
@@ -291,6 +304,89 @@ function craftingParams(size: 2 | 3): CraftingParams {
   };
 }
 
+// ---- Furnace state (Task 6) ----
+// Every placed furnace smelts on its own state, keyed by block coords
+// (`x,y,z`). Entries are created lazily on first open — a furnace is only
+// loadable through its panel, so an unopened furnace is always empty.
+const furnaces = new Map<string, FurnaceState>();
+let openFurnaceKey: string | null = null;
+
+const furnaceKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
+
+/** Take the whole output stack into the inventory (blocked when full). */
+function takeFurnaceOutput(): void {
+  if (!openFurnaceKey) return;
+  const st = furnaces.get(openFurnaceKey);
+  const out = st?.output;
+  if (!st || !out || !Number.isFinite(out.count) || out.count < 1) return;
+  if (!inventory.fits(out.item, out.count)) return; // full → blocked
+  giveItem(out.item, out.count);
+  const next: FurnaceState = { ...st, output: null };
+  furnaces.set(openFurnaceKey, next);
+  hud.setHotbar(hotbar, selected);
+  // TODO(phase4-7): AdvancementEvent gains 'smelt-take' in Task 7 — drop the bridge then.
+  applyAdvancement({ type: 'smelt-take', mode: currentMode } as unknown as AdvancementEvent);
+  furnaceUi.open(next);
+}
+
+/** Input/fuel slot click — crafting-cell semantics, moved by main (the UI only
+ *  notifies): filled → 1 returns to the inventory; empty → 1 moves in from the
+ *  selected hotbar slot when it holds an accepted item (smeltable/burnable). */
+function clickFurnaceSlot(which: 'input' | 'fuel'): void {
+  if (!openFurnaceKey) return;
+  const st = furnaces.get(openFurnaceKey);
+  if (!st) return;
+  const stack = which === 'input' ? st.input : st.fuel;
+  let next: FurnaceState | null = null;
+  if (stack && Number.isFinite(stack.count) && stack.count >= 1) {
+    if (giveItem(stack.item, 1) > 0) return; // inventory full → stays put
+    const rest = stack.count > 1 ? { item: stack.item, count: stack.count - 1 } : null;
+    next = which === 'input' ? { ...st, input: rest } : { ...st, fuel: rest };
+  } else {
+    const src = hotbar[selected];
+    if (!src || !Number.isFinite(src.count) || src.count < 1) return;
+    const accepted = which === 'input'
+      ? src.item in SMELT_RECIPES
+      : src.item in FUEL_VALUES;
+    if (!accepted) return;
+    if (!inventory.spendFromSlot(selected, 1)) return;
+    const moved = { item: src.item, count: 1 };
+    next = which === 'input' ? { ...st, input: moved } : { ...st, fuel: moved };
+  }
+  furnaces.set(openFurnaceKey, next);
+  hud.setHotbar(hotbar, selected);
+  furnaceUi.open(next);
+}
+
+/** Right-click on a placed furnace → standalone panel (both modes). */
+function openFurnaceAt(x: number, y: number, z: number): void {
+  openFurnaceKey = furnaceKey(x, y, z);
+  if (!furnaces.has(openFurnaceKey)) furnaces.set(openFurnaceKey, emptyFurnace());
+  setState('furnace');
+  document.exitPointerLock?.();
+}
+
+/** Wipe in-progress smelting on load/continue/respawn/new-game (Task 6):
+ *  furnace states are session-only and never persisted. Toasts 熔爐進度已重置
+ *  only when a cleared furnace actually held items. */
+function clearFurnaces(): void {
+  let held = false;
+  for (const st of furnaces.values()) {
+    if (st.input || st.fuel || st.output) {
+      held = true;
+      break;
+    }
+  }
+  furnaces.clear();
+  if (held) {
+    try {
+      toasts.push({ title: '熔爐進度已重置', description: '', icon: 'furnace' });
+    } catch {
+      /* passive UI only */
+    }
+  }
+}
+
 // ---- Combat / vitals tuning (Task 9) ----
 // Repeat hits on a held LMB are gated by a 0.6 s cooldown — without it the
 // per-frame attack dispatch would deal ~60 hits/s; while the cooldown runs a
@@ -426,7 +522,7 @@ const CLOUD_TOAST_ICON: ItemId = 'chest';
 const KNOWN_ITEMS: ReadonlySet<string> = new Set([
   'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
   'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
-  'crafting_table', 'chest',
+  'crafting_table', 'furnace', 'chest',
   'stick', 'coal', 'iron_ingot',
   'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe',
   'wooden_sword', 'stone_sword',
@@ -733,6 +829,7 @@ function setState(next: GameState): void {
   menus.hideAll();
   inv.close();
   craftUi.close(); // every transition clears the crafting overlay too (idempotent)
+  furnaceUi.close(); // same for the furnace overlay (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   if (next === 'title') {
     // Task 14: Continue renders iff a save exists (savedPayload — boot load
@@ -866,6 +963,17 @@ function setState(next: GameState): void {
         relockCanvas();
       },
     });
+  } else if (next === 'furnace') {
+    // Task 6: right-click on a placed furnace → standalone panel over the
+    // block's live state (both modes; the entry is created on open).
+    if (openFurnaceKey) {
+      let st = furnaces.get(openFurnaceKey);
+      if (!st) {
+        st = emptyFurnace();
+        furnaces.set(openFurnaceKey, st);
+      }
+      furnaceUi.open(st);
+    }
   }
 }
 
@@ -1233,6 +1341,7 @@ function resetWorld(): void {
   pendingGen.length = 0;
   pendingMesh.length = 0;
   resetSessionEntities();
+  clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
 }
 
 function startGame(): void {
@@ -1298,6 +1407,7 @@ function continueGame(payload: SavePayload): void {
   // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are
   // deliberately NOT cleared here: Continue applies onto the existing world.
   resetSessionEntities();
+  clearFurnaces(); // Task 6: furnace states are session-only (conditional toast inside)
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);
@@ -1378,6 +1488,7 @@ function handleContinue(): void {
 function handleRespawn(): void {
   setVitals(createVitals()); // hp 0 → 20 / hunger refilled — emits vitals-changed via the integer gate
   resetPlayerToSpawn(); // pos/vel/fallState/attackCd → spawn; inventory untouched
+  clearFurnaces(); // Task 6: in-progress smelting resets on respawn (conditional toast inside)
   setState('playing'); // resumes the world (playing block + render tail) + clears the overlay
   relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
 }
@@ -1653,6 +1764,12 @@ gs.renderer.setAnimationLoop(() => {
     // ---- 粒子（Task 4）：same solidity test as the player (water falls through)
     particles = stepParticles(particles, dt, (x, y, z) => world.isSolid(x, y, z));
 
+    // ---- 熔爐（Task 6）：every placed furnace smelts on its own state ----
+    for (const [key, fst] of furnaces) {
+      const stepped = stepFurnace(fst, dt);
+      if (stepped.state !== fst) furnaces.set(key, stepped.state);
+    }
+
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
     const mobsBefore = mobs.length;
     const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
@@ -1816,6 +1933,23 @@ gs.renderer.setAnimationLoop(() => {
           });
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
+          // Task 6: a mined furnace spills its whole contents and loses its state.
+          if (id === BLOCK.FURNACE) {
+            const key = furnaceKey(hit.x, hit.y, hit.z);
+            const fst = furnaces.get(key);
+            if (fst) {
+              furnaces.delete(key);
+              let spilled = false;
+              for (const held of [fst.input, fst.fuel, fst.output]) {
+                if (!held || !Number.isFinite(held.count) || held.count < 1) continue;
+                drops = spawnDrop(drops, held.item, held.count, {
+                  x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5,
+                });
+                spilled = true;
+              }
+              if (spilled) bus.emit('drops-changed', {});
+            }
+          }
           // Task 4: break burst — 12 debris particles in BOTH modes (creative
           // keeps the visual payoff; only the drop is survival-gated).
           particles = spawnBreakBurst(particles, id, {
@@ -1893,12 +2027,17 @@ gs.renderer.setAnimationLoop(() => {
         // holding one). creative: crafting hidden (plan 12.4) → the gate fails
         // and the click falls through to the normal place path (place AGAINST
         // the table when holding a block, otherwise nothing).
+        const hitBlock = world.getBlock(hit.x, hit.y, hit.z);
         if (
           currentMode === 'survival' &&
-          world.getBlock(hit.x, hit.y, hit.z) === BLOCK.CRAFTING_TABLE
+          hitBlock === BLOCK.CRAFTING_TABLE
         ) {
           setState('crafting');
           document.exitPointerLock?.(); // same order as the inventory open below
+        } else if (hitBlock === BLOCK.FURNACE) {
+          // Task 6: interacting with a furnace ALWAYS opens its panel (both
+          // modes) — never place a block onto the furnace itself.
+          openFurnaceAt(hit.x, hit.y, hit.z);
         } else {
           viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
           const t = placeTarget(hit);
@@ -1980,7 +2119,7 @@ gs.renderer.setAnimationLoop(() => {
     refreshQueues();
     processQueues();
   } else {
-    // paused | inventory | crafting | dead: keep the frozen world view (plan's single
+    // paused | inventory | crafting | furnace | dead: keep the frozen world view (plan's single
     // else ran the orbit here too — that would yank the camera on pause).
     // 'dead' renders the world behind the death-screen overlay (Task 10).
     hud.setDebug(null);

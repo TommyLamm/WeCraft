@@ -27,6 +27,7 @@ describe('materialGroup', () => {
       [BLOCK.COAL_ORE]: 'stone',
       [BLOCK.IRON_ORE]: 'stone',
       [BLOCK.CRAFTING_TABLE]: 'wood',
+      [BLOCK.FURNACE]: 'stone',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

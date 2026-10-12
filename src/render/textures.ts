@@ -148,6 +148,24 @@ export function drawAtlas(): AtlasImage {
     const d = band + tool + line;
     return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
   }); // crafting_side
+  put(19, (x, y, r) => {
+    // furnace top: stone base + black furnace mouth (8×8) in the middle
+    const mouth = x >= 4 && x <= 11 && y >= 4 && y <= 11;
+    if (mouth) return vary([22, 22, 22, 255], r, 12);
+    const v = (x * 3 + y * 7) % 5 === 0 ? -22 : 0;
+    const c = vary([125, 125, 125, 255], r, 20);
+    return [clamp255(c[0] + v), clamp255(c[1] + v), clamp255(c[2] + v), 255];
+  }); // furnace_top
+  put(20, (x, y, r) => {
+    // furnace side: stone base + black door frame with an orange fire core
+    const door = x >= 5 && x <= 10 && y >= 6 && y <= 13;
+    const core = x >= 6 && x <= 9 && y >= 8 && y <= 12;
+    if (core) return vary([235, 120, 25, 255], r, 30);
+    if (door) return vary([25, 25, 25, 255], r, 12);
+    const v = (x * 3 + y * 7) % 5 === 0 ? -22 : 0;
+    const c = vary([125, 125, 125, 255], r, 20);
+    return [clamp255(c[0] + v), clamp255(c[1] + v), clamp255(c[2] + v), 255];
+  }); // furnace_side
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

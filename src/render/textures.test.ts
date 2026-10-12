@@ -191,6 +191,47 @@ describe('textures', () => {
       for (let x = 0; x < TILE_PX; x++) body += tilePixel(atlas, CRAFTING_SIDE, x, y)[0];
     expect(band / 64).toBeLessThan(body / 96 - 15);
   });
+
+  it('furnace (Task 6): top + side tiles are painted, never full magenta', () => {
+    const FURNACE_TOP = 19;
+    const FURNACE_SIDE = 20;
+    const atlas = drawAtlas();
+    for (const tile of [FURNACE_TOP, FURNACE_SIDE]) {
+      let magenta = 0;
+      let opaque = 0;
+      for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+          const [r, g, b, a] = tilePixel(atlas, tile, x, y);
+          if (a === 255) opaque++;
+          if (r === 255 && g === 0 && b === 255) magenta++;
+        }
+      }
+      // undrawn layers stay opaque magenta (buildTextureArray debug fill) —
+      // a painted tile must never be all magenta or it glitches in-game
+      expect(opaque, `tile ${tile} opaque`).toBe(TILE_PX * TILE_PX);
+      expect(magenta, `tile ${tile} magenta`).toBeLessThan(TILE_PX * TILE_PX);
+    }
+    // top: the black furnace mouth in the middle is darker than the stone rim
+    let mouth = 0;
+    let rim = 0;
+    for (let y = 0; y < TILE_PX; y++) {
+      for (let x = 0; x < TILE_PX; x++) {
+        const r = tilePixel(atlas, FURNACE_TOP, x, y)[0];
+        if (x >= 4 && x <= 11 && y >= 4 && y <= 11) mouth += r;
+        else rim += r;
+      }
+    }
+    expect(mouth / 64).toBeLessThan(rim / 192 - 15);
+    // side: the orange fire core reads warm (r clearly above b)
+    let warm = 0;
+    for (let y = 0; y < TILE_PX; y++) {
+      for (let x = 0; x < TILE_PX; x++) {
+        const [r, , b] = tilePixel(atlas, FURNACE_SIDE, x, y);
+        if (r - b > 60) warm++;
+      }
+    }
+    expect(warm).toBeGreaterThan(0);
+  });
 });
 
 // ---- Task 15: texture array for greedy-mesh sampling ----

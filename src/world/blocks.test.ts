@@ -53,4 +53,19 @@ describe('blocks', () => {
     expect(def.top).not.toBe(def.side); // grid top vs tool-front side
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.CRAFTING_TABLE); // crafted, not given
   });
+
+  it('furnace: id 16, solid, opaque, hardness 3.0, placeable, stone-bottom tiles (Task 6)', () => {
+    expect(BLOCK.FURNACE).toBe(16);
+    const def = getBlockDef(BLOCK.FURNACE);
+    expect(def.name).toBe('furnace');
+    expect(def.hardness).toBe(3.0);
+    expect(isSolid(BLOCK.FURNACE)).toBe(true);
+    expect(isTransparent(BLOCK.FURNACE)).toBe(false);
+    expect(PLACEABLE).toContain(BLOCK.FURNACE);
+    expect(def.top).toBe(19); // FURNACE_TOP
+    expect(def.side).toBe(20); // FURNACE_SIDE
+    expect(def.bottom).toBe(getBlockDef(BLOCK.STONE).top); // stone bottom
+    expect(def.top).not.toBe(def.side); // mouth top vs door side
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.FURNACE); // palette/creative only, not starter
+  });
 });

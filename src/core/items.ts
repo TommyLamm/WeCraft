@@ -3,7 +3,7 @@ import { BLOCK, HOTBAR_DEFAULT, type BlockId } from '../world/blocks';
 export type ItemId =
   | 'grass' | 'dirt' | 'stone' | 'cobblestone' | 'oak_log' | 'oak_planks'
   | 'sand' | 'gravel' | 'glass' | 'coal_ore' | 'iron_ore'
-  | 'crafting_table' | 'chest'
+  | 'crafting_table' | 'furnace' | 'chest'
   | 'stick' | 'coal' | 'iron_ingot'
   | 'wooden_pickaxe' | 'stone_pickaxe' | 'wooden_axe' | 'stone_axe'
   | 'wooden_sword' | 'stone_sword'
@@ -34,6 +34,7 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['snow_block', BLOCK.SNOW],
   ['bedrock', BLOCK.BEDROCK],
   ['crafting_table', BLOCK.CRAFTING_TABLE],
+  ['furnace', BLOCK.FURNACE],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

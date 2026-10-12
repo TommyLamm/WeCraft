@@ -15,6 +15,7 @@ export const BLOCK = {
   COAL_ORE: 13,
   IRON_ORE: 14,
   CRAFTING_TABLE: 15,
+  FURNACE: 16,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -37,13 +38,14 @@ const T = {
   SNOW_TOP: 12, SNOW_SIDE: 13, GLASS: 14,
   COAL: 15, IRON: 16,
   CRAFTING_TOP: 17, CRAFTING_SIDE: 18,
+  FURNACE_TOP: 19, FURNACE_SIDE: 20,
 } as const;
 
-/** Tiles `T` defines (0..TILE_COUNT-1) — `CRAFTING_SIDE` is the highest tile.
+/** Tiles `T` defines (0..TILE_COUNT-1) — `FURNACE_SIDE` is the highest tile.
  *  drawAtlas paints exactly these; the texture array fills every layer past
  *  them with the magenta debug color, so adding a tile to T without drawing it
  *  fails loudly instead of silently sampling magenta in-game. */
-export const TILE_COUNT = T.CRAFTING_SIDE + 1;
+export const TILE_COUNT = T.FURNACE_SIDE + 1;
 
 const DEFS: Record<number, BlockDef> = {
   0: { id: 0, name: 'air', hardness: 0, solid: false, transparent: true, top: 0, side: 0, bottom: 0 },
@@ -62,6 +64,7 @@ const DEFS: Record<number, BlockDef> = {
   13: { id: 13, name: 'coal_ore', hardness: 2.5, solid: true, transparent: false, top: T.COAL, side: T.COAL, bottom: T.COAL },
   14: { id: 14, name: 'iron_ore', hardness: 3.0, solid: true, transparent: false, top: T.IRON, side: T.IRON, bottom: T.IRON },
   15: { id: 15, name: 'crafting_table', hardness: 2.5, solid: true, transparent: false, top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS },
+  16: { id: 16, name: 'furnace', hardness: 3.0, solid: true, transparent: false, top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -74,7 +77,7 @@ export const isTransparent = (id: number): boolean => getBlockDef(id).transparen
 export const PLACEABLE: BlockId[] = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLE, BLOCK.PLANKS,
   BLOCK.LOG, BLOCK.LEAVES, BLOCK.SAND, BLOCK.GLASS, BLOCK.SNOW,
-  BLOCK.BEDROCK, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.CRAFTING_TABLE,
+  BLOCK.BEDROCK, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.CRAFTING_TABLE, BLOCK.FURNACE,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [
