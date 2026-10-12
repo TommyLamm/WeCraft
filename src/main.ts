@@ -64,6 +64,21 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
+// Phase 4 Task 4: cloud save — pure data rules (cloud-save.ts) + the visitor-safe
+// platform client (platform/playroom.ts); all state/load/checkpoint wiring below
+// lives here at the composition root.
+import { createCloudClient, type CloudStatus } from './platform/playroom';
+import {
+  acceptCloudData,
+  buildCloudData,
+  byteSizeOf,
+  shouldAllowSave,
+  classifyCloudError,
+  CLOUD_FORMAT_VERSION,
+  CLOUD_MAX_BYTES,
+  type CloudData,
+  type CloudErrorKind,
+} from './core/cloud-save';
 // Task 11–12: progress core (pure rules/state) + the unlock-event/toast wiring
 // below — `applyAdvancement` is the single feed point for every unlock event.
 import {
@@ -102,7 +117,12 @@ const clouds = createClouds(gs.scene, settings.seed);
 // Phase 3 Task 8: first-person held item — camera-attached block cube / icon
 // plane; the icon factory is injected (render/ never imports ui/)
 const viewmodel = createViewmodel(gs.scene, gs.camera, itemIcon);
-const terrain = new TerrainWorkerClient(settings.seed);
+let terrain = new TerrainWorkerClient(settings.seed);
+/** Generation epoch for the async chunk fill (Phase 4 Task 4): a cloud-seed
+ *  switch rebuilds `terrain` + the world while fills from the old client may
+ *  still be in flight — the response handler drops fills from a past epoch so
+ *  stale-seed chunks can never stick (generated-keyed, never regenerated). */
+let terrainEpoch = 0;
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
 const menus = createMenus(uiRoot);
@@ -172,6 +192,10 @@ function applyAdvancement(ev: AdvancementEvent): void {
     const def = ADVANCEMENTS.find((a) => a.id === id);
     if (def) toasts.push({ title: def.title, description: def.description, icon: def.icon });
   }
+  // Phase 4 Task 4 checkpoint (a): an unlock snapshots live progress to the
+  // cloud slot — fire-and-forget alongside (never blocking); saveCloudNow is
+  // total, so this cannot throw into the gameplay paths above.
+  if (r.unlocked.length > 0) void saveCloudNow('advancement');
 }
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
@@ -365,6 +389,59 @@ const AUTOSAVE_INTERVAL_SEC = 30;
  *  hidden/visible flips must not spam IDB. */
 let lastBgSave = 0;
 const BG_SAVE_DEBOUNCE_MS = 2000;
+
+// ---- 雲端進度（Phase 4 Task 4）----
+// The platform client is visitor/standalone-safe (Task 3): every SDK failure
+// degrades to a status, init/load/save never throw for a missing SDK —
+// save() rethrows only genuine platform errors for classification below.
+// `cloudRevision` is the guard from Task 2: null (never read / unreadable)
+// means NO send may ever overwrite the slot; 0 is an explicitly-read empty
+// slot that the first save may claim.
+const cloud = createCloudClient();
+let cloudRevision: number | null = null;
+/** FORMAT / REQUEST_REUSED lock (Ruling D: `error` covers both) — no sends. */
+let cloudLocked = false;
+/** AUTH stop — no sends (re-login has no path this phase; play continues). */
+let cloudAuthStopped = false;
+/** A conflict was reloaded-and-applied — the pause row shows 有新進度＋重試. */
+let cloudConflict = false;
+/** NETWORK-kind failure (or applied conflict) — the pause row offers 重試. */
+let cloudRetryable = false;
+/** Last save-side failure kind (null = none yet); drives the pause row. */
+let cloudFailureKind: CloudErrorKind | 'CONFLICT' | null = null;
+/** Frozen snapshot for sends — a retry reuses this SAME {data, requestId}. */
+let pendingCloud: { data: CloudData; requestId: string } | null = null;
+/** In-flight guard (Ruling: boolean/string guard, no queue) — a second
+ *  trigger while one send is in flight is dropped, not queued. */
+let cloudInFlight = false;
+/** Seconds accumulator toward the 60 s cloud checkpoint while playing. */
+let cloudAcc = 0;
+const CLOUD_INTERVAL_SEC = 60;
+/** Toast icon for cloud notices (toasts require an ItemId — the chest is the
+ *  neutral storage metaphor; copy itself carries the meaning). */
+const CLOUD_TOAST_ICON: ItemId = 'chest';
+/** Runtime allow-list mirroring the ItemId union (items.ts) — the cloud apply
+ *  path drops whole-stack entries with unknown ids (entry only, never the
+ *  whole inventory) and entries with illegal counts (Ruling: apply-side). */
+const KNOWN_ITEMS: ReadonlySet<string> = new Set([
+  'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
+  'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
+  'crafting_table', 'chest',
+  'stick', 'coal', 'iron_ingot',
+  'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe',
+  'wooden_sword', 'stone_sword',
+  'arrow', 'apple',
+  'oak_leaves', 'snow_block', 'bedrock',
+]);
+
+/** Best-effort cloud notice — toasts never break gameplay when they fail. */
+function pushCloudToast(title: string): void {
+  try {
+    toasts.push({ title, description: '', icon: CLOUD_TOAST_ICON });
+  } catch {
+    /* passive UI only */
+  }
+}
 
 // ---- 生存 HUD（Task 4）----
 // .vitals 容器：same programmatic markup pattern as hud/menus/inventory
@@ -603,8 +680,12 @@ function processQueues(): void {
     }
     pendingGen.shift();
     genInFlight.add(key);
+    const epoch = terrainEpoch;
     void terrain.request(cx, cz).then((resp) => {
       genInFlight.delete(key);
+      // Phase 4 Task 4: a cloud-seed switch rebuilds the worker mid-flight —
+      // fills generated under a past epoch carry the OLD seed and are dropped.
+      if (epoch !== terrainEpoch) return;
       // fill-if-not-generated response handler (shipped main.ts pattern wins over plan's `if (hasChunk) return`)
       const data = new Uint8Array(resp.buffer);
       const existing = world.getChunk(cx, cz);
@@ -695,6 +776,9 @@ function setState(next: GameState): void {
         void saveGame(payload).then(
           () => {
             savedPayload = payload; // boot check may predate this save
+            // Phase 4 Task 4 checkpoint (b): cloud snapshot after the IDB
+            // success — alongside, never blocking the quit below.
+            void saveCloudNow('save-quit');
             quitToTitle();
           },
           () => quitToTitle(), // best-effort: still quit; savedPayload stays honest
@@ -723,6 +807,9 @@ function setState(next: GameState): void {
         saveSettings({ clouds: next });
         clouds.setEnabled(next);
       },
+      // Phase 4 Task 4: cloud sync row — snapshot at open (re-rendered on the
+      // next pause open, or after a retry completes while still paused).
+      ...cloudPauseOpts(),
     });
   } else if (next === 'dead') {
     // Death screen + respawn (Task 10). Callback-opts like menus.showPause —
@@ -851,6 +938,248 @@ function persistNow(): void {
     .catch(() => {
       /* best-effort: on failure the previous savedPayload stays honest */
     });
+}
+
+/** Apply a validated cloud payload to the live session (Phase 4 Task 4 boot +
+ *  conflict paths). Mirrors continueGame's order WITHOUT the world edits
+ *  (modified voxels never travel — brief ruling): seed → fresh world on that
+ *  seed, then player/mode/inventory/vitals, advancements, settings subset
+ *  (persisted + live-applied through the existing resume path) and the clock.
+ *  `data` is always fresh from acceptCloudData — handing over its references
+ *  is safe (later buildCloudData snapshots deep-copy again). */
+function applyCloudData(data: CloudData): void {
+  // Settings subset → persist + in-memory + live-apply (the pause-resume path).
+  saveSettings({ seed: data.seed, ...data.settings });
+  const prevRd = settings.renderDistance;
+  Object.assign(settings, loadSettings());
+  audio.setVolume(settings.volume);
+  if (settings.renderDistance !== prevRd) applyRenderDistanceFog();
+  gs.setShadowsEnabled(settings.shadows);
+  clouds.setEnabled(settings.clouds);
+  // Seed → fresh world generated with the cloud seed: the worker client is
+  // seed-pinned at construction, so it is rebuilt and the epoch guard drops
+  // any fills still in flight from the old client.
+  terrainEpoch += 1;
+  terrain = new TerrainWorkerClient(settings.seed);
+  resetWorld();
+  resetSessionEntities(); // entities are never persisted — drop stale ones
+  // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
+  player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
+  player.yaw = data.yaw;
+  fallState = resetFall();
+  attackCd = 0;
+  deathCause = null;
+  biomeNow = biomeAt(player.position.x, player.position.z, settings.seed);
+  // Mode/inventory/vitals — DIRECT, not through the mode-changed event: that
+  // handler's creative refill / fresh-vitals side effects would clobber the
+  // restored slots and vitals (same reason as continueGame).
+  currentMode = data.settings.mode;
+  input.setFlyEnabled(currentMode === 'creative');
+  inventory.setMode(currentMode);
+  for (let i = 0; i < hotbar.length; i++) {
+    const s = data.inventory[i];
+    if (
+      !s ||
+      typeof s.item !== 'string' ||
+      !KNOWN_ITEMS.has(s.item) ||
+      typeof s.count !== 'number' ||
+      !Number.isFinite(s.count) ||
+      s.count <= 0
+    ) {
+      inventory.setSlot(i, null); // unknown id / illegal count: drop the entry only
+      continue;
+    }
+    // setSlot floors + clamps to maxStack (fractional/overfull counts survive).
+    inventory.setSlot(i, { item: s.item as ItemId, count: s.count });
+  }
+  hud.setHotbar(hotbar, selected);
+  setVitals(
+    currentMode === 'survival'
+      ? data.vitals
+        ? { ...data.vitals }
+        : createVitals()
+      : null,
+  );
+  advancements = data.advancements;
+  // Clock — dayLengthSec stays settings-driven, t restored; setPhase is a
+  // pre-start no-op for cues and pins the phase for the next session.
+  clock = createClock(settings.dayLengthSec);
+  clock.t = data.clockT;
+  audio.setPhase(phaseOf(clock.t));
+}
+
+/** Checkpoint: snapshot live progress to the cloud slot (Phase 4 Task 4).
+ *  Best-effort and TOTAL — every trigger `void`s this; alongside the IDB
+ *  saves, never blocking them. Guards in order: unread revision (null) never
+ *  uploads (a failed/unread slot must not be overwritten); FORMAT/REUSED
+ *  locks and the AUTH stop end sends; a second trigger mid-flight is dropped;
+ *  oversize payloads toast and return (IDB still saves via its own path). */
+async function saveCloudNow(reason: string): Promise<void> {
+  void reason; // checkpoint label for future diagnostics; behavior is identical
+  try {
+    if (!shouldAllowSave({ revision: cloudRevision })) return;
+    if (cloudRevision === null || cloudLocked || cloudAuthStopped || cloudInFlight) return;
+    const data = buildCloudData({
+      seed: settings.seed,
+      pos: [player.position.x, player.position.y, player.position.z],
+      yaw: player.yaw,
+      vitals: vitals ? { ...vitals } : null,
+      clockT: clock.t,
+      inventory: [...hotbar],
+      advancements,
+      settings,
+    });
+    if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
+      pushCloudToast('雲端空間不足，僅本機存檔');
+      return;
+    }
+    pendingCloud = { data, requestId: crypto.randomUUID() };
+    await sendPendingCloud();
+  } catch {
+    /* best-effort: local snapshot failures must not break gameplay (the
+       cloud.save throw is classified inside sendPendingCloud, not here) */
+  }
+}
+
+/** Send `pendingCloud` with its frozen requestId — a retry reuses this SAME
+ *  object (brief). The thrown error is classified HERE (Ruling D): CONFLICT →
+ *  reload-and-apply; FORMAT / REQUEST_REUSED → lock further sends (REUSED
+ *  reuses the 同步失敗 copy, no retry button); AUTH → stop + 請重新登入;
+ *  NETWORK (+ UNAVAILABLE) → keep revision and snapshot for 重試. Total. */
+async function sendPendingCloud(): Promise<void> {
+  if (
+    !pendingCloud ||
+    cloudRevision === null ||
+    cloudLocked ||
+    cloudAuthStopped ||
+    cloudInFlight
+  ) {
+    return;
+  }
+  cloudInFlight = true;
+  const snapshot = pendingCloud;
+  try {
+    const res = await cloud.save(
+      snapshot.data,
+      cloudRevision,
+      CLOUD_FORMAT_VERSION,
+      snapshot.requestId,
+    );
+    if (!res) {
+      // Preview-mode null (Task 3 passthrough): no revision to record — drop
+      // the snapshot without touching flags or the row.
+      pendingCloud = null;
+      return;
+    }
+    cloudRevision = res.revision;
+    pendingCloud = null;
+    cloudConflict = false;
+    cloudRetryable = false;
+    cloudFailureKind = null;
+  } catch (err) {
+    const kind = classifyCloudError(err);
+    if (kind === 'CONFLICT') {
+      await resolveCloudConflict();
+    } else if (kind === 'FORMAT') {
+      cloudLocked = true;
+      cloudFailureKind = 'FORMAT';
+      cloudRetryable = false;
+      pendingCloud = null;
+      pushCloudToast('雲端格式不相容，僅本機存檔');
+    } else if (kind === 'REQUEST_REUSED') {
+      cloudLocked = true;
+      cloudFailureKind = 'REQUEST_REUSED';
+      cloudRetryable = false;
+      pendingCloud = null;
+      pushCloudToast('雲端同步失敗，僅本機存檔');
+    } else if (kind === 'AUTH') {
+      cloudAuthStopped = true;
+      cloudFailureKind = 'AUTH';
+      cloudRetryable = false;
+      pendingCloud = null;
+      pushCloudToast('請重新登入');
+    } else {
+      // NETWORK + UNAVAILABLE: keep the revision AND the snapshot — the pause
+      // row offers 重試 with the same {data, requestId}.
+      cloudFailureKind = kind;
+      cloudRetryable = true;
+    }
+  } finally {
+    cloudInFlight = false;
+  }
+}
+
+/** CONFLICT tail (brief 4.3): re-read the slot and apply it — the other
+ *  device's progress wins; toast 雲端有新進度，已同步 and the pause row shows
+ *  有新進度＋重試. An unreadable reload keeps the snapshot for a manual retry
+ *  (a resend re-conflicts and reloads again — self-healing on user clicks);
+ *  a format mismatch locks instead of retrying forever. Total. */
+async function resolveCloudConflict(): Promise<void> {
+  try {
+    const fresh = await cloud.load();
+    if (fresh && fresh.formatVersion !== CLOUD_FORMAT_VERSION) {
+      cloudLocked = true;
+      cloudFailureKind = 'FORMAT';
+      cloudRetryable = false;
+      pendingCloud = null;
+      pushCloudToast('雲端格式不相容，僅本機存檔');
+      return;
+    }
+    const accepted = fresh ? acceptCloudData(fresh.data) : null;
+    if (!fresh || !accepted) {
+      cloudFailureKind = 'NETWORK';
+      cloudRetryable = true;
+      return;
+    }
+    applyCloudData(accepted);
+    cloudRevision = fresh.revision;
+    pendingCloud = null;
+    cloudConflict = true;
+    cloudRetryable = true;
+    cloudFailureKind = 'CONFLICT';
+    pushCloudToast('雲端有新進度，已同步');
+  } catch {
+    cloudFailureKind = 'NETWORK';
+    cloudRetryable = true;
+  }
+}
+
+/** Pause-menu 重試: resend the kept snapshot (same requestId), or a fresh
+ *  checkpoint when there is none (post-conflict row). Drops when a send is
+ *  already in flight; re-renders the pause row if still paused so the retry
+ *  gives immediate feedback. */
+function retryCloudNow(): void {
+  if (cloudInFlight) return;
+  const done = pendingCloud ? sendPendingCloud() : saveCloudNow('retry');
+  void done.finally(() => {
+    if (state === 'paused') setState('paused');
+  });
+}
+
+/** Snapshot the pause menu's cloud opts (Phase 4 Task 4): the row copy comes
+ *  from the client status + the save-side flags — `error` alone cannot tell a
+ *  retryable NETWORK failure from a locked REQUEST_REUSED one (Ruling D), so
+ *  `cloudRetryable` carries that distinction for the button. */
+function cloudPauseOpts(): {
+  cloudStatus: CloudStatus;
+  cloudRetryable: boolean;
+  onRetryCloud: () => void;
+} {
+  const s = cloud.status;
+  if (s === 'guest') return { cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: retryCloudNow };
+  if (s === 'unknown' || s === 'unsupported') {
+    return { cloudStatus: 'unsupported', cloudRetryable: false, onRetryCloud: retryCloudNow };
+  }
+  if (cloudFailureKind === 'FORMAT' || s === 'format') {
+    return { cloudStatus: 'format', cloudRetryable: false, onRetryCloud: retryCloudNow };
+  }
+  if (cloudConflict || s === 'conflict') {
+    return { cloudStatus: 'conflict', cloudRetryable: cloudRetryable, onRetryCloud: retryCloudNow };
+  }
+  if (s === 'error' || cloudRetryable || cloudFailureKind !== null) {
+    return { cloudStatus: 'error', cloudRetryable: cloudRetryable, onRetryCloud: retryCloudNow };
+  }
+  return { cloudStatus: 'ready', cloudRetryable: false, onRetryCloud: retryCloudNow };
 }
 
 /** Shared quit-to-title tail (pause 回到標題 / 儲存並離開 / death quit): ends
@@ -1144,10 +1473,48 @@ hud.setHotbar(hotbar, selected);
 // renders iff loadGame() found a payload (settled: hidden when there is none,
 // async → title with the conditional button). loadGame never rejects (null on
 // any failure); state already IS 'title', this only (re)renders the menu.
-void loadGame().then((payload) => {
-  savedPayload = payload;
+// Phase 4 Task 4 boot (4.1–4.2): cloud init never blocks the title (Task 3's
+// init is total — failure lands on `unsupported`, never `unknown`/`error` in
+// practice); then, with hasSave settled and BEFORE the first title render, a
+// loadable slot (anything but guest/unsupported) is read — success+valid
+// applies onto the live boot state and records the revision, an empty slot
+// records revision 0, any failure toasts 雲端讀取失敗，本機繼續 and guards
+// (revision null: no send may ever overwrite the unread slot).
+void (async () => {
+  try {
+    await cloud.init();
+  } catch {
+    /* defensive: createCloudClient.init never rejects — the title mounts anyway */
+  }
+  savedPayload = await loadGame();
+  if (cloud.status !== 'guest' && cloud.status !== 'unsupported') {
+    try {
+      const res = await cloud.load();
+      if (!res) {
+        cloudRevision = 0; // empty slot — the first checkpoint may claim it
+      } else if (res.formatVersion !== CLOUD_FORMAT_VERSION) {
+        cloudLocked = true;
+        cloudFailureKind = 'FORMAT';
+        cloudRevision = null; // never overwrite an unreadable-format slot
+      } else {
+        const data = acceptCloudData(res.data);
+        if (data) {
+          applyCloudData(data);
+          cloudRevision = res.revision;
+        } else {
+          cloudRevision = null;
+          pushCloudToast('雲端讀取失敗，本機繼續');
+        }
+      }
+    } catch {
+      cloudRevision = null; // guard: no send may overwrite an unread slot
+      pushCloudToast('雲端讀取失敗，本機繼續');
+    }
+  } else {
+    cloudRevision = null; // guest/standalone — local saves only, zero noise
+  }
   setState('title');
-});
+})();
 
 gs.renderer.setAnimationLoop(() => {
   const now = performance.now();
@@ -1344,6 +1711,17 @@ gs.renderer.setAnimationLoop(() => {
       if (saveAcc >= AUTOSAVE_INTERVAL_SEC) {
         saveAcc = 0;
         persistNow();
+      }
+
+      // Phase 4 Task 4 checkpoint (c): cloud snapshot every 60 s while playing
+      // — alongside the IDB autosave, never blocking it (both fire-and-forget
+      // best-effort). rAF only ticks in 'playing', so background tabs and dead
+      // sessions never accumulate; close-tab saves are deliberately NOT relied
+      // on (settled: no beforeunload cloud save).
+      cloudAcc += dt;
+      if (cloudAcc >= CLOUD_INTERVAL_SEC) {
+        cloudAcc = 0;
+        void saveCloudNow('interval');
       }
 
       // 相機（first-person eye；F5 加 third-person offset）

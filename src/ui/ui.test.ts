@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHud, formatDebugLines } from './hud';
 import { createMenus } from './menus';
+import type { CloudStatus } from '../platform/playroom';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
 import { itemFromBlock, maxStack, stackFromBlock, type ItemStack } from '../core/items';
@@ -249,7 +250,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     expect(root.textContent).toContain('遊戲已暫停');
     btnByText(root, '繼續遊戲').click();
     expect(onResume).toHaveBeenCalled();
@@ -260,7 +261,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(menus.isVisible()).toBe(false);
@@ -270,7 +271,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     menus.hideAll();
     document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
     expect(onResume).not.toHaveBeenCalled();
@@ -280,7 +281,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onResume = vi.fn(() => menus.hideAll());
-    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w' }));
     expect(onResume).not.toHaveBeenCalled();
     menus.hideAll();
@@ -290,7 +291,7 @@ describe('pause menu', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     btnByText(root, '回到標題').click();
     expect(onQuit).toHaveBeenCalled();
     menus.hideAll();
@@ -301,7 +302,7 @@ describe('pause menu', () => {
     const menus = createMenus(root);
     const onSaveQuit = vi.fn();
     const onQuit = vi.fn();
-    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit });
+    menus.showPause({ onResume: () => {}, onQuit, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     expect(root.textContent).toContain('儲存並離開');
     btnByText(root, '儲存並離開').click();
     expect(onSaveQuit).toHaveBeenCalledTimes(1);
@@ -321,7 +322,7 @@ describe('pause menu', () => {
         mode: loadSettings().mode === 'survival' ? 'creative' : 'survival',
       });
     });
-    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     btnByText(root, 'Mode: Survival').click();
     expect(onToggleMode).toHaveBeenCalledTimes(1);
     // pause re-renders from settings → label flips without reopening the menu
@@ -337,7 +338,7 @@ describe('pause menu', () => {
     const onResume = vi.fn();
     const onQuit = vi.fn();
     const onToggleMode = vi.fn();
-    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {} });
+    menus.showPause({ onResume, onQuit, onToggleMode, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
     btnByText(root, '繼續遊戲').click();
     btnByText(root, '回到標題').click();
     btnByText(root, 'Mode: Survival').click();
@@ -361,6 +362,9 @@ describe('pause menu', () => {
       onToggleShadows,
       onToggleClouds: () => {},
       onSaveQuit: () => {},
+      cloudStatus: 'guest',
+      cloudRetryable: false,
+      onRetryCloud: () => {},
     });
     expect(root.textContent).toContain('陰影：開'); // default is on
     btnByText(root, '陰影：開').click();
@@ -386,6 +390,9 @@ describe('pause menu', () => {
       onToggleShadows: () => {},
       onToggleClouds,
       onSaveQuit: () => {},
+      cloudStatus: 'guest',
+      cloudRetryable: false,
+      onRetryCloud: () => {},
     });
     expect(root.textContent).toContain('雲：開'); // default is on
     btnByText(root, '雲：開').click();
@@ -407,6 +414,9 @@ describe('pause menu', () => {
       onToggleShadows: () => {},
       onToggleClouds: () => {},
       onSaveQuit: () => {},
+      cloudStatus: 'guest',
+      cloudRetryable: false,
+      onRetryCloud: () => {},
     });
     btnByText(root, '設定').click();
     const ranges = [...root.querySelectorAll('input[type="range"]')] as HTMLInputElement[];
@@ -419,5 +429,86 @@ describe('pause menu', () => {
     btnByText(root, '返回').click();
     expect(root.textContent).toContain('遊戲已暫停');
     menus.hideAll();
+  });
+});
+
+describe('pause cloud row (Phase 4 Task 4)', () => {
+  const cloudBase = {
+    onResume: () => {},
+    onQuit: () => {},
+    onToggleMode: () => {},
+    onToggleShadows: () => {},
+    onToggleClouds: () => {},
+    onSaveQuit: () => {},
+  };
+
+  function showCloud(status: CloudStatus, retryable: boolean, onRetry: () => void = () => {}): HTMLElement {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ ...cloudBase, cloudStatus: status, cloudRetryable: retryable, onRetryCloud: onRetry });
+    return root;
+  }
+
+  function retryButtons(root: HTMLElement): HTMLButtonElement[] {
+    return [...root.querySelectorAll('button')].filter((b) => b.textContent === '重試');
+  }
+
+  const rowCases: Array<[CloudStatus, boolean, string]> = [
+    ['guest', false, '雲端：訪客本機遊玩'],
+    ['unsupported', false, '雲端：不支援'],
+    ['ready', false, '雲端：已同步'],
+    ['error', true, '雲端：同步失敗（重試）'],
+    ['error', false, '雲端：同步失敗'],
+    ['conflict', true, '雲端：有新進度'],
+    ['format', false, '雲端：格式不相容'],
+  ];
+  it.each(rowCases)(
+    'renders %s (retryable=%s) as %s',
+    (status, retryable, text) => {
+      const root = showCloud(status, retryable);
+      expect(root.textContent).toContain(text);
+      if (status === 'error' && !retryable) {
+        expect(root.textContent).not.toContain('（重試）');
+      }
+    },
+  );
+
+  it('guest row is gray and silent (no toast path, no retry button)', () => {
+    const root = showCloud('guest', false);
+    const line = root.querySelector('.ui-cloud-guest');
+    expect(line).not.toBeNull();
+    expect(line!.textContent).toBe('雲端：訪客本機遊玩');
+    expect(retryButtons(root).length).toBe(0);
+  });
+
+  it('重試 button appears only in retryable states, and click fires onRetryCloud', () => {
+    // retryable: NETWORK-kind error + applied conflict
+    for (const status of ['error', 'conflict'] as CloudStatus[]) {
+      document.getElementById('ui-root')!.innerHTML = '';
+      const onRetry = vi.fn();
+      const root = showCloud(status, true, onRetry);
+      const buttons = retryButtons(root);
+      expect(buttons.length).toBe(1);
+      buttons[0].click();
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    }
+    // locked error, format, guest, unsupported, ready: no button
+    for (const [status, retryable] of [
+      ['error', false],
+      ['format', false],
+      ['guest', false],
+      ['unsupported', false],
+      ['ready', false],
+    ] as Array<[CloudStatus, boolean]>) {
+      document.getElementById('ui-root')!.innerHTML = '';
+      const root = showCloud(status, retryable);
+      expect(retryButtons(root).length).toBe(0);
+    }
+  });
+
+  it('cloud row is the last line of the pause menu', () => {
+    const root = showCloud('ready', false);
+    const overlay = root.querySelector('.ui-overlay')!;
+    expect(overlay.lastElementChild?.className).toContain('ui-cloud-row');
   });
 });

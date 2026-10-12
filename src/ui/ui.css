@@ -143,6 +143,28 @@
   color: rgba(255, 255, 255, 0.75);
   text-shadow: 1px 1px 0 #000;
 }
+/* Cloud sync status row (Phase 4 Task 4): bottom line of the pause menu —
+   status text plus an optional small 重試 button (retryable states only). */
+.ui-cloud-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.ui-cloud {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 1px 1px 0 #000;
+}
+.ui-cloud-guest {
+  color: rgba(255, 255, 255, 0.45);
+}
+.ui-cloud-retry {
+  min-width: 0;
+  padding: 4px 14px;
+  font-size: 13px;
+}
 /* Death screen (Task 10): full-viewport red-tinted overlay above the HUD,
    centered title + Respawn button (reuses the .ui-btn menu style). */
 .death-screen {

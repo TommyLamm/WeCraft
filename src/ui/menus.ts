@@ -1,5 +1,6 @@
 import './ui.css';
 import { loadSettings, saveSettings } from '../core/settings';
+import type { CloudStatus } from '../platform/playroom';
 
 export type MenuAction = 'play' | 'resume' | 'quit-to-title';
 
@@ -26,6 +27,16 @@ export interface Menus {
     onToggleShadows: () => void;
     /** Phase 3 Task 7: cloud-layer toggle — same contract as `onToggleShadows`. */
     onToggleClouds: () => void;
+    /** Phase 4 Task 4: cloud sync state — drives the bottom status row
+     *  (`雲端：已同步／訪客本機遊玩／不支援／同步失敗（重試）／有新進度／
+     *  格式不相容`). `unknown` renders as 不支援 (init never leaves it). */
+    cloudStatus: CloudStatus;
+    /** True only for retryable states (NETWORK failure, applied conflict) —
+     *  the 重試 button renders ONLY then; locked FORMAT/REQUEST_REUSED
+     *  failures, guest and unsupported hide it (Ruling D). */
+    cloudRetryable: boolean;
+    /** Retry the kept snapshot (same requestId) or push a fresh checkpoint. */
+    onRetryCloud: () => void;
   }): void;
   hideAll(): void;
   isVisible(): boolean;
@@ -154,7 +165,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
     },
-    showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows, onToggleClouds }) {
+    showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows, onToggleClouds, cloudStatus, cloudRetryable, onRetryCloud }) {
       clear();
       // Esc resumes via the identical path as 繼續遊戲 (incl. relock).
       // Same overlay-Esc lifecycle as inventory/crafting: registered here and
@@ -168,6 +179,51 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           relockCanvas();
         };
         document.addEventListener('keydown', escHandler);
+      };
+      /** Phase 4 Task 4: bottom cloud-sync line. Copy is verbatim per the
+       *  brief; the （重試） suffix marks the retryable error text and a real
+       *  重試 button mounts beside it ONLY when `cloudRetryable` (NETWORK
+       *  failure or applied conflict — never for locked/guest/format). */
+      const cloudRow = (): HTMLElement => {
+        const wrap = document.createElement('div');
+        wrap.className = 'ui-cloud-row';
+        const line = document.createElement('div');
+        line.className = 'ui-cloud';
+        let showRetry = false;
+        switch (cloudStatus) {
+          case 'guest':
+            line.textContent = '雲端：訪客本機遊玩';
+            line.classList.add('ui-cloud-guest');
+            break;
+          case 'unsupported':
+          case 'unknown':
+            line.textContent = '雲端：不支援';
+            break;
+          case 'ready':
+            line.textContent = '雲端：已同步';
+            break;
+          case 'conflict':
+            line.textContent = '雲端：有新進度';
+            showRetry = cloudRetryable;
+            break;
+          case 'format':
+            line.textContent = '雲端：格式不相容';
+            break;
+          case 'error':
+          default:
+            line.textContent = cloudRetryable ? '雲端：同步失敗（重試）' : '雲端：同步失敗';
+            showRetry = cloudRetryable;
+            break;
+        }
+        wrap.append(line);
+        if (showRetry) {
+          const retry = document.createElement('button');
+          retry.className = 'ui-btn ui-cloud-retry interactive';
+          retry.textContent = '重試';
+          retry.addEventListener('click', onRetryCloud);
+          wrap.append(retry);
+        }
+        return wrap;
       };
       const renderPause = () => {
         clear();
@@ -207,6 +263,9 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           // Task 14: both buttons — one saves, one doesn't (settle: split)
           btn('儲存並離開', onSaveQuit),
           btn('回到標題', onQuit),
+          // Phase 4 Task 4: cloud sync status row — always the last line; the
+          // 重試 button mounts ONLY in retryable states (Ruling D).
+          cloudRow(),
         );
         mount(el);
         registerEsc();
