@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (Task 11, settled: exactly these 9 recipes) ----
+// ---- Recipe table (Task 11, settled: exactly these 13 recipes) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, `null` marks a cell that
@@ -37,8 +37,9 @@ export type Recipe = ShapedRecipe | ShapelessRecipe;
 const P: PatternCell = 'oak_planks';
 const S: PatternCell = 'stick';
 const C: PatternCell = 'cobblestone';
+const I: PatternCell = 'iron_ingot';
 
-/** The settled recipe table — exactly 9 entries, checked by tests. */
+/** The settled recipe table — exactly 13 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (the only shapeless recipe)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -111,6 +112,43 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     kind: 'shaped',
     pattern: [[C], [C], [S]],
     result: { item: 'stone_sword', count: 1 },
+  },
+  {
+    id: 'iron_pickaxe',
+    kind: 'shaped',
+    pattern: [
+      [I, I, I],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'iron_pickaxe', count: 1 },
+  },
+  {
+    id: 'iron_axe',
+    kind: 'shaped',
+    pattern: [
+      [I, I],
+      [I, S],
+      [null, S],
+    ],
+    result: { item: 'iron_axe', count: 1 },
+  },
+  {
+    id: 'iron_sword',
+    kind: 'shaped',
+    pattern: [[I], [I], [S]],
+    result: { item: 'iron_sword', count: 1 },
+  },
+  // 8 cobblestone ring (empty centre) → furnace
+  {
+    id: 'furnace',
+    kind: 'shaped',
+    pattern: [
+      [C, C, C],
+      [C, null, C],
+      [C, C, C],
+    ],
+    result: { item: 'furnace', count: 1 },
   },
 ];
 

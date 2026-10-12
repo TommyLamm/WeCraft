@@ -107,6 +107,14 @@ describe('toolSpeed (Task 5 survival mining table)', () => {
     expect(toolSpeed(BLOCK.IRON_ORE, pick)).toBe(2);
   });
 
+  it('matching iron pickaxe is 3× on stone-family blocks (wood/stone stay 2×)', () => {
+    const iron = { item: 'iron_pickaxe', count: 1 } as const;
+    expect(toolSpeed(BLOCK.STONE, iron)).toBe(3);
+    expect(toolSpeed(BLOCK.COBBLE, iron)).toBe(3);
+    expect(toolSpeed(BLOCK.COAL_ORE, iron)).toBe(3);
+    expect(toolSpeed(BLOCK.IRON_ORE, iron)).toBe(3);
+  });
+
   it('bare hand on pickaxe-blocks is 0.5× (hand = wrong tool for rock)', () => {
     expect(toolSpeed(BLOCK.STONE, null)).toBe(0.5);
     expect(toolSpeed(BLOCK.IRON_ORE, null)).toBe(0.5);
@@ -117,6 +125,8 @@ describe('toolSpeed (Task 5 survival mining table)', () => {
   it('wrong tool on pickaxe-blocks is 0.5× (axe and sword both count)', () => {
     expect(toolSpeed(BLOCK.STONE, axe)).toBe(0.5);
     expect(toolSpeed(BLOCK.COBBLE, sword)).toBe(0.5);
+    expect(toolSpeed(BLOCK.STONE, { item: 'iron_axe', count: 1 })).toBe(0.5);
+    expect(toolSpeed(BLOCK.STONE, { item: 'iron_sword', count: 1 })).toBe(0.5);
   });
 
   it('matching axe is 2× on logs; bare hand stays 1× (logs are punchable)', () => {
@@ -125,9 +135,15 @@ describe('toolSpeed (Task 5 survival mining table)', () => {
     expect(toolSpeed(BLOCK.LOG, null)).toBe(1);
   });
 
+  it('matching iron axe is 3× on logs', () => {
+    expect(toolSpeed(BLOCK.LOG, { item: 'iron_axe', count: 1 })).toBe(3);
+  });
+
   it('wrong tool on logs is 0.5×', () => {
     expect(toolSpeed(BLOCK.LOG, { item: 'stone_pickaxe', count: 1 })).toBe(0.5);
     expect(toolSpeed(BLOCK.LOG, sword)).toBe(0.5);
+    expect(toolSpeed(BLOCK.LOG, { item: 'iron_pickaxe', count: 1 })).toBe(0.5);
+    expect(toolSpeed(BLOCK.LOG, { item: 'iron_sword', count: 1 })).toBe(0.5);
   });
 
   it('no-tool blocks dig at 1× with anything (hand, tool, or sword)', () => {
@@ -289,19 +305,22 @@ describe('toolDamage (Task 9 melee damage table)', () => {
     expect(toolDamage(null)).toBe(1);
   });
 
-  it('swords: wooden 4, stone 5', () => {
+  it('swords: wooden 4, stone 5, iron 6 (one tier step each)', () => {
     expect(toolDamage('wooden_sword')).toBe(4);
     expect(toolDamage('stone_sword')).toBe(5);
+    expect(toolDamage('iron_sword')).toBe(6);
   });
 
-  it('pickaxes deal 2 (both tiers)', () => {
+  it('pickaxes deal 2 (all tiers, iron included)', () => {
     expect(toolDamage('wooden_pickaxe')).toBe(2);
     expect(toolDamage('stone_pickaxe')).toBe(2);
+    expect(toolDamage('iron_pickaxe')).toBe(2);
   });
 
-  it('axes deal 3 (both tiers)', () => {
+  it('axes deal 3 (all tiers, iron included)', () => {
     expect(toolDamage('wooden_axe')).toBe(3);
     expect(toolDamage('stone_axe')).toBe(3);
+    expect(toolDamage('iron_axe')).toBe(3);
   });
 
   it('non-weapons (apple, stick, blocks) fall back to 1', () => {

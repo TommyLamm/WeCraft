@@ -11,9 +11,12 @@ export type AdvancementId =
   | 'crafting_table'
   | 'wooden_tool'
   | 'stone_tool'
+  | 'iron_tool'
   | 'stone_age'
   | 'coal_miner'
   | 'iron_age'
+  | 'hot_stuff'
+  | 'tasty'
   | 'monster_hunter'
   | 'first_night';
 
@@ -31,9 +34,12 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   { id: 'crafting_table', title: '合成台', description: '合成一個工作台', icon: 'crafting_table' },
   { id: 'wooden_tool', title: '木製工具', description: '合成一把木製工具', icon: 'wooden_pickaxe' },
   { id: 'stone_tool', title: '石製工具', description: '合成一把石製工具', icon: 'stone_pickaxe' },
+  { id: 'iron_tool', title: '鐵製工具', description: '合成一把鐵製工具', icon: 'iron_pickaxe' },
   { id: 'stone_age', title: '鵝卵石', description: '取得鵝卵石', icon: 'cobblestone' },
   { id: 'coal_miner', title: '煤炭開採', description: '取得煤炭', icon: 'coal' },
   { id: 'iron_age', title: '鐵礦', description: '取得鐵礦', icon: 'iron_ore' },
+  { id: 'hot_stuff', title: '燃燒吧', description: '從熔爐取出冶煉成品', icon: 'furnace' },
+  { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
   { id: 'monster_hunter', title: '怪物獵人', description: '擊殺一隻怪物', icon: 'stone_sword' },
   { id: 'first_night', title: '度過第一夜', description: '活著看見黎明', icon: 'grass' },
 ];
@@ -52,10 +58,12 @@ export function emptyAdvancements(): AdvancementState {
 export type AdvancementEvent =
   | { type: 'obtain'; item: ItemId; mode: GameMode }
   | { type: 'mob-killed'; mode: GameMode }
+  | { type: 'smelt-take'; mode: GameMode }
+  | { type: 'ate'; item: ItemId; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
-/** Obtain → advancement map (Task 11 brief): the 11 item triggers across 7
- *  ids. wood/stone tools share one id per tier; `stone_sword` only triggers
+/** Obtain → advancement map (Task 11 brief): the 14 item triggers across 8
+ *  ids. wood/stone/iron tools share one id per tier; `stone_sword` only triggers
  *  stone_tool here — monster_hunter needs the kill event. */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
@@ -66,6 +74,9 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   stone_pickaxe: 'stone_tool',
   stone_axe: 'stone_tool',
   stone_sword: 'stone_tool',
+  iron_pickaxe: 'iron_tool',
+  iron_axe: 'iron_tool',
+  iron_sword: 'iron_tool',
   cobblestone: 'stone_age',
   coal: 'coal_miner',
   iron_ore: 'iron_age',
@@ -74,9 +85,10 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
 /** Apply one game event to the progress state. PURE: the input state is never
  *  mutated — a changed transition returns a FRESH state (unchanged ones return
  *  the original by reference, matching "nothing happened"). Rules:
- *  - obtain/mob-killed in CREATIVE unlock nothing (infinite blocks are not
+ *  - obtain/mob-killed/smelt-take/ate in CREATIVE unlock nothing (infinite blocks are not
  *    progression);
  *  - already-done ids never unlock twice (no toast spam);
+ *  - smelt-take unlocks hot_stuff; ate unlocks tasty only for apples;
  *  - `phase:'night'` only marks `nightSeen`; `phase:'day'` unlocks first_night
  *    once a night has been seen (surviving to dawn). */
 export function checkAdvancements(
@@ -95,7 +107,11 @@ export function checkAdvancements(
     };
   }
   if (ev.mode === 'creative') return { state, unlocked: [] };
-  const id = ev.type === 'obtain' ? OBTAIN_UNLOCKS[ev.item] : 'monster_hunter';
+  const id =
+    ev.type === 'obtain' ? OBTAIN_UNLOCKS[ev.item]
+    : ev.type === 'smelt-take' ? 'hot_stuff'
+    : ev.type === 'ate' ? (ev.item === 'apple' ? 'tasty' : undefined)
+    : 'monster_hunter';
   if (!id || state.done[id]) return { state, unlocked: [] };
   return { state: { done: { ...state.done, [id]: true }, nightSeen: state.nightSeen }, unlocked: [id] };
 }

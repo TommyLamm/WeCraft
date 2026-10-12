@@ -41,9 +41,12 @@ const PICKAXE_BLOCKS: ReadonlySet<number> = new Set([
 /** Blocks mined fastest with an axe. */
 const AXE_BLOCKS: ReadonlySet<number> = new Set([BLOCK.LOG]);
 
-const PICKAXES: ReadonlySet<ItemId> = new Set(['wooden_pickaxe', 'stone_pickaxe']);
-const AXES: ReadonlySet<ItemId> = new Set(['wooden_axe', 'stone_axe']);
-const SWORDS: ReadonlySet<ItemId> = new Set(['wooden_sword', 'stone_sword']);
+const PICKAXES: ReadonlySet<ItemId> = new Set(['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe']);
+const AXES: ReadonlySet<ItemId> = new Set(['wooden_axe', 'stone_axe', 'iron_axe']);
+const SWORDS: ReadonlySet<ItemId> = new Set(['wooden_sword', 'stone_sword', 'iron_sword']);
+
+/** Iron-tier tools (faster mining than wood/stone). */
+const IRON_TOOLS: ReadonlySet<ItemId> = new Set(['iron_pickaxe', 'iron_axe', 'iron_sword']);
 
 function requiredTool(blockId: number): ToolCategory | null {
   if (PICKAXE_BLOCKS.has(blockId)) return 'pickaxe';
@@ -59,7 +62,9 @@ function requiredTool(blockId: number): ToolCategory | null {
  *    accumulates for them anyway (`DigProgress` guards on finite break time);
  *  - no required tool (dirt, grass, sand, leaves, planks, glass, snow, …) → 1×
  *    with anything in hand;
- *  - matching tool (pickaxe on the stone family, axe on logs) → 2×;
+ *  - matching tool (pickaxe on the stone family, axe on logs) → 2×
+ *    (wood/stone) or 3× (iron);
+ *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
  *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
  *  - bare hand / non-tool item: treated like the wrong tool on pickaxe blocks
  *    (0.5× — hand is the wrong tool for rock, Minecraft-like; our chosen reading,
@@ -74,7 +79,7 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
   const item = held?.item ?? null;
   if (item) {
     const matches = required === 'pickaxe' ? PICKAXES.has(item) : AXES.has(item);
-    if (matches) return 2;
+    if (matches) return IRON_TOOLS.has(item) ? 3 : 2;
     if (PICKAXES.has(item) || AXES.has(item) || SWORDS.has(item)) return 0.5; // wrong tool
   }
   // hand or plain item: rock needs a pickaxe; logs/no-tool blocks take a hand
@@ -84,7 +89,7 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
 // ---- Melee combat (Task 9) ----
 
 /** Melee damage dealt per hit with `heldItem` (a hotbar item id; null = bare
- *  hand): swords 4 (wooden) / 5 (stone), pickaxes 2, axes 3. Bare hand (and
+ *  hand): swords 4 (wooden) / 5 (stone) / 6 (iron), pickaxes 2, axes 3. Bare hand (and
  *  apple/stick/blocks): the plan's damage table says 2, this ships 1 — the
  *  Task 9 call was Minecraft parity (fist = 1), recorded here honestly since
  *  the plan text still reads 2 (the plan doc itself is orchestrator-owned and
@@ -96,11 +101,15 @@ export function toolDamage(heldItem: ItemId | null): number {
       return 4;
     case 'stone_sword':
       return 5;
+    case 'iron_sword':
+      return 6;
     case 'wooden_axe':
     case 'stone_axe':
+    case 'iron_axe':
       return 3;
     case 'wooden_pickaxe':
     case 'stone_pickaxe':
+    case 'iron_pickaxe':
       return 2;
     default:
       return 1;

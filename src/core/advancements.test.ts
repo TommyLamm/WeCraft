@@ -31,6 +31,16 @@ const TRIGGERS: ReadonlyArray<
       [{ type: 'obtain', item: 'stone_sword', mode: 'survival' }],
     ],
   ],
+  [
+    'iron_tool',
+    [
+      [{ type: 'obtain', item: 'iron_pickaxe', mode: 'survival' }],
+      [{ type: 'obtain', item: 'iron_axe', mode: 'survival' }],
+      [{ type: 'obtain', item: 'iron_sword', mode: 'survival' }],
+    ],
+  ],
+  ['hot_stuff', [[{ type: 'smelt-take', mode: 'survival' }]]],
+  ['tasty', [[{ type: 'ate', item: 'apple', mode: 'survival' }]]],
   ['stone_age', [[{ type: 'obtain', item: 'cobblestone', mode: 'survival' }]]],
   ['coal_miner', [[{ type: 'obtain', item: 'coal', mode: 'survival' }]]],
   ['iron_age', [[{ type: 'obtain', item: 'iron_ore', mode: 'survival' }]]],
@@ -60,7 +70,10 @@ describe('checkAdvancements', () => {
     const creativeEvents: AdvancementEvent[] = [
       { type: 'obtain', item: 'oak_log', mode: 'creative' },
       { type: 'obtain', item: 'iron_ore', mode: 'creative' },
+      { type: 'obtain', item: 'iron_pickaxe', mode: 'creative' },
       { type: 'mob-killed', mode: 'creative' },
+      { type: 'smelt-take', mode: 'creative' },
+      { type: 'ate', item: 'apple', mode: 'creative' },
     ];
     for (const ev of creativeEvents) {
       const r = checkAdvancements(state, ev);
@@ -84,6 +97,14 @@ describe('checkAdvancements', () => {
     expect(first.unlocked).toEqual(['getting_wood']);
     expect(second.unlocked).toEqual([]);
     expect(second.state.done.getting_wood).toBe(true);
+    // ate is apple-only: eating a non-apple unlocks nothing (same state back)
+    const ateStick = checkAdvancements(second.state, {
+      type: 'ate',
+      item: 'stick',
+      mode: 'survival',
+    });
+    expect(ateStick.unlocked).toEqual([]);
+    expect(ateStick.state).toBe(second.state);
   });
 
   it('requires a seen night before first_night can unlock at day', () => {
@@ -137,5 +158,12 @@ describe('sanitizeAdvancements', () => {
         nightSeen: 'yes',
       }),
     ).toEqual({ done: { getting_wood: true, wooden_tool: false }, nightSeen: false });
+    // new Task-7 ids are known: retained; unknown ids still drop
+    expect(
+      sanitizeAdvancements({
+        done: { iron_tool: true, hot_stuff: true, tasty: false, bogus_id: true },
+        nightSeen: true,
+      }),
+    ).toEqual({ done: { iron_tool: true, hot_stuff: true, tasty: false }, nightSeen: true });
   });
 });

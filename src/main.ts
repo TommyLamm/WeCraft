@@ -324,8 +324,7 @@ function takeFurnaceOutput(): void {
   const next: FurnaceState = { ...st, output: null };
   furnaces.set(openFurnaceKey, next);
   hud.setHotbar(hotbar, selected);
-  // TODO(phase4-7): AdvancementEvent gains 'smelt-take' in Task 7 — drop the bridge then.
-  applyAdvancement({ type: 'smelt-take', mode: currentMode } as unknown as AdvancementEvent);
+  applyAdvancement({ type: 'smelt-take', mode: currentMode });
   furnaceUi.open(next);
 }
 
@@ -524,8 +523,9 @@ const KNOWN_ITEMS: ReadonlySet<string> = new Set([
   'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
   'crafting_table', 'furnace', 'chest',
   'stick', 'coal', 'iron_ingot',
-  'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe',
-  'wooden_sword', 'stone_sword',
+  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
+  'wooden_axe', 'stone_axe', 'iron_axe',
+  'wooden_sword', 'stone_sword', 'iron_sword',
   'arrow', 'apple',
   'oak_leaves', 'snow_block', 'bedrock',
 ]);

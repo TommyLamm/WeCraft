@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 9). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 13). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 9 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(9);
+  it('holds exactly the 13 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(13);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -26,15 +26,20 @@ describe('recipe table', () => {
         'stone_pickaxe',
         'stone_axe',
         'stone_sword',
+        'iron_pickaxe',
+        'iron_axe',
+        'iron_sword',
+        'furnace',
       ].sort(),
     );
   });
 
-  it('result counts: planks 4, stick 4, table 1, tools 1', () => {
+  it('result counts: planks 4, stick 4, table 1, tools 1, furnace 1', () => {
     expect(recipe('log_to_planks').result).toEqual({ item: 'oak_planks', count: 4 });
     expect(recipe('planks_to_stick').result).toEqual({ item: 'stick', count: 4 });
     expect(recipe('planks_to_table').result).toEqual({ item: 'crafting_table', count: 1 });
-    for (const id of ['wooden_pickaxe', 'wooden_axe', 'wooden_sword', 'stone_pickaxe', 'stone_axe', 'stone_sword']) {
+    expect(recipe('furnace').result).toEqual({ item: 'furnace', count: 1 });
+    for (const id of ['wooden_pickaxe', 'wooden_axe', 'wooden_sword', 'stone_pickaxe', 'stone_axe', 'stone_sword', 'iron_pickaxe', 'iron_axe', 'iron_sword']) {
       expect(recipe(id).result.count).toBe(1);
     }
   });
@@ -171,6 +176,51 @@ describe('matchRecipe — shaped', () => {
       null, null, s('stick'),
     ];
     expect(matchRecipe(sword, 3)).toEqual({ item: 'stone_sword', count: 1 });
+  });
+
+  it('iron tools match the wooden shapes with iron_ingot', () => {
+    const pick = [
+      s('iron_ingot'), s('iron_ingot'), s('iron_ingot'),
+      null, s('stick'), null,
+      null, s('stick'), null,
+    ];
+    expect(matchRecipe(pick, 3)).toEqual({ item: 'iron_pickaxe', count: 1 });
+    const axe = [
+      s('iron_ingot'), s('iron_ingot'), null,
+      s('iron_ingot'), s('stick'), null,
+      null, s('stick'), null,
+    ];
+    expect(matchRecipe(axe, 3)).toEqual({ item: 'iron_axe', count: 1 });
+    const sword = [
+      null, null, s('iron_ingot'),
+      null, null, s('iron_ingot'),
+      null, null, s('stick'),
+    ];
+    expect(matchRecipe(sword, 3)).toEqual({ item: 'iron_sword', count: 1 });
+  });
+
+  it('furnace: 8 cobblestone ring (3×3, empty centre)', () => {
+    const g = [
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+      s('cobblestone'), null, s('cobblestone'),
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+    ];
+    expect(matchRecipe(g, 3)).toEqual({ item: 'furnace', count: 1 });
+  });
+
+  it('furnace rejects a filled centre and a missing stone', () => {
+    const filled = [
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+    ];
+    expect(matchRecipe(filled, 3)).toBeNull(); // 9 stones is not the ring
+    const missing = [
+      s('cobblestone'), s('cobblestone'), s('cobblestone'),
+      s('cobblestone'), null, s('cobblestone'),
+      s('cobblestone'), null, s('cobblestone'),
+    ];
+    expect(matchRecipe(missing, 3)).toBeNull(); // 7 stones is not the ring
   });
 });
 

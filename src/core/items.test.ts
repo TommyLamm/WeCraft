@@ -14,11 +14,12 @@ import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
 const BLOCK_ITEMS: ItemId[] = [
   'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
   'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
-  'crafting_table', 'chest',
+  'crafting_table', 'furnace', 'chest',
 ];
 const TOOL_ITEMS: ItemId[] = [
-  'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe',
-  'wooden_sword', 'stone_sword',
+  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
+  'wooden_axe', 'stone_axe', 'iron_axe',
+  'wooden_sword', 'stone_sword', 'iron_sword',
 ];
 const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'arrow', 'apple'];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
@@ -30,7 +31,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    expect(ALL_ITEMS.length).toBe(27);
+    expect(ALL_ITEMS.length).toBe(31);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
     for (const id of Object.values(BLOCK)) {
@@ -60,7 +61,9 @@ describe('items', () => {
     }
     expect(blockFromItem('stick')).toBeNull();
     expect(blockFromItem('crafting_table')).toBe(BLOCK.CRAFTING_TABLE); // Task 11 block
+    expect(blockFromItem('furnace')).toBe(BLOCK.FURNACE); // Task 6 block pair
     expect(blockFromItem('chest')).toBeNull(); // no chest block yet
+    expect(blockFromItem('iron_pickaxe')).toBeNull(); // tools are not blocks
   });
 
   it('stackName title-cases item ids', () => {
@@ -71,6 +74,7 @@ describe('items', () => {
   it('maxStack is 64 for stackables like stick', () => {
     expect(maxStack('stick')).toBe(64);
     expect(maxStack('apple')).toBe(64);
+    expect(maxStack('furnace')).toBe(64); // block item, stacks like stone
   });
 
   it('maxStack is 1 for tools and weapons', () => {

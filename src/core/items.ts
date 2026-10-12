@@ -5,8 +5,9 @@ export type ItemId =
   | 'sand' | 'gravel' | 'glass' | 'coal_ore' | 'iron_ore'
   | 'crafting_table' | 'furnace' | 'chest'
   | 'stick' | 'coal' | 'iron_ingot'
-  | 'wooden_pickaxe' | 'stone_pickaxe' | 'wooden_axe' | 'stone_axe'
-  | 'wooden_sword' | 'stone_sword'
+  | 'wooden_pickaxe' | 'stone_pickaxe' | 'iron_pickaxe'
+  | 'wooden_axe' | 'stone_axe' | 'iron_axe'
+  | 'wooden_sword' | 'stone_sword' | 'iron_sword'
   | 'arrow' | 'apple'
   // Blocks that exist in world/blocks.ts today but were missing from the plan's
   // union — without them the creative hotbar/palette can't represent them
@@ -41,7 +42,9 @@ const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);
 const ITEM_OF_BLOCK = new Map<number, ItemId>(BLOCK_PAIRS.map(([item, block]) => [block, item]));
 
 const STACK_ONE: ReadonlySet<ItemId> = new Set([
-  'wooden_pickaxe', 'stone_pickaxe', 'wooden_axe', 'stone_axe', 'wooden_sword', 'stone_sword',
+  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
+  'wooden_axe', 'stone_axe', 'iron_axe',
+  'wooden_sword', 'stone_sword', 'iron_sword',
 ]);
 
 export function maxStack(item: ItemId): number {
