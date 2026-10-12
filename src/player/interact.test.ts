@@ -258,15 +258,21 @@ describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => 
   const at = { x: 5.5, y: 70.5, z: 5.5 }; // block centre = break pos + 0.5
 
   it('survival spawns 1× the block item at the given position', () => {
-    const drops = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
+    const drops = spawnBlockDrop([], 'survival', BLOCK.DIRT, at);
     expect(drops).toHaveLength(1);
     expect(drops[0]).toMatchObject({
-      item: 'stone',
+      item: 'dirt',
       count: 1,
       pos: at,
       pickupDelay: 0.5,
       age: 0,
     });
+  });
+
+  it('mined stone drops cobblestone (Minecraft parity — verification fix)', () => {
+    const drops = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toMatchObject({ item: 'cobblestone', count: 1 });
   });
 
   it('spawns nothing in creative (infinite supply, no world drops)', () => {

@@ -38,10 +38,14 @@ export interface DropEntity {
 
 /** Block → drop item, with per-block overrides for the smelting-free design:
  *  coal_ore drops `coal` directly (its BLOCK_PAIRS item is `coal_ore`);
- *  iron_ore keeps `iron_ore` — no furnace in this phase. Null when the block
+ *  stone drops `cobblestone` (Minecraft parity — without this override no
+ *  cobblestone is obtainable: terrain generates no COBBLE blocks, so stone
+ *  tools, the furnace recipe and the stone_age advancement were unreachable).
+ *  iron_ore keeps `iron_ore` (smelted in the furnace). Null when the block
  *  has no item form (air, water) → nothing spawns. */
 export function dropItemFor(blockId: number): ItemId | null {
   if (blockId === BLOCK.COAL_ORE) return 'coal';
+  if (blockId === BLOCK.STONE) return 'cobblestone';
   return itemFromBlock(blockId);
 }
 

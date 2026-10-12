@@ -1781,7 +1781,8 @@ gs.renderer.setAnimationLoop(() => {
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
     for (const ev of shot.events) applyMobEvent(ev, true);
-    // dead mobs vanish (no loot this phase); distance despawn past 48 blocks
+    // dead mobs despawn past 48 blocks (kill loot — zombie apples — is
+    // spawned at the melee kill site above, not here)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
 
@@ -1904,11 +1905,30 @@ gs.renderer.setAnimationLoop(() => {
             attackCd = ATTACK_COOLDOWN_SEC;
             mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
             const beforeKill = mobs.length;
-            mobs = mobs.filter((m) => !isDead(m)); // killed mob vanishes at once (no loot)
+            const dead = mobs.filter((m) => isDead(m));
+            mobs = mobs.filter((m) => !isDead(m));
             if (mobs.length !== beforeKill) {
               bus.emit('mobs-changed', { count: mobs.length });
               // Task 12: the kill filter actually removed a mob → unlock event
               applyAdvancement({ type: 'mob-killed', mode: currentMode });
+              // Phase 4 verification fix: a zombie kill drops 1 apple in
+              // survival — Task 8 shipped the eat/tasty side but no drop
+              // source, so apples were unobtainable and the promised
+              // 殭屍蘋果掉落→進食 chain dead-ended. Guaranteed (not chance):
+              // deterministic for progression, modest (+4 hunger) for balance.
+              // Creative spawns nothing (spawnBlockDrop convention); skeletons
+              // drop nothing (their arrows are ammo, not loot — minimal fix).
+              if (currentMode === 'survival') {
+                let spilled = false;
+                for (const d of dead) {
+                  if (d.kind !== 'zombie') continue;
+                  drops = spawnDrop(drops, 'apple', 1, {
+                    x: d.pos.x, y: d.pos.y + 0.9, z: d.pos.z,
+                  });
+                  spilled = true;
+                }
+                if (spilled) bus.emit('drops-changed', {});
+              }
             }
           }
         }

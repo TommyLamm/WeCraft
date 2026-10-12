@@ -313,8 +313,11 @@ describe('dropItemFor (block → drop mapping)', () => {
     expect(dropItemFor(BLOCK.IRON_ORE)).toBe('iron_ore');
   });
 
+  it('stone drops cobblestone (Minecraft parity — the only cobble source)', () => {
+    expect(dropItemFor(BLOCK.STONE)).toBe('cobblestone');
+  });
+
   it('regular blocks map through itemFromBlock', () => {
-    expect(dropItemFor(BLOCK.STONE)).toBe('stone');
     expect(dropItemFor(BLOCK.GRASS)).toBe('grass');
     expect(dropItemFor(BLOCK.LOG)).toBe('oak_log');
     expect(dropItemFor(BLOCK.COBBLE)).toBe('cobblestone');
