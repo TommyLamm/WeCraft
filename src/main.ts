@@ -1264,9 +1264,14 @@ async function resolveCloudConflict(): Promise<void> {
  *  found now only re-records the revision and re-enables checkpoints from the
  *  next trigger (last-writer-wins from here). Null → revision 0 (an
  *  explicitly-read empty slot the next checkpoint may claim); a format
- *  mismatch locks FORMAT; any failure keeps NETWORK + retryable with the
- *  revision STILL null (no send may overwrite an unread slot). The pause row
- *  re-render (retryCloudNow's finally) is the feedback — no toast. */
+ *  mismatch locks FORMAT; a payload failing the acceptCloudData validation
+ *  gate is NOT a readable slot either (the boot path's never-overwrite-
+ *  unreadable-data guard; validation only — never applied mid-session) →
+ *  NETWORK + retryable with the revision STILL null, so a corrupt/foreign
+ *  payload cannot be claimed just by retrying; any other failure also keeps
+ *  NETWORK + retryable with the revision STILL null (no send may overwrite an
+ *  unread slot). The pause row re-render (retryCloudNow's finally) is the
+ *  feedback — no toast. */
 async function retryCloudRead(): Promise<void> {
   if (cloud.status === 'guest' || cloud.status === 'unsupported') return; // nothing to read
   try {
@@ -1281,6 +1286,14 @@ async function retryCloudRead(): Promise<void> {
       cloudLocked = true;
       cloudFailureKind = 'FORMAT';
       cloudRetryable = false;
+      return;
+    }
+    const accepted = acceptCloudData(res.data);
+    if (!accepted) {
+      cloudFailureKind = 'NETWORK';
+      cloudRetryable = true;
+      // revision stays null — unreadable payload = still an unread slot (a
+      // later retry may succeed if another device rewrites it validly).
       return;
     }
     cloudRevision = res.revision;

@@ -77,9 +77,10 @@ function drawBlockIcon(
 const WOOD = '#8a5a2b';
 const WOOD_LIGHT = '#b8945f';
 const STONE_GRAY = '#9a9a9a';
-// Steel (Minor 4): cooler/lighter than stone, kin to the iron_ingot art —
-// iron tools get real heads instead of the gray placeholder.
-const IRON_GRAY = '#cdd6dc';
+// Steel (Minor 4; Round-2 N2: deepened): the old '#cdd6dc' read as wood's
+// light-gray blade at HUD size — now a distinctly darker, blue-shifted steel,
+// obvious against wood '#d8d8d8' and still apart from stone '#9a9a9a'.
+const IRON_GRAY = '#7f8fa1';
 
 function line(
   ctx: CanvasRenderingContext2D,
