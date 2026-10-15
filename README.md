@@ -50,7 +50,7 @@ npm run dev        # 開啟 http://localhost:5173
   （飽時照吃，溢出浪費），解鎖「吃個蘋果」
 - 死亡畫面 → 重生：血量飢餓回滿、回到出生點、物品保留（附死因文案：墜落／殭屍／骷髏／飢餓）
 - 暫停選單可雙向切換創造／生存（創造進入會補滿 9×64 方塊）
-- IndexedDB 存檔（`wecraft-save`，v1 照讀並升級 v2）：改動方塊 + 玩家狀態
+- IndexedDB 存檔（`wecraft-save`；存檔 payload v1 照讀並升級 v2）：改動方塊 + 玩家狀態
   → Save & Quit → Continue 全還原；熔爐「方塊」隨世界改動保留，但爐內
   進行中的冶煉不存檔，Continue 後重置（爐內有物品時 toast「熔爐進度已重置」）；
   v1 舊檔 Continue 後進度全鎖（新系統起算）
@@ -70,6 +70,9 @@ npm run dev        # 開啟 http://localhost:5173
   「雲端空間不足，僅本機存檔」，遊戲不受影響
 - 雲端格式版本 1；讀到無法解讀的資料或格式即停用雲端寫入、本機照常
   （不覆寫既有雲端存檔、不當機）
+- 開機即讀雲端進度：讀到可用的雲端存檔時，「繼續遊戲」直接進入該雲端進度
+  （開機已套用）；本機與雲端皆有存檔時以雲端為準（合併不做），本機存檔
+  於下次儲存時被取代
 
 **介面**
 - 熱鍵欄、背包、合成介面、熔爐面板、暫停選單、死亡畫面（皆純 DOM，由 `main.ts`
@@ -147,7 +150,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 742 tests / 47 files 全綠
+npm test           # vitest run — 749 tests / 48 files 全綠
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -159,8 +162,9 @@ npm run lint       # eslint .
 - **Phase 3**（0.2.0：陰影／AO／雲／天空／音效／粒子／手持／進度／死因）完成並通過最終驗證，
   成品 `dist/`（`game.zip` 驗證通過、尚未發布）。
 - **Phase 4**（0.3.0：雲端輕量進度＋生存縱深：熔爐冶煉／鐵器三件／殭屍蘋果／進食／
-  三新進度／IDB v1→v2 相容）完成並通過最終驗證（742 tests / 47 files、
-  typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過、瀏覽器走查見本任務回報）。
+  三新進度／存檔 payload v1→v2 相容）完成並通過最終驗證（749 tests / 48 files、
+  typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過、瀏覽器走查見本任務回報；
+  部分走查項目受環境限制，詳見回報）。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 - Phase 4 執行計畫（10 任務）：`docs/superpowers/plans/2026-10-11-wecraft-phase4.md`
