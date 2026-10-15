@@ -154,6 +154,35 @@ describe('createCloudClient', () => {
     expect(c.status).toBe('format');
   });
 
+  it('load() rejection rethrows the original error and maps the status', async () => {
+    // Review Minor 1: the load()-error path was untested — a boot read that
+    // throws must surface as a rejection (main.ts's catch) with the mapped
+    // client status, never a silent null.
+    const netErr = new Error('network down');
+    const m1 = modWith(AUTH_READY, {
+      loadProgress: async () => {
+        throw netErr;
+      },
+    });
+    const c1 = createCloudClient({ loadModule: async () => m1 });
+    await expect(c1.init()).resolves.toBe('ready');
+    await expect(c1.load()).rejects.toBe(netErr);
+    expect(c1.status).toBe('error');
+
+    const conflict = Object.assign(new Error('conflict'), {
+      machineCode: 'SAVE_REVISION_CONFLICT',
+    });
+    const m2 = modWith(AUTH_READY, {
+      loadProgress: async () => {
+        throw conflict;
+      },
+    });
+    const c2 = createCloudClient({ loadModule: async () => m2 });
+    await expect(c2.init()).resolves.toBe('ready');
+    await expect(c2.load()).rejects.toBe(conflict);
+    expect(c2.status).toBe('conflict');
+  });
+
   it('null saveProgress result passes through as null without changing status', async () => {
     const m = modWith(AUTH_READY, { saveProgress: async () => null });
     const c = createCloudClient({ loadModule: async () => m });

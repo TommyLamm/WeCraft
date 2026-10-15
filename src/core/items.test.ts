@@ -6,6 +6,7 @@ import {
   stackName,
   maxStack,
   starterSlots,
+  ALL_ITEM_IDS,
   type ItemId,
 } from './items';
 import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
@@ -38,6 +39,14 @@ describe('items', () => {
       if (id === BLOCK.AIR || id === BLOCK.WATER) continue;
       expect(itemFromBlock(id), `block ${id} has no item`).not.toBeNull();
     }
+  });
+
+  it('ALL_ITEM_IDS is the canonical list: 31 entries, no dupes, same set as the union', () => {
+    expect(ALL_ITEM_IDS.length).toBe(31);
+    expect(new Set(ALL_ITEM_IDS).size).toBe(ALL_ITEM_IDS.length);
+    // Same membership as the test's own hand-maintained union mirror — the
+    // Record<ItemId, true> source makes drift a tsc error (Minor 5).
+    expect(new Set(ALL_ITEM_IDS)).toEqual(new Set(ALL_ITEMS));
   });
 
   it('every placeable and default hotbar block maps to an item', () => {

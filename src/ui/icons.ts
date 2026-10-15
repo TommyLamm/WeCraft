@@ -77,6 +77,9 @@ function drawBlockIcon(
 const WOOD = '#8a5a2b';
 const WOOD_LIGHT = '#b8945f';
 const STONE_GRAY = '#9a9a9a';
+// Steel (Minor 4): cooler/lighter than stone, kin to the iron_ingot art —
+// iron tools get real heads instead of the gray placeholder.
+const IRON_GRAY = '#cdd6dc';
 
 function line(
   ctx: CanvasRenderingContext2D,
@@ -166,8 +169,10 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       break;
     }
     case 'wooden_pickaxe':
-    case 'stone_pickaxe': {
-      const head = item === 'stone_pickaxe' ? STONE_GRAY : WOOD_LIGHT;
+    case 'stone_pickaxe':
+    case 'iron_pickaxe': {
+      const head =
+        item === 'iron_pickaxe' ? IRON_GRAY : item === 'stone_pickaxe' ? STONE_GRAY : WOOD_LIGHT;
       line(ctx, 10, 26, 20, 10, WOOD, 3);
       ctx.strokeStyle = head;
       ctx.lineWidth = 5;
@@ -179,8 +184,9 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       break;
     }
     case 'wooden_axe':
-    case 'stone_axe': {
-      const head = item === 'stone_axe' ? STONE_GRAY : WOOD_LIGHT;
+    case 'stone_axe':
+    case 'iron_axe': {
+      const head = item === 'iron_axe' ? IRON_GRAY : item === 'stone_axe' ? STONE_GRAY : WOOD_LIGHT;
       line(ctx, 10, 26, 19, 11, WOOD, 3);
       ctx.fillStyle = head;
       ctx.beginPath();
@@ -193,8 +199,10 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       break;
     }
     case 'wooden_sword':
-    case 'stone_sword': {
-      const blade = item === 'stone_sword' ? STONE_GRAY : '#d8d8d8';
+    case 'stone_sword':
+    case 'iron_sword': {
+      const blade =
+        item === 'iron_sword' ? IRON_GRAY : item === 'stone_sword' ? STONE_GRAY : '#d8d8d8';
       line(ctx, 22, 8, 12, 18, blade, 4);
       line(ctx, 9, 15, 15, 21, WOOD, 3); // guard, perpendicular to blade
       line(ctx, 12, 18, 8, 22, WOOD, 3); // handle

@@ -3,7 +3,7 @@
 // semantics Task 4 wires to the platform SDK. Modified voxels are NOT part of
 // the payload (brief ruling); the cap keeps uploads within the 64 KiB budget.
 
-import type { Vitals } from '../player/survival';
+import { createVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from './items';
 import { sanitizeAdvancements, type AdvancementState } from './advancements';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
@@ -89,6 +89,40 @@ export function byteSizeOf(data: CloudData): number {
 const isFiniteNum = (v: unknown): v is number =>
   typeof v === 'number' && Number.isFinite(v);
 
+/** Upper clamp for the hidden accumulators: one regen/starve tick interval
+ *  (survival.ts TICK_INTERVAL_SEC). A larger bank would immediately apply
+ *  extra ticks on the first frame after load. */
+const VITALS_ACC_MAX_SEC = 4;
+
+/** Clamp an untrusted-but-validated vitals object into the survival model's
+ *  shape/bounds (Minor 6): `validateCloudData` only guarantees a finite `hp`,
+ *  so a partial payload ({hp: 20}) would otherwise reach the HUD with NaN
+ *  hunger/maxHunger. Missing/non-finite fields fall back to fresh-vitals
+ *  defaults; `maxHp`/`maxHunger` are model constants (buildCloudData always
+ *  writes 20/20) — a finite in-range value passes, anything else takes the
+ *  default; the rest clamp into the resulting ranges. Never throws. */
+function normalizeVitals(v: Vitals): Vitals {
+  const raw = v as unknown as Record<string, unknown>; // untrusted runtime fields
+  const d = createVitals();
+  const inRange = (x: unknown, min: number, max: number): number | null =>
+    isFiniteNum(x) && x >= min && x <= max ? x : null;
+  const clamp = (x: unknown, min: number, max: number, fallback: number): number => {
+    const v = isFiniteNum(x) ? x : fallback;
+    return Math.min(max, Math.max(min, v));
+  };
+  const maxHp = inRange(raw.maxHp, 1, d.maxHp) ?? d.maxHp;
+  const maxHunger = inRange(raw.maxHunger, 1, d.maxHunger) ?? d.maxHunger;
+  return {
+    hp: clamp(raw.hp, 0, maxHp, d.hp),
+    maxHp,
+    hunger: clamp(raw.hunger, 0, maxHunger, d.hunger),
+    maxHunger,
+    saturation: clamp(raw.saturation, 0, maxHunger, d.saturation),
+    regenAcc: clamp(raw.regenAcc, 0, VITALS_ACC_MAX_SEC, d.regenAcc),
+    starveAcc: clamp(raw.starveAcc, 0, VITALS_ACC_MAX_SEC, d.starveAcc),
+  };
+}
+
 /** Structural check for an untrusted payload. Unknown extra fields are
  *  allowed (forwards-compatible); advancements only needs to be an object
  *  because `sanitizeAdvancements` normalizes it on the accept path. */
@@ -126,8 +160,10 @@ export function validateCloudData(x: unknown): x is CloudData {
 /** Validate then return a normalized fresh copy, or null when invalid.
  *  Normalization: advancements via `sanitizeAdvancements` (unknown ids and
  *  non-boolean values dropped), settings via the settings.ts clamp logic
- *  (seeded with defaults, seed stripped back off). Illegal inventory item ids
- *  are KEPT as strings — the main-side inventory model discards them. */
+ *  (seeded with defaults, seed stripped back off), vitals via
+ *  `normalizeVitals` (finite + clamped — a partial payload can't inject NaN).
+ *  Illegal inventory item ids are KEPT as strings — the main-side inventory
+ *  model discards them. */
 export function acceptCloudData(x: unknown): CloudData | null {
   if (!validateCloudData(x)) return null;
   const clamped = clampSettings({ ...DEFAULT_SETTINGS, ...x.settings });
@@ -135,7 +171,7 @@ export function acceptCloudData(x: unknown): CloudData | null {
     seed: x.seed,
     pos: [x.pos[0], x.pos[1], x.pos[2]],
     yaw: x.yaw,
-    vitals: x.vitals === null ? null : { ...x.vitals },
+    vitals: x.vitals === null ? null : normalizeVitals(x.vitals),
     clockT: x.clockT,
     inventory: x.inventory.map((s) => (s === null ? null : { ...s })),
     advancements: sanitizeAdvancements(x.advancements),

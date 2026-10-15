@@ -12,7 +12,9 @@ import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
-import { blockFromItem, stackName, maxStack, starterSlots, type ItemId, type ItemStack } from './core/items';
+import { blockFromItem, stackName, maxStack, starterSlots, ALL_ITEM_IDS, type ItemId, type ItemStack } from './core/items';
+// Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
+import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
@@ -496,6 +498,11 @@ const BG_SAVE_DEBOUNCE_MS = 2000;
 // slot that the first save may claim.
 const cloud = createCloudClient();
 let cloudRevision: number | null = null;
+/** Ruling I/J: true iff the boot read succeeded AND its payload was validated
+ *  and applied to the live state (set in the boot IIFE's apply branch, cleared
+ *  at session start). Drives the title entry — with BOTH a local save and this
+ *  flag, the cloud state wins the entry (Ruling J) via the pure titleEntry(). */
+let cloudAppliedAtBoot = false;
 /** FORMAT / REQUEST_REUSED lock (Ruling D: `error` covers both) — no sends. */
 let cloudLocked = false;
 /** AUTH stop — no sends (re-login has no path this phase; play continues). */
@@ -517,20 +524,12 @@ const CLOUD_INTERVAL_SEC = 60;
 /** Toast icon for cloud notices (toasts require an ItemId — the chest is the
  *  neutral storage metaphor; copy itself carries the meaning). */
 const CLOUD_TOAST_ICON: ItemId = 'chest';
-/** Runtime allow-list mirroring the ItemId union (items.ts) — the cloud apply
- *  path drops whole-stack entries with unknown ids (entry only, never the
- *  whole inventory) and entries with illegal counts (Ruling: apply-side). */
-const KNOWN_ITEMS: ReadonlySet<string> = new Set([
-  'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
-  'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
-  'crafting_table', 'furnace', 'chest',
-  'stick', 'coal', 'iron_ingot',
-  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
-  'wooden_axe', 'stone_axe', 'iron_axe',
-  'wooden_sword', 'stone_sword', 'iron_sword',
-  'arrow', 'apple',
-  'oak_leaves', 'snow_block', 'bedrock',
-]);
+/** Runtime allow-list from the canonical ALL_ITEM_IDS (Minor 5): the list is
+ *  exhaustive by construction (`Record<ItemId, true>` — drift is a tsc error),
+ *  so this Set can never fall behind the union. The cloud apply path drops
+ *  whole-stack entries with unknown ids (entry only, never the whole
+ *  inventory) and entries with illegal counts (Ruling: apply-side). */
+const KNOWN_ITEMS: ReadonlySet<string> = new Set(ALL_ITEM_IDS);
 
 /** Best-effort cloud notice — toasts never break gameplay when they fail. */
 function pushCloudToast(title: string): void {
@@ -836,8 +835,12 @@ function setState(next: GameState): void {
   if (next === 'title') {
     // Task 14: Continue renders iff a save exists (savedPayload — boot load
     // or a successful in-session save); no save → hidden (settled).
+    // Ruling I/J: a boot-applied CLOUD payload is also an entry (cloud wins
+    // when both exist) — the decision is the pure, unit-pinned titleEntry().
     menus.showTitle({
-      hasSave: savedPayload !== null,
+      hasSave:
+        titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !==
+        'none',
       onContinue: handleContinue,
       onNewGame: startGame,
     });
@@ -1067,9 +1070,11 @@ function applyCloudData(data: CloudData): void {
   gs.setShadowsEnabled(settings.shadows);
   clouds.setEnabled(settings.clouds);
   // Seed → fresh world generated with the cloud seed: the worker client is
-  // seed-pinned at construction, so it is rebuilt and the epoch guard drops
-  // any fills still in flight from the old client.
+  // seed-pinned at construction, so it is rebuilt — dispose() terminates the
+  // old worker first (Minor 2: the rebuild used to leak it) — and the epoch
+  // guard drops any fills still in flight from the old client.
   terrainEpoch += 1;
+  terrain.dispose();
   terrain = new TerrainWorkerClient(settings.seed);
   resetWorld();
   resetSessionEntities(); // entities are never persisted — drop stale ones
@@ -1254,12 +1259,53 @@ async function resolveCloudConflict(): Promise<void> {
   }
 }
 
+/** Load-only retry of a boot read that never landed (Minor 1; see
+ *  retryCloudNow): NO apply — the live session is already in play, so a slot
+ *  found now only re-records the revision and re-enables checkpoints from the
+ *  next trigger (last-writer-wins from here). Null → revision 0 (an
+ *  explicitly-read empty slot the next checkpoint may claim); a format
+ *  mismatch locks FORMAT; any failure keeps NETWORK + retryable with the
+ *  revision STILL null (no send may overwrite an unread slot). The pause row
+ *  re-render (retryCloudNow's finally) is the feedback — no toast. */
+async function retryCloudRead(): Promise<void> {
+  if (cloud.status === 'guest' || cloud.status === 'unsupported') return; // nothing to read
+  try {
+    const res = await cloud.load();
+    if (!res) {
+      cloudRevision = 0;
+      cloudFailureKind = null;
+      cloudRetryable = false;
+      return;
+    }
+    if (res.formatVersion !== CLOUD_FORMAT_VERSION) {
+      cloudLocked = true;
+      cloudFailureKind = 'FORMAT';
+      cloudRetryable = false;
+      return;
+    }
+    cloudRevision = res.revision;
+    cloudFailureKind = null;
+    cloudRetryable = false;
+  } catch {
+    cloudFailureKind = 'NETWORK';
+    cloudRetryable = true;
+  }
+}
+
 /** Pause-menu 重試: resend the kept snapshot (same requestId), or a fresh
  *  checkpoint when there is none (post-conflict row). Drops when a send is
  *  already in flight; re-renders the pause row if still paused so the retry
- *  gives immediate feedback. */
+ *  gives immediate feedback. Minor 1: when the boot read never landed
+ *  (revision null, not locked/stopped) the retry is a LOAD-ONLY re-read —
+ *  never a mid-session apply. */
 function retryCloudNow(): void {
   if (cloudInFlight) return;
+  if (cloudRevision === null && !cloudLocked && !cloudAuthStopped) {
+    void retryCloudRead().finally(() => {
+      if (state === 'paused') setState('paused');
+    });
+    return;
+  }
   const done = pendingCloud ? sendPendingCloud() : saveCloudNow('retry');
   void done.finally(() => {
     if (state === 'paused') setState('paused');
@@ -1373,6 +1419,7 @@ function startGame(): void {
   craftExcess = [];
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
+  cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -1455,32 +1502,55 @@ function continueGame(payload: SavePayload): void {
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
 
+  cloudAppliedAtBoot = false; // Ruling I: this local payload is the session now
   sessionStarted = true;
   setState('playing'); // same entry tail as startGame
   relockCanvas(); // the click is a user gesture → controls live
 }
 
-/** Title 繼續遊戲 (Task 14): apply the cached payload synchronously — inside
- *  the click gesture, so the pointer-lock relock in continueGame works. The
- *  cache is refreshed by every successful save (see savedPayload), i.e. it IS
- *  the latest save this page knows about; applying it is what "continue from
- *  save" means (state newer than the last save was never saved). */
+/** Title 繼續遊戲 when the boot read already applied cloud progress (Ruling I):
+ *  enter the ALREADY-APPLIED live state — world, player, mode/inventory/vitals,
+ *  advancements and clock are the boot `applyCloudData`'s, so there is NO
+ *  payload application here (re-applying is exactly the bug this fixes, and
+ *  cloud never carries voxel edits). Body = continueGame's entry tail only. */
+function continueFromCloud(): void {
+  cloudAppliedAtBoot = false; // session started — the boot state is now the session
+  audio.ensureStarted();
+  audio.startAmbience();
+  audio.setPhase(phaseOf(clock.t));
+  sessionStarted = true;
+  setState('playing');
+  relockCanvas(); // the click is a user gesture → controls live
+}
+
+/** Title 繼續遊戲 (Task 14 + Ruling I/J): route by the pure boot-entry decision.
+ *  'cloud' → the boot-applied state; 'local' → apply the cached local payload
+ *  synchronously (inside the click gesture, so continueGame's relock works);
+ *  'none' → defensive new game (the button is hidden without an entry). */
 function handleContinue(): void {
-  if (!savedPayload) {
-    startGame(); // defensive: button rendered without a save (unreachable — hasSave gates it)
+  const entry = titleEntry({
+    hasLocalSave: savedPayload !== null,
+    cloudApplied: cloudAppliedAtBoot,
+  });
+  if (entry === 'cloud') {
+    continueFromCloud();
     return;
   }
-  try {
-    continueGame(savedPayload);
-  } catch (err) {
-    // Review #2: honest recovery — a payload that explodes mid-apply must not
-    // strand the title screen. SETTLE: keep the cache (the record itself may
-    // be fine, and the next good save overwrites it) but fall back to a new
-    // game for THIS click; startGame's resetWorld discards any partial world
-    // application. loadGame's shape validation makes a throw near-impossible.
-    console.warn('[WeCraft] Continue failed — falling back to a new game', err);
-    startGame();
+  if (entry === 'local' && savedPayload) {
+    try {
+      continueGame(savedPayload);
+    } catch (err) {
+      // Review #2: honest recovery — a payload that explodes mid-apply must not
+      // strand the title screen. SETTLE: keep the cache (the record itself may
+      // be fine, and the next good save overwrites it) but fall back to a new
+      // game for THIS click; startGame's resetWorld discards any partial world
+      // application. loadGame's shape validation makes a throw near-impossible.
+      console.warn('[WeCraft] Continue failed — falling back to a new game', err);
+      startGame();
+    }
+    return;
   }
+  startGame(); // defensive: button rendered without an entry (unreachable — hasSave gates it)
 }
 
 /** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
@@ -1614,13 +1684,25 @@ void (async () => {
         if (data) {
           applyCloudData(data);
           cloudRevision = res.revision;
+          // Ruling I: the live state now IS this cloud payload — the title
+          // enters it via continueFromCloud() (never re-applies). Cleared at
+          // session start (startGame/continueGame/continueFromCloud).
+          cloudAppliedAtBoot = true;
         } else {
+          // Minor 1: honesty + recovery — the read succeeded but the payload
+          // could not be accepted; the row must say so and offer a retry
+          // (revision stays null: still no send may overwrite the slot).
           cloudRevision = null;
+          cloudFailureKind = 'NETWORK';
+          cloudRetryable = true;
           pushCloudToast('雲端讀取失敗，本機繼續');
         }
       }
     } catch {
+      // Minor 1: same honesty + recovery as the null-payload branch above.
       cloudRevision = null; // guard: no send may overwrite an unread slot
+      cloudFailureKind = 'NETWORK';
+      cloudRetryable = true;
       pushCloudToast('雲端讀取失敗，本機繼續');
     }
   } else {

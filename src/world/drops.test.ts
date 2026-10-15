@@ -305,11 +305,11 @@ describe('pickup', () => {
 });
 
 describe('dropItemFor (block → drop mapping)', () => {
-  it('coal_ore drops coal (no smelting in this phase)', () => {
+  it('coal_ore drops coal (the raw ore item, never the block item)', () => {
     expect(dropItemFor(BLOCK.COAL_ORE)).toBe('coal');
   });
 
-  it('iron_ore stays iron_ore (smelting-free design)', () => {
+  it('iron_ore drops iron_ore (the smelt input — see furnace recipes)', () => {
     expect(dropItemFor(BLOCK.IRON_ORE)).toBe('iron_ore');
   });
 

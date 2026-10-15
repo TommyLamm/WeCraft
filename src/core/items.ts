@@ -14,6 +14,25 @@ export type ItemId =
   // (plan requirement: "union covers blocks" + keep existing behavior working).
   | 'oak_leaves' | 'snow_block' | 'bedrock';
 
+/** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
+ *  total, so adding a union member without listing it here is a TYPE ERROR —
+ *  runtime allow-lists (main's cloud-apply KNOWN_ITEMS) can never silently
+ *  drift behind the union again. */
+const ITEM_IDS: Record<ItemId, true> = {
+  grass: true, dirt: true, stone: true, cobblestone: true, oak_log: true, oak_planks: true,
+  sand: true, gravel: true, glass: true, coal_ore: true, iron_ore: true,
+  crafting_table: true, furnace: true, chest: true,
+  stick: true, coal: true, iron_ingot: true,
+  wooden_pickaxe: true, stone_pickaxe: true, iron_pickaxe: true,
+  wooden_axe: true, stone_axe: true, iron_axe: true,
+  wooden_sword: true, stone_sword: true, iron_sword: true,
+  arrow: true, apple: true,
+  oak_leaves: true, snow_block: true, bedrock: true,
+};
+
+/** Every ItemId, canonically (31 today). */
+export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
+
 export interface ItemStack { item: ItemId; count: number }
 
 // Item ↔ block pairs for blocks that exist RIGHT NOW. chest is in the ItemId

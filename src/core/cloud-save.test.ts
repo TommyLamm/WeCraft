@@ -200,6 +200,34 @@ describe('cloud-save', () => {
     expect(validateCloudData(raw)).toBe(true);
   });
 
+  it('acceptCloudData normalizes partial/illegal vitals to finite clamped values', () => {
+    // validateCloudData only requires a finite hp — a partial payload must
+    // still come out with finite hunger/maxHunger (Minor 6).
+    const partial = rawValid();
+    partial.vitals = { hp: 20 };
+    const accepted = acceptCloudData(partial);
+    expect(accepted).not.toBeNull();
+    expect(accepted?.vitals).toEqual({
+      hp: 20, maxHp: 20, hunger: 20, maxHunger: 20, saturation: 5, regenAcc: 0, starveAcc: 0,
+    });
+
+    // Hostile values clamp / fall back instead of leaking NaN or absurd banks.
+    const hostile = rawValid();
+    hostile.vitals = {
+      hp: 999,
+      maxHp: -3, // out of range → model default
+      hunger: Number.NaN,
+      maxHunger: 'x',
+      saturation: 1e9,
+      regenAcc: Number.POSITIVE_INFINITY,
+      starveAcc: -5,
+    };
+    const a2 = acceptCloudData(hostile);
+    expect(a2?.vitals).toEqual({
+      hp: 20, maxHp: 20, hunger: 20, maxHunger: 20, saturation: 20, regenAcc: 0, starveAcc: 0,
+    });
+  });
+
   it('shouldAllowSave blocks null revisions and allows any read revision', () => {
     expect(shouldAllowSave({ revision: null })).toBe(false);
     expect(shouldAllowSave({ revision: 0 })).toBe(true);
