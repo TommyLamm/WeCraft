@@ -17,6 +17,7 @@ import { blockFromItem, stackName, maxStack, starterSlots, ALL_ITEM_IDS, type It
 import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
+import { createModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
@@ -178,6 +179,10 @@ const bus = createBus<GameEvents>();
 
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
+// B1.3: per-mode hotbar + survival vitals, carried across mode switches — the
+// mode-changed handler below saves the OUTGOING mode's live state here, then
+// loads the INCOMING mode's. Re-created on every New Game (startGame).
+let modeStash = createModeStash();
 // Current game mode (Task 5): mirrors settings.mode at boot and follows the
 // pause-menu toggle via the mode-changed event below.
 let currentMode: GameMode = settings.mode;
@@ -609,23 +614,27 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
 // The emit is synchronous, so menus' post-callback re-read of loadSettings
 // still sees the new value for its label.
 bus.on('mode-changed', ({ mode }) => {
+  // B1.3: stash the OUTGOING mode first — its hotbar and (in survival) vitals
+  // survive the switch instead of being destroyed. saveModeState snapshots
+  // deep copies, so later gameplay can never leak into the stash; saving runs
+  // before loading, so the default stash never clobbers live state.
+  modeStash = saveModeState(modeStash, currentMode, [...hotbar], vitals);
   currentMode = mode;
   input.setFlyEnabled(currentMode === 'creative'); // survival: force a landing
   settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
   if (mode === 'creative') {
-    // full hotbar refill: every block slot back to a full ×64 stack (shares
-    // the starter kit with startGame/module init — one definition, no drift)
-    starterSlots('creative').forEach((s, i) => inventory.setSlot(i, s));
+    // creative: restore its stashed hotbar (the starter kit on first entry)
+    loadModeSlots(modeStash, mode).forEach((s, i) => inventory.setSlot(i, s));
     hud.setHotbar(hotbar, selected);
     setVitals(null); // hide the bar; Task 9 owns the vitals lifecycle
   } else {
-    // survival: vitals enabled — always fresh here: creative entry set vitals to
-    // null and vitals-changed guards null, so there is nothing to preserve.
-    // A survival↔creative round-trip therefore resets HP/hunger to full
-    // (intentional for now; Task 9 may stash vitals on creative entry).
-    setVitals(createVitals());
+    // survival: restore its stashed hotbar + vitals — each mode keeps its own
+    // inventory and vitals across round-trips (B1.3; no more fresh-vitals reset)
+    loadModeSlots(modeStash, mode).forEach((s, i) => inventory.setSlot(i, s));
+    hud.setHotbar(hotbar, selected);
+    setVitals(modeStash.survivalVitals);
   }
 });
 
@@ -1418,6 +1427,7 @@ function resetWorld(): void {
 
 function startGame(): void {
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
+  modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
   // Task 17.5 Critical (verified live): the hotbar is the ENTIRE inventory, so
   // inheriting the previous session's slots deadlocks a fresh survival game —
@@ -1428,11 +1438,11 @@ function startGame(): void {
   // Vitals/clock carried stale values the same way (quit at hp 6/20 → new game
   // at 6/20; quit at night → new game at night), and staged craftGrid/craftExcess
   // items would flush into the NEW session's inventory on its first inventory open.
-  const fresh = starterSlots(currentMode);
+  const fresh = loadModeSlots(modeStash, currentMode);
   for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, fresh[i] ?? null);
   selected = 0;
   hud.setHotbar(hotbar, selected);
-  setVitals(currentMode === 'survival' ? createVitals() : null);
+  setVitals(currentMode === 'survival' ? modeStash.survivalVitals : null);
   clock = createClock(settings.dayLengthSec);
   // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
   // bed and pin the ambience phase to the fresh clock (day).
