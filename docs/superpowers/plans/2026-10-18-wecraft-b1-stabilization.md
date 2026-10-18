@@ -88,11 +88,11 @@
   - `'drains one saturation per completed 4 exhaustion, keeping the remainder'`：`exhaust(..., 4.1)` → `exhaustion 0.1`、`saturation 4`。
   - `'falls through to hunger when saturation is empty'`：`at({exhaustion:3,saturation:0,hunger:20})` + 1.5 → `exhaustion 0.5`、`hunger 19`。
   - `'never drains more than one point per 4 exhaustion (no ceil-style overdraw)'`：`at({saturation:0.5,hunger:20})` + 6 → `saturation 0`、`exhaustion 2`、`hunger 20`（舊模型會扣掉 5 點飢餓）。
-  - `'chunked and step-wise application of the same total are identical'`：同一總量 10.0 以「一次 10」與「100 × 0.1」套用 → `toEqual` 相同結果。
-  - `'caps accumulation at 40'`：+ 45 → `exhaustion 36`（40 cap 先觸發一輪扣點）。
+  - `'chunked and step-wise application of the same total are identical'`：同一總量 10.0 以「一次 10」與「100 × 0.1」套用 → 以 `toBeCloseTo(x, 5)` 逐欄比較（浮點殘差；`toEqual` 會誤報）。
+  - `'caps accumulation at 40 before draining'`：`at({exhaustion:39, saturation:0, hunger:20})` + 10 → cap 40 起算、每 4 扣 1（共 9 次）→ `{ exhaustion: 4, saturation: 0, hunger: 11 }`（未 cap 會是 49 → 12 次、hunger 8）。
 - `tickVitals` 測試更新：
   - `'does not regenerate below hunger 18 and resets the accumulator'` → 改為 `'saturation alone sustains slow regeneration below hunger 18'`：`{hunger:17, saturation:3}` 每 4 秒回血；`{hunger:17, saturation:0}` 不回血且 `regenAcc 0`。
-  - 新 `'fast regeneration at full hunger with saturation: 1 hp per 0.5 s, 1.5 saturation per hp'`：`{hunger:20, saturation:5, hp:10}` 加 1.0 秒 → `hp 12`、`saturation 2`（6 exhaustion/HP ⇒ 抵 cap 40 前每 HP 扣 1.5）。
+  - 新 `'fast regeneration at full hunger halves the tick (1 hp per 0.5 s)'`：`{hunger:20, saturation:5, hp:10, exhaustion:0}` 加 1.0 秒 → 恰好 2 次回血：`hp 12`、`saturation 3`、`exhaustion 4`。（每 HP +6 exhaustion 的確定性短期結果；長期平均 1.5 飽食/HP 是漸進行為，不要在此斷言。）
   - 新 `'regeneration stops when hunger drops below 18 with no saturation left'`：從 `{hunger:19, saturation:1}` 長 dt 迴圈 → 停止於 `hunger < 18 且 saturation 0`，hp 不超過上限。
   - 既有「1 hp per 4 s」「huge dt 多輪」「mutually exclusive」「dt 0/負/NaN」測試：僅補 `exhaustion: 0` 與必要欄位，斷言維持（若因新模型位移則按新公式修正並在 commit 訊息說明；注意「`{hunger:17}` → `regenAcc 0`」案例的 fixture 要把 saturation 設為 0，否則新規則「saturation ≠ 0 可慢速回復」會讓它失效）。
 
@@ -300,7 +300,7 @@ git commit -m "feat(save): B1.3 本機 payload v3，持久化兩模式背包與�
 - [ ] **Step 3: 實作**
 
 - `cloud-save.ts`：`CloudData.stash?: StashPayload`；`CloudBuildSource.stash: ModeStash`；`buildCloudData` 逐格拷貝 `stash`（比照 inventory 寫法）；`validateCloudData`：`if (r.stash !== undefined && (typeof r.stash !== 'object' || r.stash === null)) return false;`；`acceptCloudData`：`stash: normalizeModeStash(x.stash, { mode: clamped.mode, inventory: x.inventory, vitals: x.vitals })`。
-- `main.ts`：`saveCloudNow` 的 `buildCloudData` 參數（L1137-1146）加 `stash: modeStash`；`applyCloudData`：L1094-1109 的逐格驗證迴圈改用 `sanitizeSlots(data.inventory, hotbar.length)`（行為等價：非法 id 掉成 null、`setSlot` 負責 floor／clamp），並在 `setVitals(...)` 後加 `modeStash = normalizeModeStash(data.stash, { mode: data.settings.mode, inventory: data.inventory, vitals: data.vitals });`。
+- `main.ts`：`saveCloudNow` 的 `buildCloudData` 參數（L1137-1146）加 `stash: modeStash`；`applyCloudData`：L1094-1109 的逐格驗證迴圈改用 `sanitizeSlots(data.inventory, hotbar.length)`（行為等價：非法 id 掉成 null、`setSlot` 負責 floor／clamp），並在 `setVitals(...)` 後加 `modeStash = normalizeModeStash(data.stash, { mode: data.settings.mode, inventory: data.inventory, vitals: data.vitals });`。連帶移除只剩該迴圈使用的 `KNOWN_ITEMS` 常數（L532）與其不再需要的 import；`npm run lint` 必須維持乾淨。
 
 - [ ] **Step 4: 測試轉綠** — 同 Step 2 → PASS。
 
@@ -600,15 +600,14 @@ node validate-game.mjs /tmp/opencode/playroom-release/game.zip
 
 Expected: 兩個工具都成功、validate 全過（本機沒有 `unzip`，用 `python3 -m zipfile`）。
 
-- [ ] **Step 7: Commit＋tag＋push**
+- [ ] **Step 7: Commit（分支上；不 tag、不 push）**
 
 ```bash
 git add -A
 git commit -m "chore(release): 0.4.0"
-git tag -a v0.4.0 -m "0.4.0: B1 止血修復"
-git push origin master
-git push origin v0.4.0
 ```
+
+本計畫在 `b1-stabilization` 分支執行：tag 與 push 屬整支完成後的整合步驟——merge 回 master 後才 `git tag -a v0.4.0 -m "0.4.0: B1 止血修復"`＋`git push origin master`＋`git push origin v0.4.0`，由 controller 依 finishing-a-development-branch 流程執行（見 ledger 裁決）。
 
 - [ ] **Step 8: 驗證 CI Release**
 
