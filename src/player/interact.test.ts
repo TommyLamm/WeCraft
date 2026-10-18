@@ -85,67 +85,75 @@ describe('canHarvest (Task 5 pickaxe tier gate — Task 6 drop gate)', () => {
   });
 });
 
-describe('DigProgress (per-frame: dt × tool speed ÷ breakTimeSec)', () => {
+describe('DigProgress (per-frame: dt ÷ breakTimeSec — real seconds into a 0..1 bar)', () => {
   const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
-  // stone + wooden pickaxe: break time 1.125s at speed 2 (Task 5 numbers)
+  // stone + wooden pickaxe: getBreakTime === 1.125s REAL seconds (speed 2 already
+  // applied inside it). Every 0.28125s update is therefore 0.28125 / 1.125 = 25%.
 
-  it('progress accumulates while target unchanged, then completes', () => {
+  it('progress accumulates while target unchanged, then completes exactly on the break time', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2); // 0.28125s × 2 / 1.125s = 50%
-    expect(d.progress).toBeCloseTo(0.5, 5);
-    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
-    expect(d.progress).toBeCloseTo(1.0, 5);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125); // 0.28125 / 1.125 = 25%
+    expect(d.progress).toBeCloseTo(0.25, 5);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125);
+    expect(d.progress).toBeCloseTo(0.75, 5);
+    expect(d.isDone(BLOCK.STONE, 1.125)).toBe(false); // not before the full break time
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125);
+    expect(d.progress).toBe(1); // exact boundary: 4 × 0.28125 = 1.125s of dt
     expect(d.isDone(BLOCK.STONE, 1.125)).toBe(true);
   });
 
-  it('speed scales the rate: the same dt is far slower bare-handed (7.5s break time)', () => {
+  it('fills from the break time alone: the same dt is far slower bare-handed (7.5s) than with the tool (1.125s)', () => {
     const bare = new DigProgress();
-    bare.update(BLOCK.STONE, hit, 0.28125, 7.5, 1); // 0.28125 / 7.5 = 3.75%
+    bare.update(BLOCK.STONE, hit, 0.28125, 7.5); // 0.28125 / 7.5 = 3.75%
     expect(bare.progress).toBeCloseTo(0.0375, 5);
     const tool = new DigProgress();
-    tool.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
-    expect(tool.progress).toBeCloseTo(0.5, 5);
+    tool.update(BLOCK.STONE, hit, 0.28125, 1.125); // 0.28125 / 1.125 = 25%
+    expect(tool.progress).toBeCloseTo(0.25, 5);
   });
 
   it('resets when target changes', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
-    d.update(BLOCK.STONE, { ...hit, x: 1 }, 0.28125, 1.125, 2);
-    expect(d.progress).toBeCloseTo(0.5, 5); // 重新起算，不是累加
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125); // 50% on the original target
+    d.update(BLOCK.STONE, { ...hit, x: 1 }, 0.28125, 1.125);
+    expect(d.progress).toBeCloseTo(0.25, 5); // 重新起算，不是 0.75
   });
 
   it('reset clears progress', () => {
     const d = new DigProgress();
-    d.update(BLOCK.DIRT, hit, 0.5, 0.75, 1);
+    d.update(BLOCK.DIRT, hit, 0.5, 0.75); // dirt bare-handed: 0.75s
     d.reset();
     expect(d.progress).toBe(0);
   });
 
   it('resets when target moves from negative coordinates', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, { ...hit, x: -1 }, 1, 7.5, 1);
+    d.update(BLOCK.STONE, { ...hit, x: -1 }, 1, 7.5);
     expect(d.progress).toBeCloseTo(1 / 7.5, 5);
-    d.update(BLOCK.STONE, hit, 0.075, 7.5, 1);
+    d.update(BLOCK.STONE, hit, 0.075, 7.5);
     expect(d.progress).toBeCloseTo(0.01, 5); // 重新起算，不是 0.13+
   });
 
-  it('non-finite speed falls back to 1 (never poisons progress)', () => {
+  it('a NaN break time never accumulates (the finiteness guard covers NaN, not just Infinity)', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 1, 7.5, Number.NaN);
-    expect(d.progress).toBeCloseTo(1 / 7.5, 5);
+    d.update(BLOCK.STONE, hit, 1, Number.NaN);
+    expect(d.progress).toBe(0); // no NaN poisons the bar
+    expect(d.isDone(BLOCK.STONE, Number.NaN)).toBe(false);
   });
 
   it('non-finite break time never accumulates (bedrock/water)', () => {
     const d = new DigProgress();
     expect(d.isDone(BLOCK.STONE, 1.125)).toBe(false); // no update yet
-    d.update(BLOCK.BEDROCK, hit, 100, Infinity, 1);
+    d.update(BLOCK.BEDROCK, hit, 100, Infinity);
     expect(d.progress).toBe(0);
     expect(d.isDone(BLOCK.BEDROCK, Infinity)).toBe(false);
   });
 
   it('isDone is false for a different block than the one being dug', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 1.125, 1.125, 2);
+    d.update(BLOCK.STONE, hit, 1.125, 1.125); // exactly the 1.125s break time
+    expect(d.progress).toBe(1);
     expect(d.isDone(BLOCK.STONE, 1.125)).toBe(true);
     expect(d.isDone(BLOCK.COBBLE, 1.125)).toBe(false); // the key belongs to stone
   });
@@ -218,7 +226,7 @@ describe('digStep (Task 5: creative instant, survival from the held stack)', () 
 
   it('creative resets any leftover survival progress', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 1, 7.5, 1); // bare-handed survival dig, ~13%
+    d.update(BLOCK.STONE, hit, 1, 7.5); // bare-handed survival dig, 1 / 7.5 ≈ 13%
     expect(d.progress).toBeCloseTo(1 / 7.5, 5);
     expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, woodenPick)).toBe(true);
     expect(d.progress).toBe(0);
@@ -237,18 +245,24 @@ describe('digStep (Task 5: creative instant, survival from the held stack)', () 
     expect(digStep('survival', d, BLOCK.DIRT, hit, 0.7, null)).toBe(true); // 0.1 + 0.7 > 0.75
   });
 
-  it('survival resolves break time + speed from the held stack itself (stone + wooden pickaxe: 1.125s at 2×)', () => {
+  it('survival takes the full 1.125s of accumulated dt for stone + wooden pickaxe (real seconds, no extra speed factor)', () => {
     const d = new DigProgress();
-    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(false); // 50%
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(false); // 25%
+    expect(d.progress).toBeCloseTo(0.25, 5);
+    // 0.5625s in: a second ×2 speed application would have finished here
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(false);
     expect(d.progress).toBeCloseTo(0.5, 5);
-    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(true);
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(false); // 75%
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(true); // 1.125s total
   });
 
-  it('survival honours the tier gate through the same held stack (iron_ore + wooden pickaxe = 7.5s break time)', () => {
+  it('survival honours the tier gate through the same held stack (iron_ore + wooden pickaxe = the full 7.5s)', () => {
     const d = new DigProgress();
-    // 1s of digging advances the bar by dt × speed / breakTimeSec = 2 / 7.5
-    expect(digStep('survival', d, BLOCK.IRON_ORE, hit, 1, woodenPick)).toBe(false);
-    expect(d.progress).toBeCloseTo(2 / 7.5, 5); // ×5 gate, 2× pickaxe speed
+    // real seconds: 3.75s of digging is half of the 7.5s ×5-gate break time
+    // (the old double-speed bug would have broken the block right here)
+    expect(digStep('survival', d, BLOCK.IRON_ORE, hit, 3.75, woodenPick)).toBe(false);
+    expect(d.progress).toBeCloseTo(0.5, 5);
+    expect(digStep('survival', d, BLOCK.IRON_ORE, hit, 3.75, woodenPick)).toBe(true); // 7.5s total
     const withStonePick = new DigProgress();
     expect(digStep('survival', withStonePick, BLOCK.IRON_ORE, hit, 1.125, { item: 'stone_pickaxe', count: 1 })).toBe(true);
   });

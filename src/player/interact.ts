@@ -224,28 +224,26 @@ export function attackMob(
   return { mobs: next, hitId };
 }
 
-/** Per-frame contract: call update(blockId, hit, dt, breakTimeSec, speed) before
+/** Per-frame contract: call update(blockId, hit, dt, breakTimeSec) before
  *  isDone(blockId, breakTimeSec) each frame with the same target; isDone
  *  assumes progress belongs to the current target key. `breakTimeSec` is the
- *  held stack's break time for the target (`getBreakTime`, already divided by
- *  the tool speed) and `speed` the matching `toolSpeed` multiplier (1 = bare
- *  hand/no match). Progress accumulates the Phase-1 rule the plan keeps for
- *  survival — `dt × speed / breakTimeSec` — so the speed factor applies on top
- *  of the break time that already contains it and the bar fills after
- *  `breakTimeSec / speed` seconds of real time. */
+ *  held stack's REAL break time for the target — `getBreakTime` already has
+ *  the tool-speed factor applied inside it. Progress accumulates
+ *  `dt / breakTimeSec` (0..1 bar), so the block breaks after exactly
+ *  `breakTimeSec` seconds of real time; a non-finite break time (bedrock/
+ *  water) never accumulates. */
 export class DigProgress {
   private key = '';
   progress = 0;
 
-  update(blockId: number, hit: RayHit, dt: number, breakTimeSec: number, speed = 1): void {
+  update(blockId: number, hit: RayHit, dt: number, breakTimeSec: number): void {
     const k = `${hit.x},${hit.y},${hit.z},${blockId}`;
     if (k !== this.key) {
       this.key = k;
       this.progress = 0;
     }
     if (!Number.isFinite(breakTimeSec)) return; // bedrock 永不累進
-    const rate = Number.isFinite(speed) && speed > 0 ? speed : 1;
-    this.progress = Math.min(1, this.progress + (dt * rate) / breakTimeSec);
+    this.progress = Math.min(1, this.progress + dt / breakTimeSec);
   }
 
   isDone(blockId: number, breakTimeSec: number): boolean {
@@ -267,9 +265,10 @@ export class DigProgress {
  *  Creative (plan 5.5 "creative keeps instant dig"): breaks on the first step —
  *  no progress ever accumulates (`dig` is reset so no timer leaks across a mode
  *  switch). The unbreakable list (bedrock/water, hardness Infinity) still never
- *  breaks, in either mode. Survival: computes the held stack's vanilla break
- *  time + tool speed and drives the timed `DigProgress` with them (wooden
- *  pickaxe on iron ore = the slow ×5 rate), then reports `isDone`. */
+ *  breaks, in either mode. Survival: resolves the held stack's real break time
+ *  (hardness × 1.5/×5 ÷ tool speed, `getBreakTime` — wooden pickaxe on iron
+ *  ore = 7.5s) and drives the timed `DigProgress` with it, then reports
+ *  `isDone`. */
 export function digStep(
   mode: GameMode,
   dig: DigProgress,
@@ -284,7 +283,7 @@ export function digStep(
     dig.reset(); // mode-switch hygiene: drop leftover survival progress (creative never accumulates)
     return true;
   }
-  dig.update(blockId, hit, dt, time, toolSpeed(blockId, held));
+  dig.update(blockId, hit, dt, time);
   return dig.isDone(blockId, time);
 }
 
