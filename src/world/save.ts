@@ -2,7 +2,7 @@
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 
-import type { Vitals } from '../player/survival';
+import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
 import {
   emptyAdvancements,
@@ -177,7 +177,9 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  reads as "no save". ALWAYS returns a normalized v2 payload — a v1 record
  *  migrates to `{...v1, version: 2, advancements: emptyAdvancements()}` (old
  *  saves keep loading; progress starts fresh); a v2 record's advancements are
- *  sanitized against the current table. */
+ *  sanitized against the current table. Vitals written before `exhaustion`
+ *  existed (or otherwise malformed) run through survival.ts `normalizeVitals`
+ *  so the live model always sees the full shape. */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -186,10 +188,18 @@ export async function loadGame(): Promise<SavePayload | null> {
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
 			if (!isValidSavePayload(value)) return null;
-			if (value.version === 1) {
-				return { ...value, version: 2, advancements: emptyAdvancements() };
-			}
-			return { ...value, advancements: sanitizeAdvancements(value.advancements) };
+			const normalized: SavePayload =
+				value.version === 1
+					? { ...value, version: 2, advancements: emptyAdvancements() }
+					: { ...value, advancements: sanitizeAdvancements(value.advancements) };
+			return {
+				...normalized,
+				player: {
+					...normalized.player,
+					vitals:
+						normalized.player.vitals === null ? null : normalizeVitals(normalized.player.vitals),
+				},
+			};
 		} finally {
 			db.close();
 		}

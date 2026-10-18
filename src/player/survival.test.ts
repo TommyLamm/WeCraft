@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { createVitals, damage, heal, eat, exhaust, starve, tickVitals, isDead, fallDamage } from './survival';
+import {
+  createVitals,
+  damage,
+  heal,
+  eat,
+  exhaust,
+  starve,
+  tickVitals,
+  isDead,
+  fallDamage,
+  normalizeVitals,
+} from './survival';
 import type { Vitals } from './survival';
 
 /** Hand-built fixture: full vitals with a patch applied directly — bypasses
@@ -7,7 +18,7 @@ import type { Vitals } from './survival';
 const at = (patch: Partial<Vitals>): Vitals => ({ ...createVitals(), ...patch });
 
 describe('createVitals', () => {
-  it('starts at full health, full hunger, 5 saturation', () => {
+  it('starts at full health, full hunger, 5 saturation and no exhaustion', () => {
     expect(createVitals()).toEqual({
       hp: 20,
       maxHp: 20,
@@ -16,6 +27,7 @@ describe('createVitals', () => {
       saturation: 5,
       regenAcc: 0,
       starveAcc: 0,
+      exhaustion: 0,
     });
   });
 });
@@ -116,19 +128,58 @@ describe('eat / starve', () => {
 });
 
 describe('exhaust', () => {
-  it('drains saturation first when the amount fits', () => {
-    const v = exhaust(at({ saturation: 5, hunger: 20 }), 3);
-    expect(v.saturation).toBe(2);
-    expect(v.hunger).toBe(20); // hunger untouched
+  it('accumulates below the 4-point threshold without draining', () => {
+    const v = exhaust(at({ exhaustion: 0, hunger: 20, saturation: 5 }), 4.0);
+    expect(v.exhaustion).toBe(4.0); // banked, NOT spent (the threshold is > 4)
+    expect(v.saturation).toBe(5);
+    expect(v.hunger).toBe(20);
   });
 
-  it('overflow past saturation drains hunger (ceiling of the remainder)', () => {
-    const v = exhaust(at({ saturation: 5, hunger: 20 }), 6.5);
+  it('drains one saturation per completed 4 exhaustion, keeping the remainder', () => {
+    const v = exhaust(at({ exhaustion: 0, hunger: 20, saturation: 5 }), 4.1);
+    expect(v.exhaustion).toBeCloseTo(0.1, 5); // fp residue of 4.1 − 4
+    expect(v.saturation).toBe(4);
+    expect(v.hunger).toBe(20);
+  });
+
+  it('falls through to hunger when saturation is empty', () => {
+    const v = exhaust(at({ exhaustion: 3, saturation: 0, hunger: 20 }), 1.5);
+    expect(v.exhaustion).toBeCloseTo(0.5, 5); // one completed 4 of the 4.5 total
     expect(v.saturation).toBe(0);
-    expect(v.hunger).toBe(18); // ceil(1.5) = 2
+    expect(v.hunger).toBe(19);
   });
 
-  it('hunger from overflow floors at 0', () => {
+  it('never drains more than one point per 4 exhaustion (no ceil-style overdraw)', () => {
+    // The old model spent ceil(6 − 0.5) = 6 hunger for this single spend; the
+    // vanilla-style bank spends one point per completed 4 and keeps the rest.
+    const v = exhaust(at({ saturation: 0.5, hunger: 20 }), 6);
+    expect(v.saturation).toBe(0); // 0.5 − 1 clamps at 0
+    expect(v.exhaustion).toBe(2); // 6 − 4
+    expect(v.hunger).toBe(20); // the one drain came out of saturation
+  });
+
+  it('chunked and step-wise application of the same total are identical', () => {
+    const once = exhaust(at({ exhaustion: 0, saturation: 5, hunger: 20 }), 10);
+    let steps = at({ exhaustion: 0, saturation: 5, hunger: 20 });
+    for (let i = 0; i < 100; i++) steps = exhaust(steps, 0.1);
+    expect(once.exhaustion).toBe(2); // 10 → two drains, 2 carried
+    expect(once.saturation).toBe(3);
+    expect(once.hunger).toBe(20);
+    // compare field by field: toEqual would false-fail on the 0.1 accumulation residue
+    expect(steps.exhaustion).toBeCloseTo(once.exhaustion, 5);
+    expect(steps.saturation).toBeCloseTo(once.saturation, 5);
+    expect(steps.hunger).toBeCloseTo(once.hunger, 5);
+  });
+
+  it('caps accumulation at 40 before draining', () => {
+    const v = exhaust(at({ exhaustion: 39, saturation: 0, hunger: 20 }), 10);
+    // min(40, 49) → 40 → 9 completed drains (an uncapped 49 would drain 12)
+    expect(v.exhaustion).toBe(4);
+    expect(v.saturation).toBe(0);
+    expect(v.hunger).toBe(11);
+  });
+
+  it('a drain floors hunger at 0', () => {
     const v = exhaust(at({ saturation: 0, hunger: 1 }), 5);
     expect(v.saturation).toBe(0);
     expect(v.hunger).toBe(0);
@@ -137,7 +188,8 @@ describe('exhaust', () => {
 
   it('zero, negative or non-finite amount is a no-op', () => {
     for (const amount of [0, -3, NaN]) {
-      const v = exhaust(at({ saturation: 5, hunger: 20 }), amount);
+      const v = exhaust(at({ exhaustion: 2, saturation: 5, hunger: 20 }), amount);
+      expect(v.exhaustion).toBe(2);
       expect(v.saturation).toBe(5);
       expect(v.hunger).toBe(20);
     }
@@ -146,7 +198,9 @@ describe('exhaust', () => {
 
 describe('tickVitals — regen', () => {
   it('regenerates 1 hp per 4 s when hunger >= 18', () => {
-    let v = at({ hp: 10, hunger: 20 });
+    // No saturation → the slow 4 s cadence (the 0.5 s fast path needs full
+    // hunger AND saturation; see the fast-regeneration test below).
+    let v = at({ hp: 10, hunger: 20, saturation: 0 });
     v = tickVitals(v, 4);
     expect(v.hp).toBe(11);
     v = tickVitals(v, 4);
@@ -154,17 +208,37 @@ describe('tickVitals — regen', () => {
   });
 
   it('accumulates regenAcc below the 4 s threshold', () => {
-    const v = tickVitals(at({ hp: 10 }), 3.9);
+    const v = tickVitals(at({ hp: 10, saturation: 0 }), 3.9);
     expect(v.hp).toBe(10);
     expect(v.regenAcc).toBeCloseTo(3.9, 5);
   });
 
-  it('does not regenerate below hunger 18 and resets the accumulator', () => {
-    let v = tickVitals(at({ hp: 10 }), 3.9); // 3.9 s banked
-    expect(v.regenAcc).toBeCloseTo(3.9, 5);
-    v = tickVitals({ ...v, hunger: 17 }, 0.5);
-    expect(v.hp).toBe(10);
-    expect(v.regenAcc).toBe(0); // condition lost → bank discarded
+  it('saturation alone sustains slow regeneration below hunger 18', () => {
+    // hunger 17 with saturation left → the slow cadence still heals
+    const fed = tickVitals(at({ hp: 10, hunger: 17, saturation: 3, regenAcc: 3.9 }), 0.5);
+    expect(fed.hp).toBe(11);
+    expect(fed.regenAcc).toBeCloseTo(0.4, 5);
+    // hunger 17 with saturation 0 → condition lost → bank discarded, no heal
+    const dry = tickVitals(at({ hp: 10, hunger: 17, saturation: 0, regenAcc: 3.9 }), 0.5);
+    expect(dry.hp).toBe(10);
+    expect(dry.regenAcc).toBe(0);
+  });
+
+  it('fast regeneration at full hunger halves the tick (1 hp per 0.5 s)', () => {
+    const v = tickVitals(at({ hp: 10, hunger: 20, saturation: 5, exhaustion: 0 }), 1.0);
+    expect(v.hp).toBe(12); // exactly two 0.5 s heals fit in 1.0 s
+    expect(v.saturation).toBe(3); // one per heal: 2 × 6 exhaustion → 2 drains
+    expect(v.hunger).toBe(20); // saturation absorbed both drains
+    expect(v.exhaustion).toBe(4); // 2 × 6 = 12 → two drains, 4 carried
+  });
+
+  it('regeneration stops when hunger drops below 18 with no saturation left', () => {
+    let v = at({ hp: 10, hunger: 19, saturation: 1 });
+    for (let i = 0; i < 10; i++) v = tickVitals(v, 4);
+    expect(v.hp).toBe(13); // 3 heals, then the condition is lost for good
+    expect(v.hp).toBeLessThanOrEqual(v.maxHp);
+    expect(v.saturation).toBe(0);
+    expect(v.hunger).toBeLessThan(18);
   });
 
   it('stops at maxHp and clamps', () => {
@@ -175,7 +249,7 @@ describe('tickVitals — regen', () => {
   });
 
   it('a huge dt crosses multiple 4 s thresholds in one call', () => {
-    const v = tickVitals(at({ hp: 10, hunger: 20 }), 9.5);
+    const v = tickVitals(at({ hp: 10, hunger: 20, saturation: 0 }), 9.5);
     expect(v.hp).toBe(12); // +2
     expect(v.regenAcc).toBeCloseTo(1.5, 5); // remainder carried
   });
@@ -199,15 +273,28 @@ describe('tickVitals — starve', () => {
   });
 
   it('does not decay while saturation remains', () => {
-    const v = tickVitals(at({ hp: 10, hunger: 0, saturation: 1 }), 100);
-    expect(v.hp).toBe(10);
+    // Full hp on purpose: with hp below max the new model would spend the
+    // saturation on slow regeneration and starvation could start afterwards.
+    const v = tickVitals(at({ hp: 20, hunger: 0, saturation: 1 }), 100);
+    expect(v.hp).toBe(20);
     expect(v.starveAcc).toBe(0);
+    expect(v.saturation).toBe(1); // untouched — no action spent exhaustion
   });
 
   it('does not decay while hunger remains', () => {
     const v = tickVitals(at({ hp: 10, hunger: 1, saturation: 0 }), 100);
     expect(v.hp).toBe(10);
     expect(v.starveAcc).toBe(0);
+  });
+
+  it('banks starvation in the same call when a heal spends the last saturation', () => {
+    // hunger 0 + saturation 1 → one slow heal drains it → the starve branch
+    // reads the updated values and starts banking without waiting a frame.
+    const v = tickVitals(at({ hp: 10, hunger: 0, saturation: 1 }), 4);
+    expect(v.hp).toBe(10); // +1 regen and −1 starvation cancel in this call
+    expect(v.saturation).toBe(0);
+    expect(v.exhaustion).toBe(2); // 6 banked for the heal − one 4-point drain
+    expect(v.starveAcc).toBe(0); // its 4 s bank was spent on the decay tick
   });
 
   it('stops at 0 hp and never goes negative', () => {
@@ -245,7 +332,7 @@ describe('tickVitals — general', () => {
   });
 
   it('zero or negative dt moves no accumulator but resets still run', () => {
-    const banked = tickVitals(at({ hp: 10 }), 3.9); // 3.9 s banked
+    const banked = tickVitals(at({ hp: 10, saturation: 0 }), 3.9); // 3.9 s banked (slow path)
     expect(tickVitals(banked, 0).regenAcc).toBeCloseTo(3.9, 5);
     expect(tickVitals(banked, -5).regenAcc).toBeCloseTo(3.9, 5);
     expect(tickVitals(banked, -5).hp).toBe(10);
@@ -255,11 +342,54 @@ describe('tickVitals — general', () => {
   });
 
   it('NaN dt is treated as 0 — accumulators never become NaN', () => {
-    const banked = tickVitals(at({ hp: 10 }), 3.9);
+    const banked = tickVitals(at({ hp: 10, saturation: 0 }), 3.9);
     const v = tickVitals(banked, NaN);
     expect(v.hp).toBe(10);
     expect(v.regenAcc).toBeCloseTo(3.9, 5); // bank carried, not corrupted
     expect(v.starveAcc).toBe(0);
+  });
+});
+
+describe('normalizeVitals', () => {
+  it('fills a partial record with fresh-vitals defaults (exhaustion 0)', () => {
+    expect(normalizeVitals({ hp: 7 })).toEqual({
+      hp: 7,
+      maxHp: 20,
+      hunger: 20,
+      maxHunger: 20,
+      saturation: 5,
+      regenAcc: 0,
+      starveAcc: 0,
+      exhaustion: 0,
+    });
+  });
+
+  it('clamps hostile fields and caps exhaustion into [0, 40] — never throws', () => {
+    const hostile = normalizeVitals({
+      hp: 999,
+      maxHp: -3,
+      hunger: NaN,
+      maxHunger: 'x',
+      saturation: 1e9,
+      regenAcc: Number.POSITIVE_INFINITY,
+      starveAcc: -5,
+      exhaustion: 1e9,
+    });
+    expect(hostile).toEqual({
+      hp: 20,
+      maxHp: 20,
+      hunger: 20,
+      maxHunger: 20,
+      saturation: 20,
+      regenAcc: 0,
+      starveAcc: 0,
+      exhaustion: 40,
+    });
+    // a missing / non-finite / negative exhaustion falls back to 0
+    expect(normalizeVitals({ hp: 20 }).exhaustion).toBe(0);
+    expect(normalizeVitals({ hp: 20, exhaustion: NaN }).exhaustion).toBe(0);
+    expect(normalizeVitals({ hp: 20, exhaustion: -3 }).exhaustion).toBe(0);
+    expect(normalizeVitals(undefined).exhaustion).toBe(0); // non-object → fresh defaults
   });
 });
 

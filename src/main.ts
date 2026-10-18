@@ -20,7 +20,19 @@ import { createInventoryModel, type GameMode } from './core/inventory';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
-import { createVitals, damage, eat, exhaust, tickVitals, isDead as isPlayerDead, fallDamage, type Vitals } from './player/survival';
+import {
+  createVitals,
+  damage,
+  eat,
+  exhaust,
+  tickVitals,
+  isDead as isPlayerDead,
+  fallDamage,
+  EXHAUST_SPRINT_PER_METER,
+  EXHAUST_JUMP,
+  EXHAUST_SPRINT_JUMP,
+  type Vitals,
+} from './player/survival';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
@@ -398,10 +410,9 @@ const ATTACK_COOLDOWN_SEC = 0.6;
 /** Melee reach in blocks (plan: "ray hits mob within 3.5 blocks") — separate
  *  from the block reach (`reachFor`, 4.5/5) which still governs dig/place. */
 const MELEE_REACH = 3.5;
-/** Exhaustion rates (settled 9.5): sprint drains 0.05/s, one jump costs 0.15
- *  at its ground-launch edge; plain walking costs nothing. */
-const SPRINT_EXHAUST_PER_SEC = 0.05;
-const JUMP_EXHAUST = 0.15;
+// Exhaustion costs live in survival.ts (vanilla 1.20 `EXHAUST_*` table):
+// sprint 0.1 per metre moved, jump 0.05 (0.2 when launched sprinting);
+// plain walking costs nothing.
 /** Per-frame melee cooldown timer toward ATTACK_COOLDOWN_SEC. */
 let attackCd = 0;
 /** Cause of the current life's death (Task 13): set whenever survival damage
@@ -1768,7 +1779,7 @@ gs.renderer.setAnimationLoop(() => {
 
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
     // onGround; water swim-strikes and active flight aren't discrete jumps,
-    // so neither launches the 0.15-exhaust jump charge.
+    // so neither launches the 0.05-exhaust jump charge (0.2 when sprinting).
     const jumpStarted =
       input.state.jump && player.onGround && !player.flying && !player.inWater;
     // Pre-physics capture (review Important #2): the fall apex must keep the
@@ -1776,6 +1787,11 @@ gs.renderer.setAnimationLoop(() => {
     // 0.009 on the first airborne frame, which made every integer-height fall
     // deal 1 less than spec (floor(D−ε−3) = D−4).
     const preStepY = player.position.y;
+    // Horizontal twin of the capture above: sprint exhaustion bills per metre
+    // ACTUALLY moved this step (vanilla), so the distance is measured from the
+    // pre-physics position too.
+    const preStepX = player.position.x;
+    const preStepZ = player.position.z;
     stepPlayer(player, input.state, world, dt);
 
     // ---- Fall damage (plan 9.1) — apex lifecycle in player/fallstate.ts ----
@@ -1892,10 +1908,13 @@ gs.renderer.setAnimationLoop(() => {
       const hpBeforeTick = v.hp;
       const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
       if (input.state.sprint && moving && !player.flying && !player.inWater) {
-        v = exhaust(v, dt * SPRINT_EXHAUST_PER_SEC); // 0.05 exhaustion/s while sprinting
+        // Vanilla bills each metre actually sprinted; the bank (and the
+        // > 4-point drain) lives in survival.ts `exhaust`.
+        const moved = Math.hypot(player.position.x - preStepX, player.position.z - preStepZ);
+        v = exhaust(v, moved * EXHAUST_SPRINT_PER_METER);
       }
-      if (jumpStarted) v = exhaust(v, JUMP_EXHAUST); // 0.15 once per ground launch
-      v = tickVitals(v, dt); // regen (hunger ≥ 18) / starve: 1 hp per 4 s
+      if (jumpStarted) v = exhaust(v, input.state.sprint && moving ? EXHAUST_SPRINT_JUMP : EXHAUST_JUMP);
+      v = tickVitals(v, dt); // regen (fast 0.5 s / slow 4 s) + starve: 1 hp per 4 s
       // Task 13: the only hp drop possible here is the starvation tick
       // (exhaust never touches hp, regen only heals) — an hp loss at ~0 hunger
       // marks this life's death cause as starvation.

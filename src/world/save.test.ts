@@ -147,6 +147,34 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.version).toBe(2);
   });
 
+  /** Vitals written before Task 1 have no `exhaustion` field — the load path
+   *  must hand the live model the full shape instead of an undefined bank. */
+  const legacyVitals = {
+    hp: 17,
+    maxHp: 20,
+    hunger: 14,
+    maxHunger: 20,
+    saturation: 2.5,
+    regenAcc: 1,
+    starveAcc: 0,
+  };
+
+  it('loadGame defaults a v2 vitals record missing exhaustion to 0', async () => {
+    const base = makePayload();
+    await putRawRecord({ ...base, player: { ...base.player, vitals: legacyVitals } });
+    const loaded = await loadGame();
+    // the pre-existing fields survive the normalization untouched
+    expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
+  });
+
+  it('migrates a v1 record whose vitals predate exhaustion (loads as 0)', async () => {
+    const v1 = makeV1Payload();
+    await putRawRecord({ ...v1, player: { ...v1.player, vitals: legacyVitals } });
+    const loaded = await loadGame();
+    expect(loaded?.version).toBe(2);
+    expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
+  });
+
   it('loads a v2 payload with garbage advancements and sanitizes them', async () => {
     await putRawRecord({
       ...makePayload(),

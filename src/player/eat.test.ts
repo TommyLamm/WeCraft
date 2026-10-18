@@ -41,7 +41,10 @@ describe('apple eat values', () => {
     expect(APPLE_FOOD).toBe(4);
     expect(APPLE_SAT).toBe(2.4);
     const fed = eat(
-      { hp: 20, maxHp: 20, hunger: 16, maxHunger: 20, saturation: 5, regenAcc: 0, starveAcc: 0 },
+      {
+        hp: 20, maxHp: 20, hunger: 16, maxHunger: 20, saturation: 5,
+        regenAcc: 0, starveAcc: 0, exhaustion: 0,
+      },
       APPLE_FOOD,
       APPLE_SAT,
     );

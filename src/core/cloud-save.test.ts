@@ -209,6 +209,7 @@ describe('cloud-save', () => {
     expect(accepted).not.toBeNull();
     expect(accepted?.vitals).toEqual({
       hp: 20, maxHp: 20, hunger: 20, maxHunger: 20, saturation: 5, regenAcc: 0, starveAcc: 0,
+      exhaustion: 0,
     });
 
     // Hostile values clamp / fall back instead of leaking NaN or absurd banks.
@@ -225,6 +226,7 @@ describe('cloud-save', () => {
     const a2 = acceptCloudData(hostile);
     expect(a2?.vitals).toEqual({
       hp: 20, maxHp: 20, hunger: 20, maxHunger: 20, saturation: 20, regenAcc: 0, starveAcc: 0,
+      exhaustion: 0,
     });
   });
 
