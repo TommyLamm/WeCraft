@@ -1,7 +1,7 @@
 # WeCraft 原版對齊修復與內容擴充設計
 
 - 日期：2026-10-18
-- 狀態：草案（builder check 已完成；2026-10-18 使用者四項決策已併入；待最終核可，核可前不動工）
+- 狀態：**已核可（2026-10-18）**（builder check 完成；四項決策併入；據此進入實作規劃）
 - 基準版本：`wecraft` 0.3.0（`game.json`）
 - 行為基準：Minecraft Java Edition 1.20+ 原版；文中未標「已查證」的原版數值，一律在實作時以 minecraft.wiki 複核
 - 前 文：`docs/superpowers/specs/2026-09-23-wecraft-design.md`（原始設計；本文件針對「與原版落差」與「內容擴充」補充、修正，衝突時以本文件為準）
