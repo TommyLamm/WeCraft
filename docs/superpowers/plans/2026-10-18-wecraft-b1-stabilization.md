@@ -327,7 +327,7 @@ git commit -m "feat(cloud): B1.3 雲端附加 stash 欄位（維持 format 1）"
 - Consumes: 無（與 Task 1-4 平行；Task 6 依賴本任務的 `canHarvest`）。
 - Produces:
   - `blocks.ts`：`export type ToolKind = 'pickaxe' | 'axe' | 'shovel';`；`BlockDef` 加 `requiredTool: { kind: ToolKind; level: number } | null` 與 `fastTool: ToolKind | null`。
-  - `interact.ts`：`getBreakTime(blockId: number, held: ItemStack | null): number`、`canHarvest(blockId: number, held: ItemStack | null): boolean`、`toolSpeed(blockId: number, held: ItemStack | null): number`、`DigProgress.update(blockId, hit, dt, breakTimeSec, speed)`、`DigProgress.isDone(blockId, breakTimeSec)`、`digStep(mode, dig, blockId, hit, dt, held: ItemStack | null): boolean`。
+  - `interact.ts`：`getBreakTime(blockId: number, held: ItemStack | null): number`（回傳含速度的真實秒數）、`canHarvest(blockId: number, held: ItemStack | null): boolean`、`toolSpeed(blockId: number, held: ItemStack | null): number`、`DigProgress.update(blockId, hit, dt, breakTimeSec)`（吃真實秒數，不得再乘速度）、`DigProgress.isDone(blockId, breakTimeSec)`、`digStep(mode, dig, blockId, hit, dt, held: ItemStack | null): boolean`。
 
 **已查證數值（wiki，1.20+）**：時間＝`硬度 ×（可收穫 ? 1.5 : 5）÷ 工具速度`；速度：木 2／石 4／鐵 6（金 12／鑽 8 留 B5）；收穫等級：石頭／鵝卵石／煤礦＝木鎬以上（level 0）、鐵礦＝石鎬以上（level 1）。
 
@@ -339,8 +339,8 @@ git commit -m "feat(cloud): B1.3 雲端附加 stash 欄位（維持 format 1）"
 - `getBreakTime` 表驅動（精確秒數）：`stone` 徒手 7.5／木鎬 1.125／鐵鎬 0.375；`iron_ore` 木鎬 7.5（不可收穫）／石鎬 1.125；`dirt` 徒手 0.75；`oak_log` 徒手 3.0／木斧 1.5；`glass` 徒手 0.45；`bedrock`／`water` `Infinity`。
 - `canHarvest`：stone 徒手 false／木鎬 true；iron_ore 木鎬 false／石鎬 true；dirt 徒手 true；log 徒手 true。
 - `toolSpeed`：鎬對石類＝2/4/6；斧對原木＝2/4/6；鎬對原木＝1；斧對石＝1；徒手＝1。
-- `DigProgress`：改傳 `breakTimeSec`（例：stone＋木鎬 time 1.125、speed 2）；`isDone` 用同 time；既有「bedrock 卡 0」「換目標重置」測試改新簽名保留。
-- `digStep`：creative 即破；survival 依 time×speed 累積；bedrock／water false。
+- `DigProgress`：改傳 `breakTimeSec`（例：stone＋木鎬 time 1.125）；`isDone` 用同 time；既有「bedrock 卡 0」「換目標重置」測試改新簽名保留。
+- `digStep`：creative 即破；survival 依真實秒數累積（`dt` 直接對 `breakTimeSec` 累進；速度僅透過 `getBreakTime` 生效一次）；bedrock／water false。
 
 - [ ] **Step 2: 確認失敗** — `npx vitest run src/world/blocks.test.ts src/player/interact.test.ts` → FAIL。
 
