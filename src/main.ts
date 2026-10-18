@@ -40,7 +40,6 @@ import {
   placeTarget,
   canPlaceAt,
   spawnBlockDrop,
-  toolSpeed,
   digStep,
   getBreakTime,
   toolDamage,
@@ -2077,11 +2076,12 @@ gs.renderer.setAnimationLoop(() => {
       let digTarget: RayHit | null = null;
       if (hit && input.state.dig && !attacking) {
         const id = world.getBlock(hit.x, hit.y, hit.z);
-        // digStep owns the mode branch (creative ignores `speed` → instant break;
-        // survival is timed × toolSpeed) — no mode check needed here (review #4)
-        const speed = toolSpeed(id, hotbar[selected]);
-        if (Number.isFinite(getBreakTime(id))) digTarget = hit;
-        if (digStep(currentMode, dig, id, hit, dt, speed)) {
+        const held = hotbar[selected];
+        // digStep owns the mode branch and resolves the vanilla break time
+        // (hardness × 1.5/×5 ÷ tool speed) from the held stack inside — no
+        // external speed needed (creative breaks instantly regardless)
+        if (Number.isFinite(getBreakTime(id, held))) digTarget = hit;
+        if (digStep(currentMode, dig, id, hit, dt, held)) {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
           // Task 7: the broken block becomes a world drop (survival only; creative
           // spawns nothing). Inventory no longer changes here — pickups do that.

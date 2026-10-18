@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getBreakTime,
+  canHarvest,
   DigProgress,
   canPlaceAt,
   placeTarget,
@@ -11,198 +12,251 @@ import {
   hitMobId,
   attackMob,
 } from './interact';
-import { BLOCK, getBlockDef } from '../world/blocks';
+import { BLOCK } from '../world/blocks';
+import type { ItemId } from '../core/items';
 import { createMob, isDead, KNOCKBACK_SPEED, type Mob } from '../world/mobs';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
 import { PLAYER_HEIGHT } from './physics';
 
-describe('getBreakTime', () => {
-  it('dirt faster than stone', () => {
-    expect(getBreakTime(BLOCK.DIRT)).toBeLessThan(getBreakTime(BLOCK.STONE));
+describe('getBreakTime (Task 5: hardness × (harvestable ? 1.5 : 5) ÷ tool speed)', () => {
+  const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
+  const stonePick = { item: 'stone_pickaxe', count: 1 } as const;
+  const ironPick = { item: 'iron_pickaxe', count: 1 } as const;
+
+  it('stone: bare hand 7.5s, wooden pickaxe 1.125s, iron pickaxe 0.375s', () => {
+    expect(getBreakTime(BLOCK.STONE, null)).toBe(7.5);
+    expect(getBreakTime(BLOCK.STONE, woodenPick)).toBe(1.125);
+    expect(getBreakTime(BLOCK.STONE, ironPick)).toBe(0.375);
   });
-  it('bedrock unbreakable', () => {
-    expect(getBreakTime(BLOCK.BEDROCK)).toBe(Infinity);
+
+  it('iron_ore: wooden pickaxe 7.5s (kind matches, tier gate fails → ×5, 2× speed), stone pickaxe 1.125s', () => {
+    expect(getBreakTime(BLOCK.IRON_ORE, woodenPick)).toBe(7.5);
+    expect(getBreakTime(BLOCK.IRON_ORE, stonePick)).toBe(1.125);
   });
-  it('matches hardness registry', () => {
-    expect(getBreakTime(BLOCK.STONE)).toBe(getBlockDef(BLOCK.STONE).hardness);
+
+  it('no tool required → ×1.5 harvest rate: dirt 0.75s, oak_log 3.0s bare-handed', () => {
+    expect(getBreakTime(BLOCK.DIRT, null)).toBe(0.75);
+    expect(getBreakTime(BLOCK.LOG, null)).toBe(3.0);
+  });
+
+  it('oak_log with a wooden axe: 1.5s', () => {
+    expect(getBreakTime(BLOCK.LOG, { item: 'wooden_axe', count: 1 })).toBe(1.5);
+  });
+
+  it('glass bare-handed: 0.45s (no fast tool entry → speed 1)', () => {
+    // 0.3 is not exactly representable, so the formula lands one ulp below 0.45
+    expect(getBreakTime(BLOCK.GLASS, null)).toBeCloseTo(0.45, 10);
+  });
+
+  it('bedrock and water are unbreakable with and without tools', () => {
+    expect(getBreakTime(BLOCK.BEDROCK, null)).toBe(Infinity);
+    expect(getBreakTime(BLOCK.BEDROCK, ironPick)).toBe(Infinity);
+    expect(getBreakTime(BLOCK.WATER, null)).toBe(Infinity);
+    expect(getBreakTime(BLOCK.WATER, woodenPick)).toBe(Infinity);
   });
 });
 
-describe('DigProgress', () => {
-  it('progress accumulates while target unchanged', () => {
+describe('canHarvest (Task 5 pickaxe tier gate — Task 6 drop gate)', () => {
+  const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
+  const stonePick = { item: 'stone_pickaxe', count: 1 } as const;
+  const ironPick = { item: 'iron_pickaxe', count: 1 } as const;
+
+  it('stone family needs a pickaxe of level ≥ 0: bare hand/dirt/sword/axe are all false', () => {
+    expect(canHarvest(BLOCK.STONE, null)).toBe(false);
+    expect(canHarvest(BLOCK.STONE, { item: 'dirt', count: 1 })).toBe(false);
+    expect(canHarvest(BLOCK.STONE, { item: 'wooden_sword', count: 1 })).toBe(false);
+    expect(canHarvest(BLOCK.STONE, { item: 'iron_axe', count: 1 })).toBe(false); // wrong kind
+    expect(canHarvest(BLOCK.STONE, woodenPick)).toBe(true);
+  });
+
+  it('iron_ore needs level ≥ 1: wooden pickaxe false, stone/iron pickaxe true', () => {
+    expect(canHarvest(BLOCK.IRON_ORE, woodenPick)).toBe(false);
+    expect(canHarvest(BLOCK.IRON_ORE, stonePick)).toBe(true);
+    expect(canHarvest(BLOCK.IRON_ORE, ironPick)).toBe(true);
+  });
+
+  it('blocks without a tool requirement are always harvestable (dirt, oak_log — bare-handed too)', () => {
+    expect(canHarvest(BLOCK.DIRT, null)).toBe(true);
+    expect(canHarvest(BLOCK.LOG, null)).toBe(true);
+    expect(canHarvest(BLOCK.LEAVES, null)).toBe(true);
+    expect(canHarvest(BLOCK.GLASS, null)).toBe(true);
+  });
+});
+
+describe('DigProgress (per-frame: dt × tool speed ÷ breakTimeSec)', () => {
+  const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
+  // stone + wooden pickaxe: break time 1.125s at speed 2 (Task 5 numbers)
+
+  it('progress accumulates while target unchanged, then completes', () => {
     const d = new DigProgress();
-    const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
-    d.update(BLOCK.STONE, hit, 1.0); // 挖 1s（stone=2s → 50%）
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2); // 0.28125s × 2 / 1.125s = 50%
     expect(d.progress).toBeCloseTo(0.5, 5);
-    d.update(BLOCK.STONE, hit, 1.0);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
     expect(d.progress).toBeCloseTo(1.0, 5);
-    expect(d.isDone(BLOCK.STONE)).toBe(true);
+    expect(d.isDone(BLOCK.STONE, 1.125)).toBe(true);
+  });
+
+  it('speed scales the rate: the same dt is far slower bare-handed (7.5s break time)', () => {
+    const bare = new DigProgress();
+    bare.update(BLOCK.STONE, hit, 0.28125, 7.5, 1); // 0.28125 / 7.5 = 3.75%
+    expect(bare.progress).toBeCloseTo(0.0375, 5);
+    const tool = new DigProgress();
+    tool.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
+    expect(tool.progress).toBeCloseTo(0.5, 5);
   });
 
   it('resets when target changes', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
-    d.update(BLOCK.STONE, { x: 1, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
-    expect(d.progress).toBeCloseTo(0.5, 5);
+    d.update(BLOCK.STONE, hit, 0.28125, 1.125, 2);
+    d.update(BLOCK.STONE, { ...hit, x: 1 }, 0.28125, 1.125, 2);
+    expect(d.progress).toBeCloseTo(0.5, 5); // 重新起算，不是累加
   });
 
   it('reset clears progress', () => {
     const d = new DigProgress();
-    d.update(BLOCK.DIRT, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
+    d.update(BLOCK.DIRT, hit, 0.5, 0.75, 1);
     d.reset();
     expect(d.progress).toBe(0);
   });
 
   it('resets when target moves from negative coordinates', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, { x: -1, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1);
-    expect(d.progress).toBeCloseTo(0.5, 5);
-    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 0.01);
-    expect(d.progress).toBeCloseTo(0.005, 5); // 重新起算，不是 0.5+
-  });
-
-  it('speed multiplies the progress rate (survival tool speed)', () => {
-    const d = new DigProgress();
-    const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
-    d.update(BLOCK.STONE, hit, 0.5, 2); // 0.5s × 2× / 2s hardness = 50%
-    expect(d.progress).toBeCloseTo(0.5, 5);
-    d.update(BLOCK.STONE, hit, 0.5, 2); // another 50% → done
-    expect(d.progress).toBeCloseTo(1.0, 5);
-    expect(d.isDone(BLOCK.STONE)).toBe(true);
-  });
-
-  it('speed below 1 slows progress (wrong tool, 0.5×)', () => {
-    const d = new DigProgress();
-    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1, 0.5);
-    expect(d.progress).toBeCloseTo(0.25, 5); // 1s × 0.5× / 2s hardness
-    expect(d.isDone(BLOCK.STONE)).toBe(false);
+    d.update(BLOCK.STONE, { ...hit, x: -1 }, 1, 7.5, 1);
+    expect(d.progress).toBeCloseTo(1 / 7.5, 5);
+    d.update(BLOCK.STONE, hit, 0.075, 7.5, 1);
+    expect(d.progress).toBeCloseTo(0.01, 5); // 重新起算，不是 0.13+
   });
 
   it('non-finite speed falls back to 1 (never poisons progress)', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 1, Number.NaN);
-    expect(d.progress).toBeCloseTo(0.5, 5);
+    d.update(BLOCK.STONE, hit, 1, 7.5, Number.NaN);
+    expect(d.progress).toBeCloseTo(1 / 7.5, 5);
   });
 
-  it('isDone false before any update and for bedrock', () => {
+  it('non-finite break time never accumulates (bedrock/water)', () => {
     const d = new DigProgress();
-    expect(d.isDone(BLOCK.STONE)).toBe(false);
-    d.update(BLOCK.BEDROCK, { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 }, 100);
+    expect(d.isDone(BLOCK.STONE, 1.125)).toBe(false); // no update yet
+    d.update(BLOCK.BEDROCK, hit, 100, Infinity, 1);
     expect(d.progress).toBe(0);
-    expect(d.isDone(BLOCK.BEDROCK)).toBe(false);
+    expect(d.isDone(BLOCK.BEDROCK, Infinity)).toBe(false);
+  });
+
+  it('isDone is false for a different block than the one being dug', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, hit, 1.125, 1.125, 2);
+    expect(d.isDone(BLOCK.STONE, 1.125)).toBe(true);
+    expect(d.isDone(BLOCK.COBBLE, 1.125)).toBe(false); // the key belongs to stone
   });
 });
 
-describe('toolSpeed (Task 5 survival mining table)', () => {
-  const pick = { item: 'stone_pickaxe', count: 1 } as const;
-  const axe = { item: 'wooden_axe', count: 1 } as const;
-  const sword = { item: 'wooden_sword', count: 1 } as const;
+describe('toolSpeed (Task 5 vanilla tool tiers: wood 2 / stone 4 / iron 6)', () => {
+  const held = (item: ItemId) => ({ item, count: 1 }) as const;
 
-  it('matching pickaxe is 2× on stone-family blocks', () => {
-    expect(toolSpeed(BLOCK.STONE, pick)).toBe(2);
-    expect(toolSpeed(BLOCK.COBBLE, { item: 'wooden_pickaxe', count: 1 })).toBe(2);
-    expect(toolSpeed(BLOCK.COAL_ORE, pick)).toBe(2);
-    expect(toolSpeed(BLOCK.IRON_ORE, pick)).toBe(2);
+  it('pickaxe on the stone family: 2/4/6 (iron_ore included — speed is independent of the tier gate)', () => {
+    const tiers = [
+      ['wooden_pickaxe', 2],
+      ['stone_pickaxe', 4],
+      ['iron_pickaxe', 6],
+    ] as const;
+    for (const [item, speed] of tiers) {
+      for (const id of [BLOCK.STONE, BLOCK.COBBLE, BLOCK.COAL_ORE, BLOCK.IRON_ORE]) {
+        expect(toolSpeed(id, held(item))).toBe(speed);
+      }
+    }
   });
 
-  it('matching iron pickaxe is 3× on stone-family blocks (wood/stone stay 2×)', () => {
-    const iron = { item: 'iron_pickaxe', count: 1 } as const;
-    expect(toolSpeed(BLOCK.STONE, iron)).toBe(3);
-    expect(toolSpeed(BLOCK.COBBLE, iron)).toBe(3);
-    expect(toolSpeed(BLOCK.COAL_ORE, iron)).toBe(3);
-    expect(toolSpeed(BLOCK.IRON_ORE, iron)).toBe(3);
+  it('axe on oak_log: 2/4/6', () => {
+    expect(toolSpeed(BLOCK.LOG, held('wooden_axe'))).toBe(2);
+    expect(toolSpeed(BLOCK.LOG, held('stone_axe'))).toBe(4);
+    expect(toolSpeed(BLOCK.LOG, held('iron_axe'))).toBe(6);
   });
 
-  it('bare hand on pickaxe-blocks is 0.5× (hand = wrong tool for rock)', () => {
-    expect(toolSpeed(BLOCK.STONE, null)).toBe(0.5);
-    expect(toolSpeed(BLOCK.IRON_ORE, null)).toBe(0.5);
-    // a plain block item in hand behaves like a bare hand
-    expect(toolSpeed(BLOCK.STONE, { item: 'dirt', count: 1 })).toBe(0.5);
+  it('the other axe-fast blocks take axe speed too (planks, crafting table, furnace)', () => {
+    expect(toolSpeed(BLOCK.PLANKS, held('stone_axe'))).toBe(4);
+    expect(toolSpeed(BLOCK.CRAFTING_TABLE, held('wooden_axe'))).toBe(2);
+    expect(toolSpeed(BLOCK.FURNACE, held('iron_axe'))).toBe(6);
   });
 
-  it('wrong tool on pickaxe-blocks is 0.5× (axe and sword both count)', () => {
-    expect(toolSpeed(BLOCK.STONE, axe)).toBe(0.5);
-    expect(toolSpeed(BLOCK.COBBLE, sword)).toBe(0.5);
-    expect(toolSpeed(BLOCK.STONE, { item: 'iron_axe', count: 1 })).toBe(0.5);
-    expect(toolSpeed(BLOCK.STONE, { item: 'iron_sword', count: 1 })).toBe(0.5);
+  it('wrong kind is 1× (pickaxe on a log, axe on stone)', () => {
+    expect(toolSpeed(BLOCK.LOG, held('iron_pickaxe'))).toBe(1);
+    expect(toolSpeed(BLOCK.STONE, held('iron_axe'))).toBe(1);
+    expect(toolSpeed(BLOCK.IRON_ORE, held('stone_axe'))).toBe(1);
   });
 
-  it('matching axe is 2× on logs; bare hand stays 1× (logs are punchable)', () => {
-    expect(toolSpeed(BLOCK.LOG, axe)).toBe(2);
-    expect(toolSpeed(BLOCK.LOG, { item: 'stone_axe', count: 1 })).toBe(2);
+  it('bare hand, non-tools and swords: 1× (a sword is not a tool)', () => {
+    expect(toolSpeed(BLOCK.STONE, null)).toBe(1);
     expect(toolSpeed(BLOCK.LOG, null)).toBe(1);
+    expect(toolSpeed(BLOCK.STONE, held('wooden_sword'))).toBe(1);
+    expect(toolSpeed(BLOCK.LOG, held('iron_sword'))).toBe(1);
+    expect(toolSpeed(BLOCK.STONE, held('dirt'))).toBe(1);
   });
 
-  it('matching iron axe is 3× on logs', () => {
-    expect(toolSpeed(BLOCK.LOG, { item: 'iron_axe', count: 1 })).toBe(3);
+  it('shovel-fast blocks have no shovel item yet → 1× with anything', () => {
+    expect(toolSpeed(BLOCK.DIRT, held('iron_pickaxe'))).toBe(1);
+    expect(toolSpeed(BLOCK.SAND, held('iron_axe'))).toBe(1);
+    expect(toolSpeed(BLOCK.GRASS, null)).toBe(1);
   });
 
-  it('wrong tool on logs is 0.5×', () => {
-    expect(toolSpeed(BLOCK.LOG, { item: 'stone_pickaxe', count: 1 })).toBe(0.5);
-    expect(toolSpeed(BLOCK.LOG, sword)).toBe(0.5);
-    expect(toolSpeed(BLOCK.LOG, { item: 'iron_pickaxe', count: 1 })).toBe(0.5);
-    expect(toolSpeed(BLOCK.LOG, { item: 'iron_sword', count: 1 })).toBe(0.5);
-  });
-
-  it('no-tool blocks dig at 1× with anything (hand, tool, or sword)', () => {
-    expect(toolSpeed(BLOCK.DIRT, null)).toBe(1);
-    expect(toolSpeed(BLOCK.GRASS, sword)).toBe(1);
-    expect(toolSpeed(BLOCK.GLASS, axe)).toBe(1);
-    expect(toolSpeed(BLOCK.LEAVES, pick)).toBe(1);
-    expect(toolSpeed(BLOCK.PLANKS, null)).toBe(1);
-    expect(toolSpeed(BLOCK.SAND, { item: 'stone', count: 1 })).toBe(1);
-  });
-
-  it('unbreakable list (bedrock, water) unchanged at 1×', () => {
+  it('unbreakable blocks report 1× (the gating lives in the break time, not here)', () => {
     expect(toolSpeed(BLOCK.BEDROCK, null)).toBe(1);
-    expect(toolSpeed(BLOCK.BEDROCK, pick)).toBe(1);
-    expect(toolSpeed(BLOCK.WATER, null)).toBe(1);
-    expect(toolSpeed(BLOCK.WATER, axe)).toBe(1);
+    expect(toolSpeed(BLOCK.BEDROCK, held('iron_pickaxe'))).toBe(1);
+    expect(toolSpeed(BLOCK.WATER, held('wooden_axe'))).toBe(1);
   });
 });
 
-describe('digStep (Task 5 creative instant break)', () => {
+describe('digStep (Task 5: creative instant, survival from the held stack)', () => {
   const hit: RayHit = { x: 0, y: 64, z: 0, nx: 0, ny: 1, nz: 0, t: 0 };
+  const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
 
   it('creative breaks in one step with no progress accumulation', () => {
     const d = new DigProgress();
-    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, 1)).toBe(true);
+    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, null)).toBe(true);
     expect(d.progress).toBe(0); // the timer never runs in creative
   });
 
   it('creative resets any leftover survival progress', () => {
     const d = new DigProgress();
-    d.update(BLOCK.STONE, hit, 1, 1); // 50% from a survival dig
-    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, 1)).toBe(true);
+    d.update(BLOCK.STONE, hit, 1, 7.5, 1); // bare-handed survival dig, ~13%
+    expect(d.progress).toBeCloseTo(1 / 7.5, 5);
+    expect(digStep('creative', d, BLOCK.STONE, hit, 1 / 60, woodenPick)).toBe(true);
     expect(d.progress).toBe(0);
   });
 
   it('creative still respects the unbreakable list (bedrock, water)', () => {
     const d = new DigProgress();
-    expect(digStep('creative', d, BLOCK.BEDROCK, hit, 1, 1)).toBe(false);
-    expect(digStep('creative', d, BLOCK.WATER, hit, 1, 1)).toBe(false);
+    expect(digStep('creative', d, BLOCK.BEDROCK, hit, 1, null)).toBe(false);
+    expect(digStep('creative', d, BLOCK.WATER, hit, 1, null)).toBe(false);
   });
 
-  it('survival is false until the timed progress completes', () => {
+  it('survival is false until the held stack\'s break time elapses (dirt bare-handed: 0.75s)', () => {
     const d = new DigProgress();
-    // dirt = 0.6s: 0.1s gets there nowhere
-    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.1, 1)).toBe(false);
-    expect(d.progress).toBeGreaterThan(0);
-    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.55, 1)).toBe(true); // 0.1 + 0.55 > 0.6
+    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.1, null)).toBe(false);
+    expect(d.progress).toBeCloseTo(0.1 / 0.75, 5);
+    expect(digStep('survival', d, BLOCK.DIRT, hit, 0.7, null)).toBe(true); // 0.1 + 0.7 > 0.75
   });
 
-  it('survival applies the tool speed multiplier', () => {
+  it('survival resolves break time + speed from the held stack itself (stone + wooden pickaxe: 1.125s at 2×)', () => {
     const d = new DigProgress();
-    // stone = 2s: two 0.5s steps at 2× → 50% then done
-    expect(digStep('survival', d, BLOCK.STONE, hit, 0.5, 2)).toBe(false);
-    expect(digStep('survival', d, BLOCK.STONE, hit, 0.5, 2)).toBe(true);
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(false); // 50%
+    expect(d.progress).toBeCloseTo(0.5, 5);
+    expect(digStep('survival', d, BLOCK.STONE, hit, 0.28125, woodenPick)).toBe(true);
   });
 
-  it('survival bedrock never breaks (unbreakable list unchanged)', () => {
+  it('survival honours the tier gate through the same held stack (iron_ore + wooden pickaxe = 7.5s break time)', () => {
     const d = new DigProgress();
-    expect(digStep('survival', d, BLOCK.BEDROCK, hit, 100, 2)).toBe(false);
+    // 1s of digging advances the bar by dt × speed / breakTimeSec = 2 / 7.5
+    expect(digStep('survival', d, BLOCK.IRON_ORE, hit, 1, woodenPick)).toBe(false);
+    expect(d.progress).toBeCloseTo(2 / 7.5, 5); // ×5 gate, 2× pickaxe speed
+    const withStonePick = new DigProgress();
+    expect(digStep('survival', withStonePick, BLOCK.IRON_ORE, hit, 1.125, { item: 'stone_pickaxe', count: 1 })).toBe(true);
+  });
+
+  it('survival bedrock/water never break and never accumulate', () => {
+    const d = new DigProgress();
+    expect(digStep('survival', d, BLOCK.BEDROCK, hit, 100, { item: 'iron_pickaxe', count: 1 })).toBe(false);
+    expect(digStep('survival', d, BLOCK.WATER, hit, 100, null)).toBe(false);
     expect(d.progress).toBe(0);
   });
 });

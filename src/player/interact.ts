@@ -1,4 +1,4 @@
-import { getBlockDef, BLOCK } from '../world/blocks';
+import { getBlockDef, BLOCK, type ToolKind } from '../world/blocks';
 import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
@@ -26,64 +26,62 @@ export function spawnBlockDrop(
   return spawnDrop(drops, item, 1, pos);
 }
 
-export function getBreakTime(blockId: number): number {
-  return getBlockDef(blockId).hardness;
-}
+// ---- Survival mining (Task 5): vanilla break-time formula + harvest gates ----
 
-// ---- Survival mining table (Task 5) ----
+/** Tool tiers that exist as items (wooden/stone/iron pickaxe + axe). `level` is
+ *  the harvest tier (0/1/2), `speed` the vanilla mining multiplier (2/4/6).
+ *  Swords are deliberately absent — a sword is not a tool: it never speeds
+ *  mining up and never satisfies a `requiredTool`. Shovels are absent too
+ *  (`ItemId` has none yet), so shovel-fast blocks always mine at speed 1. */
+const TOOL_INFO: Readonly<
+  Partial<Record<ItemId, { kind: ToolKind; level: number; speed: number }>>
+> = {
+  wooden_pickaxe: { kind: 'pickaxe', level: 0, speed: 2 },
+  stone_pickaxe: { kind: 'pickaxe', level: 1, speed: 4 },
+  iron_pickaxe: { kind: 'pickaxe', level: 2, speed: 6 },
+  wooden_axe: { kind: 'axe', level: 0, speed: 2 },
+  stone_axe: { kind: 'axe', level: 1, speed: 4 },
+  iron_axe: { kind: 'axe', level: 2, speed: 6 },
+};
 
-type ToolCategory = 'pickaxe' | 'axe';
-
-/** Blocks mined fastest with a pickaxe (stone family). */
-const PICKAXE_BLOCKS: ReadonlySet<number> = new Set([
-  BLOCK.STONE, BLOCK.COBBLE, BLOCK.COAL_ORE, BLOCK.IRON_ORE,
-]);
-/** Blocks mined fastest with an axe. */
-const AXE_BLOCKS: ReadonlySet<number> = new Set([BLOCK.LOG]);
-
-const PICKAXES: ReadonlySet<ItemId> = new Set(['wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe']);
-const AXES: ReadonlySet<ItemId> = new Set(['wooden_axe', 'stone_axe', 'iron_axe']);
-const SWORDS: ReadonlySet<ItemId> = new Set(['wooden_sword', 'stone_sword', 'iron_sword']);
-
-/** Iron-tier tools (faster mining than wood/stone). */
-const IRON_TOOLS: ReadonlySet<ItemId> = new Set(['iron_pickaxe', 'iron_axe', 'iron_sword']);
-
-function requiredTool(blockId: number): ToolCategory | null {
-  if (PICKAXE_BLOCKS.has(blockId)) return 'pickaxe';
-  if (AXE_BLOCKS.has(blockId)) return 'axe';
-  return null;
-}
-
-/** Mining-speed multiplier for holding `held` (a hotbar stack; null = bare hand)
- *  while digging `blockId`. Survival mode only — creative dig ignores it.
+/** Can `held` (a hotbar stack; null = bare hand) harvest `blockId`?
  *
- *  Table (Task 5), documented choices:
- *  - unbreakable (bedrock/water, hardness Infinity) → 1× — the rate never
- *    accumulates for them anyway (`DigProgress` guards on finite break time);
- *  - no required tool (dirt, grass, sand, leaves, planks, glass, snow, …) → 1×
- *    with anything in hand;
- *  - matching tool (pickaxe on the stone family, axe on logs) → 2×
- *    (wood/stone) or 3× (iron);
- *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
- *  - wrong tool (axe on stone, pickaxe on logs, a sword on a required block) → 0.5×;
- *  - bare hand / non-tool item: treated like the wrong tool on pickaxe blocks
- *    (0.5× — hand is the wrong tool for rock, Minecraft-like; our chosen reading,
- *    since the plan text only says "hand 1×" generally and is ambiguous here),
- *    1× on logs (punchable) and on no-tool blocks;
- *  - swords are the documented "wrong tool" case: 0.5× on required blocks,
- *    1× elsewhere. */
+ *  Vanilla shape: `requiredTool === null` → always harvestable, whatever is in
+ *  hand; otherwise the held item must be a tool of the required kind at or
+ *  above the required level (stone family: wooden pickaxe, level 0; iron ore:
+ *  stone pickaxe, level 1). Task 6 uses this to gate drops. */
+export function canHarvest(blockId: number, held: ItemStack | null): boolean {
+  const req = getBlockDef(blockId).requiredTool;
+  if (req === null) return true;
+  const info = held ? TOOL_INFO[held.item] : undefined;
+  return info !== undefined && info.kind === req.kind && info.level >= req.level;
+}
+
+/** Mining-speed multiplier for `held` while digging `blockId` (survival only —
+ *  creative breaks instantly): the matching tool's vanilla speed when the held
+ *  tool's kind is the block's required kind (stone family) or its fast kind
+ *  (shovel on dirt/grass/sand/snow, axe on log/planks/crafting table/furnace),
+ *  else 1 — a wrong kind never speeds a block up. Unbreakable blocks
+ *  (hardness Infinity) report 1 too: their break time is Infinity regardless.
+ *  Note the tier gate is NOT applied here — a wooden pickaxe still mines iron
+ *  ore at 2× (the ×5 penalty comes from `getBreakTime`'s harvest check). */
 export function toolSpeed(blockId: number, held: ItemStack | null): number {
-  if (!Number.isFinite(getBlockDef(blockId).hardness)) return 1; // bedrock/water unchanged
-  const required = requiredTool(blockId);
-  if (!required) return 1;
-  const item = held?.item ?? null;
-  if (item) {
-    const matches = required === 'pickaxe' ? PICKAXES.has(item) : AXES.has(item);
-    if (matches) return IRON_TOOLS.has(item) ? 3 : 2;
-    if (PICKAXES.has(item) || AXES.has(item) || SWORDS.has(item)) return 0.5; // wrong tool
-  }
-  // hand or plain item: rock needs a pickaxe; logs/no-tool blocks take a hand
-  return required === 'pickaxe' ? 0.5 : 1;
+  const def = getBlockDef(blockId);
+  if (!Number.isFinite(def.hardness)) return 1; // bedrock/water unchanged
+  const wanted = def.requiredTool?.kind ?? def.fastTool;
+  const info = held ? TOOL_INFO[held.item] : undefined;
+  return info && wanted && info.kind === wanted ? info.speed : 1;
+}
+
+/** Seconds to break `blockId` with `held` (MC Java 1.20+ formula):
+ *  `hardness × (canHarvest ? 1.5 : 5) ÷ toolSpeed`. Harvestable blocks get the
+ *  fast ×1.5 rate; a tool that cannot harvest pays the ×5 penalty even when its
+ *  kind matches (iron ore + wooden pickaxe: 3.0 × 5 / 2 = 7.5 s). Infinity for
+ *  unbreakable blocks (bedrock/water). */
+export function getBreakTime(blockId: number, held: ItemStack | null): number {
+  const h = getBlockDef(blockId).hardness;
+  if (!Number.isFinite(h)) return Infinity;
+  return (h * (canHarvest(blockId, held) ? 1.5 : 5)) / toolSpeed(blockId, held);
 }
 
 // ---- Melee combat (Task 9) ----
@@ -226,29 +224,33 @@ export function attackMob(
   return { mobs: next, hitId };
 }
 
-/** Per-frame contract: call update(blockId, hit, dt, speed?) before isDone(blockId)
- *  each frame with the same target; isDone assumes progress belongs to the current
- *  target key. `speed` multiplies the progress rate (survival passes
- *  `toolSpeed(...)`; default 1 = the base Phase 1 rate). */
+/** Per-frame contract: call update(blockId, hit, dt, breakTimeSec, speed) before
+ *  isDone(blockId, breakTimeSec) each frame with the same target; isDone
+ *  assumes progress belongs to the current target key. `breakTimeSec` is the
+ *  held stack's break time for the target (`getBreakTime`, already divided by
+ *  the tool speed) and `speed` the matching `toolSpeed` multiplier (1 = bare
+ *  hand/no match). Progress accumulates the Phase-1 rule the plan keeps for
+ *  survival — `dt × speed / breakTimeSec` — so the speed factor applies on top
+ *  of the break time that already contains it and the bar fills after
+ *  `breakTimeSec / speed` seconds of real time. */
 export class DigProgress {
   private key = '';
   progress = 0;
 
-  update(blockId: number, hit: RayHit, dt: number, speed = 1): void {
+  update(blockId: number, hit: RayHit, dt: number, breakTimeSec: number, speed = 1): void {
     const k = `${hit.x},${hit.y},${hit.z},${blockId}`;
     if (k !== this.key) {
       this.key = k;
       this.progress = 0;
     }
-    const time = getBreakTime(blockId);
-    if (!isFinite(time)) return; // bedrock 永不累進
+    if (!Number.isFinite(breakTimeSec)) return; // bedrock 永不累進
     const rate = Number.isFinite(speed) && speed > 0 ? speed : 1;
-    this.progress = Math.min(1, this.progress + (dt * rate) / time);
+    this.progress = Math.min(1, this.progress + (dt * rate) / breakTimeSec);
   }
 
-  isDone(blockId: number): boolean {
+  isDone(blockId: number, breakTimeSec: number): boolean {
     return (
-      isFinite(getBreakTime(blockId)) &&
+      Number.isFinite(breakTimeSec) &&
       this.progress >= 1 &&
       this.key.endsWith(`,${blockId}`)
     );
@@ -265,23 +267,25 @@ export class DigProgress {
  *  Creative (plan 5.5 "creative keeps instant dig"): breaks on the first step —
  *  no progress ever accumulates (`dig` is reset so no timer leaks across a mode
  *  switch). The unbreakable list (bedrock/water, hardness Infinity) still never
- *  breaks, in either mode. Survival: drives the timed `DigProgress` with `speed`
- *  (from `toolSpeed`) and reports `isDone`. */
+ *  breaks, in either mode. Survival: computes the held stack's vanilla break
+ *  time + tool speed and drives the timed `DigProgress` with them (wooden
+ *  pickaxe on iron ore = the slow ×5 rate), then reports `isDone`. */
 export function digStep(
   mode: GameMode,
   dig: DigProgress,
   blockId: number,
   hit: RayHit,
   dt: number,
-  speed: number,
+  held: ItemStack | null,
 ): boolean {
-  if (!Number.isFinite(getBreakTime(blockId))) return false; // unbreakable: never, both modes
+  const time = getBreakTime(blockId, held);
+  if (!Number.isFinite(time)) return false; // unbreakable: never, both modes
   if (mode === 'creative') {
     dig.reset(); // mode-switch hygiene: drop leftover survival progress (creative never accumulates)
     return true;
   }
-  dig.update(blockId, hit, dt, speed);
-  return dig.isDone(blockId);
+  dig.update(blockId, hit, dt, time, toolSpeed(blockId, held));
+  return dig.isDone(blockId, time);
 }
 
 export function placeTarget(hit: RayHit): { x: number; y: number; z: number } {
