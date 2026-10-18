@@ -11,6 +11,8 @@ import {
   type CloudData,
 } from './cloud-save';
 import { createVitals } from '../player/survival';
+import { starterSlots, type ItemStack } from './items';
+import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
 
 function validSettings(): Settings {
@@ -39,6 +41,12 @@ function rawValid(): Record<string, unknown> {
   };
 }
 
+/** Hotbar-shaped slots: `items` padded with nulls to the 9-slot width (the
+ *  canonical shape the stash normalization produces). */
+function slots(...items: Array<ItemStack | null>): Array<ItemStack | null> {
+  return [...items, ...new Array(9 - items.length).fill(null)];
+}
+
 describe('cloud-save', () => {
   it('buildCloudData deep-copies live state', () => {
     const pos: [number, number, number] = [10, 65, -7];
@@ -55,6 +63,7 @@ describe('cloud-save', () => {
       inventory,
       advancements,
       settings,
+      stash: createModeStash(),
     });
     // Mutate every live input after the build.
     pos[0] = 999;
@@ -79,6 +88,7 @@ describe('cloud-save', () => {
       inventory: [],
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
+      stash: createModeStash(),
     });
     expect(built.pos).toEqual([0, 0, 0]);
     expect(built.yaw).toBe(0);
@@ -91,9 +101,44 @@ describe('cloud-save', () => {
       inventory: [],
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
+      stash: createModeStash(),
     });
     expect(inf.pos).toEqual([1, 2, 3]);
     expect(inf.yaw).toBe(0);
+  });
+
+  it('buildCloudData deep-copies the stash', () => {
+    const liveStack = { item: 'stone' as const, count: 64 };
+    const stash: ModeStash = {
+      survival: slots(liveStack),
+      creative: slots({ item: 'dirt', count: 3 }),
+      survivalVitals: { ...createVitals(), hp: 11 },
+    };
+    const built = buildCloudData({
+      seed: 1,
+      pos: [0, 64, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [],
+      advancements: { done: {}, nightSeen: false },
+      settings: validSettings(),
+      stash,
+    });
+    // Mutate every live input after the build.
+    stash.survival[0] = { item: 'apple', count: 1 };
+    stash.creative[0] = null;
+    stash.survivalVitals.hp = 1;
+    expect(built.stash).toEqual({
+      survival: slots({ item: 'stone', count: 64 }),
+      creative: slots({ item: 'dirt', count: 3 }),
+      survivalVitals: { ...createVitals(), hp: 11 },
+    });
+    // Fresh arrays/objects — the copy never aliases the live stash.
+    expect(built.stash).not.toBe(stash);
+    expect(built.stash?.survival).not.toBe(stash.survival);
+    expect(built.stash?.survival[0]).not.toBe(liveStack);
+    expect(built.stash?.survivalVitals).not.toBe(stash.survivalVitals);
   });
 
   it('exposes format version 1 and a 64 KiB cap', () => {
@@ -111,6 +156,7 @@ describe('cloud-save', () => {
       inventory: [],
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
+      stash: createModeStash(),
     });
     expect(byteSizeOf(data)).toBeLessThan(1024);
   });
@@ -127,6 +173,7 @@ describe('cloud-save', () => {
       inventory,
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
+      stash: createModeStash(),
     });
     expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
   });
@@ -141,6 +188,7 @@ describe('cloud-save', () => {
       inventory: [],
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
+      stash: createModeStash(),
     });
     const withExtra = { ...base, extraPayload: 'x'.repeat(70 * 1024) } as CloudData;
     expect(byteSizeOf(withExtra)).toBeGreaterThan(CLOUD_MAX_BYTES);
@@ -163,6 +211,16 @@ describe('cloud-save', () => {
     const badCount = rawValid();
     badCount.inventory = [{ item: 'x' }];
     expect(validateCloudData(badCount)).toBe(false);
+  });
+
+  it('validateCloudData accepts payloads without stash (format 1 forwards-compat) and rejects a non-object stash', () => {
+    // Old format-1 payloads predate the additive stash field.
+    expect(validateCloudData(rawValid())).toBe(true);
+    expect(validateCloudData({ ...rawValid(), stash: 'survival' })).toBe(false);
+    expect(validateCloudData({ ...rawValid(), stash: null })).toBe(false);
+    // Deeper shape problems are normalization's job, not validation's (the
+    // advancements pattern) — an array is an object and passes through here.
+    expect(validateCloudData({ ...rawValid(), stash: [] })).toBe(true);
   });
 
   it('acceptCloudData normalizes v1 data: sanitizes advancements, clamps settings, keeps unknown item ids', () => {
@@ -228,6 +286,40 @@ describe('cloud-save', () => {
       hp: 20, maxHp: 20, hunger: 20, maxHunger: 20, saturation: 20, regenAcc: 0, starveAcc: 0,
       exhaustion: 0,
     });
+  });
+
+  it('acceptCloudData derives stash from legacy fields when absent', () => {
+    const raw = rawValid(); // survival save: inventory + vitals belong to survival
+    const accepted = acceptCloudData(raw);
+    expect(accepted?.stash).toEqual({
+      survival: slots({ item: 'stone', count: 64 }),
+      creative: starterSlots('creative'),
+      survivalVitals: { ...createVitals() },
+    });
+    expect(accepted?.stash?.survivalVitals).not.toBe(raw.vitals);
+  });
+
+  it('acceptCloudData normalizes a present stash instead of legacy fields', () => {
+    const raw = rawValid(); // legacy fields: survival inventory = stone + vitals
+    raw.stash = {
+      survival: [{ item: 'not_a_real_item', count: 3 }, { item: 'apple', count: 0 }],
+      creative: [{ item: 'stone', count: 64 }],
+      survivalVitals: { hp: 999 },
+    };
+    const accepted = acceptCloudData(raw);
+    // The legacy inventory/vitals still land where they always did…
+    expect(accepted?.inventory).toEqual([{ item: 'stone', count: 64 }, null]);
+    // …but the stash comes from the payload's stash: unknown ids and
+    // non-positive counts read as empty slots, vitals clamp to model bounds.
+    expect(accepted?.stash).toEqual({
+      survival: slots(),
+      creative: slots({ item: 'stone', count: 64 }),
+      survivalVitals: {
+        hp: 20, maxHp: 20, hunger: 20, maxHunger: 20,
+        saturation: 5, regenAcc: 0, starveAcc: 0, exhaustion: 0,
+      },
+    });
+    expect(accepted?.stash).not.toBe(raw.stash);
   });
 
   it('shouldAllowSave blocks null revisions and allows any read revision', () => {

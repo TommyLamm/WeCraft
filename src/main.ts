@@ -12,7 +12,7 @@ import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
-import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, ALL_ITEM_IDS, type ItemId, type ItemStack } from './core/items';
+import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, type ItemId, type ItemStack } from './core/items';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
@@ -540,12 +540,6 @@ const CLOUD_INTERVAL_SEC = 60;
 /** Toast icon for cloud notices (toasts require an ItemId — the chest is the
  *  neutral storage metaphor; copy itself carries the meaning). */
 const CLOUD_TOAST_ICON: ItemId = 'chest';
-/** Runtime allow-list from the canonical ALL_ITEM_IDS (Minor 5): the list is
- *  exhaustive by construction (`Record<ItemId, true>` — drift is a tsc error),
- *  so this Set can never fall behind the union. The cloud apply path drops
- *  whole-stack entries with unknown ids (entry only, never the whole
- *  inventory) and entries with illegal counts (Ruling: apply-side). */
-const KNOWN_ITEMS: ReadonlySet<string> = new Set(ALL_ITEM_IDS);
 
 /** Best-effort cloud notice — toasts never break gameplay when they fail. */
 function pushCloudToast(title: string): void {
@@ -634,7 +628,7 @@ bus.on('mode-changed', ({ mode }) => {
     // inventory and vitals across round-trips (B1.3; no more fresh-vitals reset)
     loadModeSlots(modeStash, mode).forEach((s, i) => inventory.setSlot(i, s));
     hud.setHotbar(hotbar, selected);
-    setVitals(modeStash.survivalVitals);
+    setVitals({ ...modeStash.survivalVitals }); // copy: the stash object must never become live vitals
   }
 });
 
@@ -1077,10 +1071,10 @@ function persistNow(): void {
 /** Apply a validated cloud payload to the live session (Phase 4 Task 4 boot +
  *  conflict paths). Mirrors continueGame's order WITHOUT the world edits
  *  (modified voxels never travel — brief ruling): seed → fresh world on that
- *  seed, then player/mode/inventory/vitals, advancements, settings subset
- *  (persisted + live-applied through the existing resume path) and the clock.
- *  `data` is always fresh from acceptCloudData — handing over its references
- *  is safe (later buildCloudData snapshots deep-copy again). */
+ *  seed, then player/mode/inventory/vitals/stash, advancements, settings
+ *  subset (persisted + live-applied through the existing resume path) and the
+ *  clock. `data` is always fresh from acceptCloudData — handing over its
+ *  references is safe (later buildCloudData snapshots deep-copy again). */
 function applyCloudData(data: CloudData): void {
   // Settings subset → persist + in-memory + live-apply (the pause-resume path).
   saveSettings({ seed: data.seed, ...data.settings });
@@ -1112,22 +1106,12 @@ function applyCloudData(data: CloudData): void {
   currentMode = data.settings.mode;
   input.setFlyEnabled(currentMode === 'creative');
   inventory.setMode(currentMode);
-  for (let i = 0; i < hotbar.length; i++) {
-    const s = data.inventory[i];
-    if (
-      !s ||
-      typeof s.item !== 'string' ||
-      !KNOWN_ITEMS.has(s.item) ||
-      typeof s.count !== 'number' ||
-      !Number.isFinite(s.count) ||
-      s.count <= 0
-    ) {
-      inventory.setSlot(i, null); // unknown id / illegal count: drop the entry only
-      continue;
-    }
-    // setSlot floors + clamps to maxStack (fractional/overfull counts survive).
-    inventory.setSlot(i, { item: s.item as ItemId, count: s.count });
-  }
+  // The payload's inventory is untrusted even after shape validation (unknown
+  // ids, junk counts, any length): sanitizeSlots pads/truncates to the live
+  // hotbar width and drops junk ENTRY by entry (never the whole inventory) —
+  // then setSlot floors + clamps counts to maxStack.
+  const restoredSlots = sanitizeSlots(data.inventory, hotbar.length);
+  for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, restoredSlots[i]);
   hud.setHotbar(hotbar, selected);
   setVitals(
     currentMode === 'survival'
@@ -1136,6 +1120,15 @@ function applyCloudData(data: CloudData): void {
         : createVitals()
       : null,
   );
+  // B1.3: restore the per-mode stash that travelled with the payload (the
+  // other mode's hotbar + survival vitals). acceptCloudData always hands one
+  // over — an old format-1 payload carries none and gets it derived here from
+  // the fields it DID write (the recorded mode's inventory + vitals).
+  modeStash = normalizeModeStash(data.stash, {
+    mode: data.settings.mode,
+    inventory: data.inventory,
+    vitals: data.vitals,
+  });
   advancements = data.advancements;
   // Clock — dayLengthSec stays settings-driven, t restored; setPhase is a
   // pre-start no-op for cues and pins the phase for the next session.
@@ -1164,6 +1157,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       inventory: [...hotbar],
       advancements,
       settings,
+      stash: modeStash,
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');
@@ -1443,7 +1437,7 @@ function startGame(): void {
   for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, fresh[i] ?? null);
   selected = 0;
   hud.setHotbar(hotbar, selected);
-  setVitals(currentMode === 'survival' ? modeStash.survivalVitals : null);
+  setVitals(currentMode === 'survival' ? { ...modeStash.survivalVitals } : null);
   clock = createClock(settings.dayLengthSec);
   // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
   // bed and pin the ambience phase to the fresh clock (day).

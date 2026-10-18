@@ -2,10 +2,13 @@
 // This module owns the serializable progress payload and the guard/classify
 // semantics Task 4 wires to the platform SDK. Modified voxels are NOT part of
 // the payload (brief ruling); the cap keeps uploads within the 64 KiB budget.
+// B1.3: format 1 stays — per-mode stash support is a purely ADDITIVE optional
+// field (old payloads without one are still valid and derive it on accept).
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from './items';
 import { sanitizeAdvancements, type AdvancementState } from './advancements';
+import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
 
 /** Payload schema version. Must match game.json `writeFormat` (Task 5). */
@@ -34,6 +37,13 @@ export interface CloudData {
   inventory: (ItemStack | null)[];
   advancements: AdvancementState;
   settings: CloudSettings;
+  /** B1.3 additive field (format 1 unchanged): the per-mode stash — each
+   *  mode's hotbar plus the survival vitals. The live mode's own hotbar and
+   *  vitals travel in the fields above, so the stash carries the OTHER mode's
+   *  hotbar and the survival snapshot. Old payloads carry none — they stay
+   *  valid and `acceptCloudData` derives the stash from the legacy
+   *  mode/inventory/vitals instead. */
+  stash?: StashPayload;
 }
 
 export interface CloudBuildSource {
@@ -45,10 +55,13 @@ export interface CloudBuildSource {
   inventory: (ItemStack | null)[];
   advancements: AdvancementState;
   settings: Settings;
+  /** Live per-mode stash — copied into the payload (fresh arrays/objects). */
+  stash: ModeStash;
 }
 
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
- *  (fresh arrays/objects) so later live mutations never leak into the data.
+ *  (fresh arrays/objects) so later live mutations never leak into the data —
+ *  including the per-mode stash, copied slot by slot like the inventory.
  *  Non-finite pos (any component, or a non-triple at runtime) → [0,0,0] and
  *  non-finite yaw → 0; never throws. seed/clockT pass through untouched —
  *  malformed values are rejected downstream by `validateCloudData`. */
@@ -77,6 +90,11 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
       shadows: src.settings.shadows,
       clouds: src.settings.clouds,
     },
+    stash: {
+      survival: src.stash.survival.map((s) => (s === null ? null : { ...s })),
+      creative: src.stash.creative.map((s) => (s === null ? null : { ...s })),
+      survivalVitals: { ...src.stash.survivalVitals },
+    },
   };
 }
 
@@ -91,7 +109,9 @@ const isFiniteNum = (v: unknown): v is number =>
 
 /** Structural check for an untrusted payload. Unknown extra fields are
  *  allowed (forwards-compatible); advancements only needs to be an object
- *  because `sanitizeAdvancements` normalizes it on the accept path. */
+ *  because `sanitizeAdvancements` normalizes it on the accept path, and the
+ *  B1.3 stash only needs to be an object-or-absent for the same reason
+ *  (`normalizeModeStash`). */
 export function validateCloudData(x: unknown): x is CloudData {
   if (typeof x !== 'object' || x === null) return false;
   const r = x as Record<string, unknown>;
@@ -111,6 +131,7 @@ export function validateCloudData(x: unknown): x is CloudData {
     if (!isFiniteNum((r.vitals as Record<string, unknown>).hp)) return false;
   }
   if (typeof r.advancements !== 'object' || r.advancements === null) return false;
+  if (r.stash !== undefined && (typeof r.stash !== 'object' || r.stash === null)) return false;
   if (typeof r.settings !== 'object' || r.settings === null) return false;
   const s = r.settings as Record<string, unknown>;
   if (!isFiniteNum(s.renderDistance)) return false;
@@ -127,9 +148,11 @@ export function validateCloudData(x: unknown): x is CloudData {
  *  Normalization: advancements via `sanitizeAdvancements` (unknown ids and
  *  non-boolean values dropped), settings via the settings.ts clamp logic
  *  (seeded with defaults, seed stripped back off), vitals via survival.ts
- *  `normalizeVitals` (finite + clamped — a partial payload can't inject NaN).
- *  Illegal inventory item ids are KEPT as strings — the main-side inventory
- *  model discards them. */
+ *  `normalizeVitals` (finite + clamped — a partial payload can't inject NaN),
+ *  stash via `normalizeModeStash` (slots sanitized to the hotbar width, vitals
+ *  normalized; absent in old format-1 payloads — then derived from the mode,
+ *  inventory and vitals they DID record). Illegal inventory item ids are KEPT
+ *  as strings — the main-side inventory model discards them. */
 export function acceptCloudData(x: unknown): CloudData | null {
   if (!validateCloudData(x)) return null;
   const clamped = clampSettings({ ...DEFAULT_SETTINGS, ...x.settings });
@@ -141,6 +164,11 @@ export function acceptCloudData(x: unknown): CloudData | null {
     clockT: x.clockT,
     inventory: x.inventory.map((s) => (s === null ? null : { ...s })),
     advancements: sanitizeAdvancements(x.advancements),
+    stash: normalizeModeStash(x.stash, {
+      mode: clamped.mode, // the clamped mode decides which side the legacy fields feed
+      inventory: x.inventory,
+      vitals: x.vitals,
+    }),
     settings: {
       renderDistance: clamped.renderDistance,
       sensitivity: clamped.sensitivity,
