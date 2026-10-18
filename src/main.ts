@@ -12,12 +12,12 @@ import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
-import { blockFromItem, stackName, maxStack, starterSlots, ALL_ITEM_IDS, type ItemId, type ItemStack } from './core/items';
+import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, ALL_ITEM_IDS, type ItemId, type ItemStack } from './core/items';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
-import { createModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
+import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
 import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
@@ -1054,6 +1054,7 @@ function sessionSavePayload(): SavePayload | null {
     vitals,
     clockT: clock.t,
     advancements,
+    stash: modeStash, // B1.3: the other mode's hotbar + survival vitals
   });
 }
 
@@ -1506,8 +1507,24 @@ function continueGame(payload: SavePayload): void {
   settings.mode = currentMode;
   saveSettings({ mode: currentMode }); // keep menu labels in sync
   inventory.setMode(currentMode);
+  // B1.3: restore the per-mode stash that travelled with the payload — the
+  // OTHER mode's hotbar and the survival vitals survive a quit/reload. The LIVE
+  // slots below come from `player.inventory`, never from the stash's side for
+  // the mode being entered: that side is only refreshed when the mode is LEFT,
+  // so it can legitimately be older than the live slots (the save-first order
+  // in the mode-changed handler is what keeps the pair sound). For v1/v2
+  // records normalizeModeStash derives both sides.
+  modeStash = normalizeModeStash(payload.stash, {
+    mode: payload.player.mode,
+    inventory: payload.player.inventory,
+    vitals: payload.player.vitals,
+  });
+  // The record's inventory is untrusted even after shape validation (unknown
+  // ids, junk counts, any length): sanitizeSlots pads/truncates to the live
+  // hotbar width and drops junk rather than writing it into the model.
+  const restoredSlots = sanitizeSlots(payload.player.inventory, hotbar.length);
   for (let i = 0; i < hotbar.length; i++) {
-    const s = payload.player.inventory[i];
+    const s = restoredSlots[i];
     inventory.setSlot(i, s ? { ...s } : null); // setSlot copies + validates; clears the tail
   }
   hud.setHotbar(hotbar, selected);

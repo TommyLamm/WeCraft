@@ -1,10 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { createModeStash, saveModeState, loadModeSlots } from './mode-stash';
+import {
+  createModeStash,
+  normalizeModeStash,
+  saveModeState,
+  loadModeSlots,
+} from './mode-stash';
 import { maxStack, starterSlots, type ItemStack } from './items';
 import { createVitals } from '../player/survival';
 
 /** The live hotbar is 9 slots (shared HOTBAR_DEFAULT length). */
 const HOTBAR_LENGTH = 9;
+
+/** Hotbar-shaped slots: `items` padded with nulls to the shared width. */
+function padded(items: Array<ItemStack | null>): Array<ItemStack | null> {
+  return [...items, ...new Array(HOTBAR_LENGTH - items.length).fill(null)];
+}
 
 describe('mode stash — per-mode state survives switches', () => {
   it('createModeStash starts survival empty, creative full and fresh vitals', () => {
@@ -95,5 +105,103 @@ describe('mode stash — per-mode state survives switches', () => {
     expect(stash.survivalVitals).toEqual(V);
     expect(stash.survivalVitals).not.toBe(V); // copied on save, not aliased
     expect(loadModeSlots(stash, 'creative')).toEqual(B); // B also survived
+  });
+});
+
+/** B1.3 (Task 3): the same stash as it arrives from a save payload — v3 carries
+ *  one, v1/v2 records carry only the recorded mode's inventory + vitals. */
+describe('normalizeModeStash — payload restore', () => {
+  /** The legacy half of a v1/v2 record — unknown-typed on purpose (raw JSON). */
+  const legacy = (mode: 'survival' | 'creative', inventory: unknown, vitals: unknown) => ({
+    mode,
+    inventory,
+    vitals,
+  });
+
+  it('normalizeModeStash derives the legacy side from a v2 record', () => {
+    // a record written before exhaustion existed: normalizeVitals fills the bank
+    const rawVitals = {
+      hp: 7,
+      maxHp: 20,
+      hunger: 11,
+      maxHunger: 20,
+      saturation: 2,
+      regenAcc: 0,
+      starveAcc: 0,
+    };
+
+    // survival record → its (sanitized) inventory + vitals become the survival side
+    const fromSurvival = normalizeModeStash(
+      undefined, // v1/v2 records have no stash at all
+      legacy(
+        'survival',
+        [{ item: 'stone', count: 32 }, null, { item: 'nope', count: 1 }],
+        rawVitals,
+      ),
+    );
+    expect(fromSurvival.survival).toEqual(padded([{ item: 'stone', count: 32 }]));
+    expect(fromSurvival.creative).toEqual(starterSlots('creative')); // mode never played
+    expect(fromSurvival.survivalVitals).toEqual({ ...rawVitals, exhaustion: 0 });
+
+    // creative record → inventory → creative side; survival starts empty + FULL vitals
+    const fromCreative = normalizeModeStash(
+      null,
+      legacy('creative', [{ item: 'dirt', count: 4 }], null),
+    );
+    expect(fromCreative.creative).toEqual(padded([{ item: 'dirt', count: 4 }]));
+    expect(fromCreative.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromCreative.survivalVitals).toEqual(createVitals()); // nothing to carry over
+  });
+
+  it('normalizeModeStash sanitizes corrupt slots instead of throwing', () => {
+    const fromRaw = normalizeModeStash(
+      {
+        survival: [
+          { item: 'stone', count: 64 },
+          { item: 'nope', count: 1 },
+          { item: 'dirt', count: 0 },
+          { item: 'sand', count: Number.NaN },
+          'junk',
+          null,
+        ],
+        creative: 'junk', // present but not an array → all nulls, NOT the starter kit
+        survivalVitals: { hp: 'junk' },
+      },
+      legacy('survival', [], null),
+    );
+    expect(fromRaw.survival).toEqual(padded([{ item: 'stone', count: 64 }]));
+    expect(fromRaw.creative).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromRaw.survivalVitals).toEqual(createVitals()); // junk vitals → fresh defaults
+
+    // a MISSING side is filled with that mode's starter kit instead
+    const partial = normalizeModeStash({ survival: [] }, legacy('creative', [], null));
+    expect(partial.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(partial.creative).toEqual(starterSlots('creative'));
+
+    // garbage raws never throw — they fall back to the legacy fields
+    const fromJunk = normalizeModeStash('junk', legacy('survival', [], null));
+    expect(fromJunk.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromJunk.creative).toEqual(starterSlots('creative'));
+  });
+
+  it('normalizeModeStash prefers a present stash over legacy fields', () => {
+    const raw = {
+      survival: [{ item: 'apple', count: 3 }],
+      creative: [{ item: 'stone', count: 64 }],
+      survivalVitals: { ...createVitals(), hp: 5 },
+    };
+    const stash = normalizeModeStash(
+      raw,
+      legacy('creative', [{ item: 'dirt', count: 9 }], { ...createVitals(), hp: 1 }),
+    );
+    expect(stash.survival).toEqual(padded([{ item: 'apple', count: 3 }]));
+    expect(stash.creative).toEqual(padded([{ item: 'stone', count: 64 }]));
+    expect(stash.survivalVitals.hp).toBe(5); // the stash's vitals, not the legacy hp 1
+
+    // copied on write: later mutation of the raw payload never reaches the stash
+    raw.survival[0].count = 1;
+    raw.survivalVitals.hp = 20;
+    expect(stash.survival[0]?.count).toBe(3);
+    expect(stash.survivalVitals.hp).toBe(5);
   });
 });

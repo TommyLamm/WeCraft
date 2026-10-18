@@ -6,6 +6,8 @@ import {
   stackName,
   maxStack,
   starterSlots,
+  sanitizeStack,
+  sanitizeSlots,
   ALL_ITEM_IDS,
   type ItemId,
 } from './items';
@@ -132,5 +134,46 @@ describe('items', () => {
     expect(c[0]).not.toBe(d[0]);
     c[0]!.count = 1;
     expect(d[0]!.count).toBe(64);
+  });
+
+  // ---- Load-path sanitizers (B1.3): save/cloud records are UNTRUSTED input —
+  // a removed item id or a junk count must read as "empty slot", never throw.
+  it('sanitizeStack accepts real ids with positive finite counts, rejects junk', () => {
+    expect(sanitizeStack({ item: 'stone', count: 64 })).toEqual({ item: 'stone', count: 64 });
+    // the count passes through unchanged (no rounding) — setSlot floors on write
+    expect(sanitizeStack({ item: 'apple', count: 0.5 })).toEqual({ item: 'apple', count: 0.5 });
+    expect(sanitizeStack({ item: 'nope', count: 1 })).toBeNull();
+    // prototype keys are not item ids (an `in`-style check would let this through)
+    expect(sanitizeStack({ item: 'toString', count: 1 })).toBeNull();
+    expect(sanitizeStack({ item: 'stone', count: 0 })).toBeNull();
+    expect(sanitizeStack({ item: 'stone', count: -1 })).toBeNull();
+    expect(sanitizeStack({ item: 'stone', count: Number.NaN })).toBeNull();
+    expect(sanitizeStack({ item: 'stone', count: Infinity })).toBeNull();
+    expect(sanitizeStack({ item: 'stone' })).toBeNull();
+    expect(sanitizeStack(null)).toBeNull();
+    expect(sanitizeStack('junk')).toBeNull();
+    const source = { item: 'stone' as const, count: 64 };
+    expect(sanitizeStack(source)).not.toBe(source); // fresh object, never aliased
+  });
+
+  it('sanitizeSlots pads and truncates to the requested count', () => {
+    // shorter than requested → the tail is null-filled
+    expect(sanitizeSlots([{ item: 'stone', count: 3 }], 3)).toEqual([
+      { item: 'stone', count: 3 },
+      null,
+      null,
+    ]);
+    // longer than requested → the surplus is dropped
+    expect(sanitizeSlots([{ item: 'dirt', count: 1 }, { item: 'sand', count: 2 }], 1)).toEqual([
+      { item: 'dirt', count: 1 },
+    ]);
+    // junk is dropped per-slot — the valid neighbours survive
+    expect(sanitizeSlots([{ item: 'nope', count: 1 }, { item: 'dirt', count: 4 }], 2)).toEqual([
+      null,
+      { item: 'dirt', count: 4 },
+    ]);
+    // a non-array source is all nulls — never a throw
+    expect(sanitizeSlots('junk', 2)).toEqual([null, null]);
+    expect(sanitizeSlots(undefined, 2)).toEqual([null, null]);
   });
 });

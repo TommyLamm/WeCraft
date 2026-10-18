@@ -8,14 +8,22 @@ import {
   isValidSavePayload,
   type SavePayload,
   type SavePayloadV1,
+  type SavePayloadV2,
 } from './save';
 import { createVitals } from '../player/survival';
 import { emptyAdvancements } from '../core/advancements';
-import type { ItemStack } from '../core/items';
+import { createModeStash, type ModeStash } from '../core/mode-stash';
+import { starterSlots, type ItemStack } from '../core/items';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
 const DB_NAME = 'wecraft-save';
+
+/** Hotbar-shaped slots: `items` padded with nulls to the 9-slot width — payloads
+ *  are stored canonical, so a v3 round-trip can deep-equal. */
+function slots(...items: Array<ItemStack | null>): Array<ItemStack | null> {
+  return [...items, ...new Array(9 - items.length).fill(null)];
+}
 
 function deleteSaveDb(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -28,7 +36,7 @@ function deleteSaveDb(): Promise<void> {
 
 function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
   return {
-    version: 2,
+    version: 3,
     savedAt: 0, // saveGame must stamp its own value
     worldSeed: 1337,
     modified: [
@@ -47,6 +55,12 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
     advancements: {
       done: { getting_wood: true, monster_hunter: true },
       nightSeen: true,
+    },
+    // the other mode's hotbar + survival vitals travel with the payload (B1.3)
+    stash: {
+      survival: slots({ item: 'dirt', count: 3 }),
+      creative: slots({ item: 'stone', count: 64 }),
+      survivalVitals: { ...createVitals(), hp: 12 },
     },
     ...patch,
   };
@@ -67,6 +81,26 @@ function makeV1Payload(): SavePayloadV1 {
       inventory: [{ item: 'stone', count: 32 }],
     },
     time: { t: 0.42 },
+  };
+}
+
+/** A raw v2 record exactly as a pre-v3 build wrote it (advancements, no stash).
+ *  Recorded in creative, so the migration's mode branch is the non-trivial one. */
+function makeV2Payload(): SavePayloadV2 {
+  return {
+    version: 2,
+    savedAt: 0,
+    worldSeed: 1337,
+    modified: [['5,70,5', 1]],
+    player: {
+      pos: [1.5, 64, -3.25],
+      yaw: 0.75,
+      mode: 'creative',
+      vitals: null,
+      inventory: [{ item: 'oak_planks', count: 12 }],
+    },
+    time: { t: 0.42 },
+    advancements: { done: { getting_wood: true }, nightSeen: false },
   };
 }
 
@@ -135,16 +169,57 @@ describe('saveGame / loadGame', () => {
     expect((await loadGame())?.player.mode).toBe('creative');
   });
 
-  it('migrates a raw v1 record to a normalized v2 payload with empty advancements', async () => {
+  it('round-trips stash through IndexedDB', async () => {
+    await saveGame(makePayload());
+    const loaded = await loadGame();
+    expect(loaded?.stash).toEqual(makePayload().stash);
+    // a non-canonical stash record (short arrays) is padded back to hotbar width
+    const base = makePayload();
+    await saveGame({
+      ...base,
+      stash: {
+        survival: [{ item: 'apple', count: 2 }],
+        creative: [],
+        survivalVitals: createVitals(),
+      },
+    });
+    const reloaded = await loadGame();
+    expect(reloaded?.stash.survival).toEqual(slots({ item: 'apple', count: 2 }));
+    expect(reloaded?.stash.creative).toEqual(slots());
+  });
+
+  it('migrates a raw v1 record to v3 with derived stash and empty advancements', async () => {
     const v1 = makeV1Payload();
     await putRawRecord(v1);
     const loaded = await loadGame();
     expect(loaded).toEqual({
       ...v1,
-      version: 2,
+      version: 3,
       advancements: emptyAdvancements(),
+      // no stash on the record → the survival side is derived from what it saved
+      stash: {
+        survival: slots({ item: 'stone', count: 32 }),
+        creative: starterSlots('creative'),
+        survivalVitals: createVitals(), // v1 vitals were null → fresh defaults
+      },
     });
-    expect(loaded!.version).toBe(2);
+    expect(loaded!.version).toBe(3);
+  });
+
+  it('migrates a raw v2 record to v3, deriving stash from the recorded mode', async () => {
+    const v2 = makeV2Payload();
+    await putRawRecord(v2);
+    const loaded = await loadGame();
+    expect(loaded).toEqual({
+      ...v2,
+      version: 3,
+      stash: {
+        survival: slots(), // the mode the record was NOT in starts empty
+        creative: slots({ item: 'oak_planks', count: 12 }),
+        survivalVitals: createVitals(), // creative record → no survival vitals to carry
+      },
+    });
+    expect(loaded!.version).toBe(3);
   });
 
   /** Vitals written before Task 1 have no `exhaustion` field — the load path
@@ -159,23 +234,31 @@ describe('saveGame / loadGame', () => {
     starveAcc: 0,
   };
 
-  it('loadGame defaults a v2 vitals record missing exhaustion to 0', async () => {
+  it('loadGame defaults vitals missing exhaustion to 0 (live and stash)', async () => {
     const base = makePayload();
-    await putRawRecord({ ...base, player: { ...base.player, vitals: legacyVitals } });
+    await putRawRecord({
+      ...base,
+      player: { ...base.player, vitals: legacyVitals },
+      stash: { ...base.stash, survivalVitals: legacyVitals },
+    });
     const loaded = await loadGame();
     // the pre-existing fields survive the normalization untouched
     expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
+    // the stash's vitals get the same treatment (raw-stash path)
+    expect(loaded?.stash.survivalVitals).toEqual({ ...legacyVitals, exhaustion: 0 });
   });
 
   it('migrates a v1 record whose vitals predate exhaustion (loads as 0)', async () => {
     const v1 = makeV1Payload();
     await putRawRecord({ ...v1, player: { ...v1.player, vitals: legacyVitals } });
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(2);
+    expect(loaded?.version).toBe(3);
     expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
+    // the migrated stash's survival vitals carry the same normalized record
+    expect(loaded?.stash.survivalVitals).toEqual({ ...legacyVitals, exhaustion: 0 });
   });
 
-  it('loads a v2 payload with garbage advancements and sanitizes them', async () => {
+  it('loads a v3 payload with garbage advancements and sanitizes them', async () => {
     await putRawRecord({
       ...makePayload(),
       advancements: {
@@ -200,7 +283,7 @@ describe('saveGame / loadGame', () => {
   });
 
   it('returns null for a record with an unsupported version', async () => {
-    await putRawRecord({ version: 3 });
+    await putRawRecord({ version: 4 });
     expect(await loadGame()).toBeNull();
   });
 
@@ -219,12 +302,14 @@ describe('saveGame / loadGame', () => {
     await expect(saveGame(makePayload())).rejects.toBeDefined();
   });
 
-  it('loadGame rejects shape-corrupt records (base validation, either version)', async () => {
+  it('loadGame rejects shape-corrupt records (base validation, every version)', async () => {
     const base = makePayload();
-    // player missing entirely — both supported versions fail the base check
+    // player missing entirely — every supported version fails the base check
     await putRawRecord({ version: 1 });
     expect(await loadGame()).toBeNull();
     await putRawRecord({ version: 2 });
+    expect(await loadGame()).toBeNull();
+    await putRawRecord({ version: 3 });
     expect(await loadGame()).toBeNull();
     // non-finite pos coordinate
     await putRawRecord({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } });
@@ -248,19 +333,20 @@ describe('saveGame / loadGame', () => {
  *  build — loadGame must validate the SHAPE before handing a payload to
  *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
 describe('isValidSavePayload', () => {
-  it('accepts a fully valid payload (v1 and v2 both pass base validation)', () => {
+  it('accepts a fully valid payload (v1, v2 and v3 all pass base validation)', () => {
     expect(isValidSavePayload(makePayload())).toBe(true);
     expect(
       isValidSavePayload(makePayload({ player: { ...makePayload().player, vitals: null } })),
     ).toBe(true);
     expect(isValidSavePayload(makeV1Payload())).toBe(true); // migration input
+    expect(isValidSavePayload(makeV2Payload())).toBe(true); // migration input
   });
 
   it('rejects non-objects, wrong version and a missing player', () => {
     expect(isValidSavePayload(null)).toBe(false);
     expect(isValidSavePayload('garbage')).toBe(false);
     expect(isValidSavePayload(42)).toBe(false);
-    expect(isValidSavePayload({ ...makePayload(), version: 3 })).toBe(false);
+    expect(isValidSavePayload({ ...makePayload(), version: 4 })).toBe(false);
     expect(isValidSavePayload({ version: 1 })).toBe(false); // player missing
   });
 
@@ -344,7 +430,7 @@ describe('collectSavePayload', () => {
     ],
   };
 
-  it('assembles version, seed, modified, clock and advancements from the sources', () => {
+  it('assembles version, seed, modified, clock, advancements and stash from the sources', () => {
     const advancements = {
       done: { getting_wood: true },
       nightSeen: true,
@@ -355,9 +441,10 @@ describe('collectSavePayload', () => {
       vitals: null,
       clockT: 0.42,
       advancements,
+      stash: createModeStash(),
       savedAt: 123,
     });
-    expect(payload.version).toBe(2);
+    expect(payload.version).toBe(3);
     expect(payload.worldSeed).toBe(4242);
     expect(payload.modified).toEqual([
       ['5,70,5', 1],
@@ -365,6 +452,7 @@ describe('collectSavePayload', () => {
     ]);
     expect(payload.time).toEqual({ t: 0.42 });
     expect(payload.advancements).toEqual(advancements);
+    expect(payload.stash).toEqual(createModeStash()); // the other mode's state travels too
     expect(payload.savedAt).toBe(123);
   });
 
@@ -383,6 +471,7 @@ describe('collectSavePayload', () => {
       vitals,
       clockT: 0,
       advancements,
+      stash: createModeStash(),
       savedAt: 0,
     });
     // fresh pos array — mutating the source must not touch the payload
@@ -418,6 +507,7 @@ describe('collectSavePayload', () => {
       vitals: null,
       clockT: 0.1,
       advancements: emptyAdvancements(),
+      stash: createModeStash(),
     });
     const after = Date.now();
     expect(payload.player.mode).toBe('creative');
@@ -425,5 +515,43 @@ describe('collectSavePayload', () => {
     // default savedAt = Date.now() (saveGame overwrites it anyway — documented)
     expect(payload.savedAt).toBeGreaterThanOrEqual(before);
     expect(payload.savedAt).toBeLessThanOrEqual(after);
+  });
+
+  it('collectSavePayload deep-copies the stash (no aliasing)', () => {
+    const survivalStack: ItemStack = { item: 'dirt', count: 3 };
+    const creativeStack: ItemStack = { item: 'stone', count: 64 };
+    const survivalVitals = { ...createVitals(), hp: 9 };
+    // a non-canonical stash on purpose: the payload copies what it is given
+    const stash: ModeStash = {
+      survival: [survivalStack, null],
+      creative: [creativeStack],
+      survivalVitals,
+    };
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'survival', inventory: [] },
+      vitals: null,
+      clockT: 0,
+      advancements: emptyAdvancements(),
+      stash,
+      savedAt: 0,
+    });
+    // fresh arrays, stacks and vitals — never the live objects
+    expect(payload.stash.survival).not.toBe(stash.survival);
+    expect(payload.stash.creative).not.toBe(stash.creative);
+    expect(payload.stash.survival[0]).toEqual({ item: 'dirt', count: 3 });
+    expect(payload.stash.survival[0]).not.toBe(survivalStack);
+    expect(payload.stash.creative[0]).not.toBe(creativeStack);
+    expect(payload.stash.survivalVitals).not.toBe(survivalVitals);
+
+    // mutating the live stash afterwards must not touch the captured payload
+    survivalStack.count = 99;
+    creativeStack.count = 1;
+    stash.survival[1] = { item: 'sand', count: 1 };
+    stash.survivalVitals.hp = 1;
+    expect(payload.stash.survival[0]?.count).toBe(3);
+    expect(payload.stash.creative[0]?.count).toBe(64);
+    expect(payload.stash.survival[1]).toBeNull();
+    expect(payload.stash.survivalVitals.hp).toBe(9);
   });
 });

@@ -1,9 +1,11 @@
 // Task 13: IndexedDB persistence for world modifications and player state.
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
+// B1.3: payload v3 (dual-mode stash) + v1/v2→v3 migration in `loadGame`.
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
+import { normalizeModeStash, type ModeStash, type StashPayload } from '../core/mode-stash';
 import {
   emptyAdvancements,
   sanitizeAdvancements,
@@ -27,12 +29,25 @@ export interface SavePayloadV1 {
 	time: { t: number };
 }
 
-/** Current payload (Task 11): v1 plus the advancement state. `loadGame` ALWAYS
- *  returns this normalized shape — v1 records migrate with empty advancements. */
-export interface SavePayload extends Omit<SavePayloadV1, 'version'> {
+/** v2 payload (Task 11): v1 plus the advancement state. Kept for the migration
+ *  path — `loadGame` upgrades a v2 record to v3. */
+export interface SavePayloadV2 extends Omit<SavePayloadV1, 'version'> {
 	version: 2;
 	advancements: AdvancementState;
 }
+
+/** Current payload (B1.3): v2 plus the per-mode stash — the hotbar of the mode
+ *  you are NOT in, and the survival vitals. `loadGame` ALWAYS returns this
+ *  shape: v1 records migrate with empty advancements, v1/v2 records get a stash
+ *  derived from the mode/inventory/vitals they recorded, and a v3 record's
+ *  stash is sanitized against the current item table. */
+export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
+	version: 3;
+	stash: StashPayload;
+}
+
+/** The shape written to / read from the single local slot. */
+export type SavePayload = SavePayloadV3;
 
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
  *  tests pass plain objects while main.ts passes thin adapters. */
@@ -48,6 +63,9 @@ export interface SaveSources {
 	clockT: number;
 	/** Live advancement state (Task 11) — copied into the payload. */
 	advancements: AdvancementState;
+	/** Live per-mode stash (B1.3) — copied into the payload: a fresh array per
+	 *  side, a fresh object per stack and a fresh vitals object. */
+	stash: ModeStash;
 	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
 	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
 	 *  value only matters for tests / pre-save inspection. */
@@ -56,12 +74,12 @@ export interface SaveSources {
 
 /** Assemble a {@link SavePayload} from live game state — PURE (no IDB, no DOM):
  *  every player-owned value is copied (fresh pos array, fresh stack/vitals
- *  objects, fresh advancements) so later mutations of the live state never
- *  alias into an already captured payload. `modified` comes from
+ *  objects, fresh advancements, fresh stash) so later mutations of the live
+ *  state never alias into an already captured payload. `modified` comes from
  *  `world.serializeModified()`, which already returns fresh tuples. */
 export function collectSavePayload(args: SaveSources): SavePayload {
 	return {
-		version: 2,
+		version: 3,
 		savedAt: args.savedAt ?? Date.now(),
 		worldSeed: args.world.seed,
 		modified: args.world.serializeModified(),
@@ -77,26 +95,32 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 			done: { ...args.advancements.done },
 			nightSeen: args.advancements.nightSeen,
 		},
+		stash: {
+			survival: args.stash.survival.map((s) => (s ? { ...s } : null)),
+			creative: args.stash.creative.map((s) => (s ? { ...s } : null)),
+			survivalVitals: { ...args.stash.survivalVitals },
+		},
 	};
 }
 
-/** Shape-validate an unknown value as a v1 or v2 save payload (review #2;
- *  Task 11 widened the accepted versions — v1 records migrate in loadGame).
- *  IndexedDB records can be written by an older or broken build — continueGame
- *  trusts this shape completely (destructuring, setBlock keys, DOM writes), so
- *  a record must prove: object, version ∈ {1, 2}, a player with a finite pos
- *  triple and finite yaw (a NaN yaw would reach camera render state without
- *  ever throwing), mode ∈ {survival, creative}, an inventory of null |
- *  {item: string, count: finite number}, vitals null | {hp: finite},
- *  modified: array, and a finite clock. Light checks only — `modified` ENTRIES
- *  are additionally defended by applyModified's per-entry skip, and item ids by
- *  the inventory model. v2 `advancements` is deliberately NOT part of this base
- *  check: `loadGame` sanitizes it with `sanitizeAdvancements` before returning.
+/** Shape-validate an unknown value as a v1, v2 or v3 save payload (review #2;
+ *  Task 11 widened the accepted versions to v1/v2, B1.3 to v3 — older records
+ *  migrate in loadGame). IndexedDB records can be written by an older or broken
+ *  build — continueGame trusts this shape completely (destructuring, setBlock
+ *  keys, DOM writes), so a record must prove: object, version ∈ {1, 2, 3}, a
+ *  player with a finite pos triple and finite yaw (a NaN yaw would reach camera
+ *  render state without ever throwing), mode ∈ {survival, creative}, an
+ *  inventory of null | {item: string, count: finite number}, vitals
+ *  null | {hp: finite}, modified: array, and a finite clock. Light checks only
+ *  — `modified` ENTRIES are additionally defended by applyModified's per-entry
+ *  skip, item ids and counts by the inventory model / sanitizeSlots. Neither
+ *  v2 `advancements` nor v3 `stash` is part of this base check: `loadGame`
+ *  sanitizes both (sanitizeAdvancements / normalizeModeStash) before returning.
  *  Pure: exported for tests, called by loadGame. */
-export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayload {
+export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayloadV2 | SavePayload {
 	if (typeof x !== 'object' || x === null) return false;
 	const r = x as Partial<SavePayloadV1>;
-	if (r.version !== 1 && r.version !== 2) return false;
+	if (r.version !== 1 && r.version !== 2 && r.version !== 3) return false;
 	// player: pos triple + yaw + mode + inventory + vitals
 	const p = r.player as SavePayloadV1['player'] | undefined;
 	if (typeof p !== 'object' || p === null) return false;
@@ -172,14 +196,19 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 }
 
 /** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
- *  Shape-validated (review #2; v1/v2 Task 11): a supported-version record with
- *  a broken shape (missing player, non-finite pos, bad mode, NaN clock, …)
- *  reads as "no save". ALWAYS returns a normalized v2 payload — a v1 record
- *  migrates to `{...v1, version: 2, advancements: emptyAdvancements()}` (old
- *  saves keep loading; progress starts fresh); a v2 record's advancements are
- *  sanitized against the current table. Vitals written before `exhaustion`
- *  existed (or otherwise malformed) run through survival.ts `normalizeVitals`
- *  so the live model always sees the full shape. */
+ *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3): a supported-version
+ *  record with a broken shape (missing player, non-finite pos, bad mode, NaN
+ *  clock, …) reads as "no save". ALWAYS returns a normalized v3 payload:
+ *  - v1 migrates to `{...v1, version: 2, advancements: emptyAdvancements()}`
+ *    first (old saves keep loading; progress starts fresh), then the stash is
+ *    derived from the recorded mode/inventory/vitals;
+ *  - v2's advancements are sanitized against the current table and its stash is
+ *    derived the same way (no stash exists in those records);
+ *  - v3's stash is sanitized (`normalizeModeStash`), so a short/unknown-item
+ *    stash loads as the canonical 9-slot shape.
+ *  Vitals written before `exhaustion` existed (or otherwise malformed) run
+ *  through survival.ts `normalizeVitals` — for the live player AND for the
+ *  stash's survival snapshot — so the live model always sees the full shape. */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -188,16 +217,25 @@ export async function loadGame(): Promise<SavePayload | null> {
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
 			if (!isValidSavePayload(value)) return null;
-			const normalized: SavePayload =
+			// Migration chain: v1 → v2 (advancements) → v3 (stash). The stash is
+			// read off the RAW record (only v3 has one) so v1/v2 can derive it from
+			// the fields they actually stored.
+			const v2: SavePayloadV2 =
 				value.version === 1
 					? { ...value, version: 2, advancements: emptyAdvancements() }
-					: { ...value, advancements: sanitizeAdvancements(value.advancements) };
+					: { ...value, version: 2, advancements: sanitizeAdvancements(value.advancements) };
 			return {
-				...normalized,
+				...v2,
+				version: 3,
+				stash: normalizeModeStash((value as Partial<SavePayload>).stash, {
+					mode: value.player.mode,
+					inventory: value.player.inventory,
+					vitals: value.player.vitals,
+				}),
 				player: {
-					...normalized.player,
+					...v2.player,
 					vitals:
-						normalized.player.vitals === null ? null : normalizeVitals(normalized.player.vitals),
+						v2.player.vitals === null ? null : normalizeVitals(v2.player.vitals),
 				},
 			};
 		} finally {

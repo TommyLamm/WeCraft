@@ -104,3 +104,36 @@ export function starterSlots(mode: 'survival' | 'creative'): Array<ItemStack | n
   if (mode === 'survival') return HOTBAR_DEFAULT.map(() => null);
   return HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
 }
+
+/** Runtime id gate for UNTRUSTED input (save/cloud records). Built from the
+ *  exhaustive ITEM_IDS record, and a Set on purpose: an `item in ITEM_IDS`
+ *  check would let prototype keys (`toString`, `__proto__`, …) through. */
+const ITEM_ID_SET: ReadonlySet<string> = new Set(ALL_ITEM_IDS);
+
+const isItemId = (x: unknown): x is ItemId => typeof x === 'string' && ITEM_ID_SET.has(x);
+
+/** Sanitize one untrusted stack: a known `ItemId` with a finite count > 0,
+ *  otherwise null (the caller's "empty slot"). The count passes through
+ *  unchanged — flooring to a whole number and clamping to `maxStack` is the
+ *  writing model's job (`InventoryModel.setSlot`). Never throws; the result is
+ *  a fresh object, never the input. */
+export function sanitizeStack(x: unknown): ItemStack | null {
+  if (typeof x !== 'object' || x === null) return null;
+  const s = x as Partial<ItemStack>;
+  if (!isItemId(s.item)) return null;
+  if (typeof s.count !== 'number' || !Number.isFinite(s.count) || s.count <= 0) return null;
+  return { item: s.item, count: s.count };
+}
+
+/** Sanitize an untrusted slot array to EXACTLY `count` slots: a non-array (or
+ *  short) source is null-padded, surplus entries are dropped, and every kept
+ *  entry runs through `sanitizeStack`. Never throws — the result is always a
+ *  fresh array of `count` entries. */
+export function sanitizeSlots(x: unknown, count: number): Array<ItemStack | null> {
+  // Non-finite counts read as 0 rather than looping forever (Infinity / NaN).
+  const size = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const source: ReadonlyArray<unknown> = Array.isArray(x) ? x : [];
+  const slots: Array<ItemStack | null> = [];
+  for (let i = 0; i < size; i++) slots.push(sanitizeStack(source[i]));
+  return slots;
+}
