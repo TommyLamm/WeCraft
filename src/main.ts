@@ -33,8 +33,12 @@ import {
   EXHAUST_JUMP,
   EXHAUST_SPRINT_JUMP,
   EXHAUST_BREAK_BLOCK,
+  EXHAUST_ATTACK,
+  EXHAUST_HURT,
   type Vitals,
 } from './player/survival';
+// Task 9: 0.5 s post-hit invulnerability for MOB damage (pure window state)
+import { createInvuln, canBeHurt, markHurt } from './player/invuln';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
@@ -73,6 +77,7 @@ import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
 import { createFurnace } from './ui/furnace';
 import { createToasts } from './ui/toast';
+import { createHurtFlash } from './ui/hurt';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { applyBiomeTint } from './core/biome-fog';
@@ -163,6 +168,8 @@ const furnaceUi = createFurnace(uiRoot, {
 const deathScreen = createDeathScreen(uiRoot);
 // Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
 const toasts = createToasts(uiRoot);
+// Task 9: red hurt vignette — flashed by applyMobEvent on every landed hit
+const hurtFlash = createHurtFlash(uiRoot);
 // Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
 // built lazily on the first gesture); every game sound below routes through it.
 const audio = createGameAudio();
@@ -562,6 +569,13 @@ uiRoot.appendChild(vitalsEl);
  *  setVitals call below is a visible transition that repaints + emits). */
 let vitals: Vitals | null = null;
 
+/** Mob-hit invulnerability window (Task 9): while it is open, mob/arrow damage
+ *  events are ignored entirely (no damage, no exhaustion, no flash) — with
+ *  several mobs each swiping on their own cooldown that caps incoming damage at
+ *  one hit per 0.5 s (a lone zombie's 1 s cooldown is already slower). Only mob
+ *  damage is gated by it: fall damage and starvation keep their own cadence. */
+let invuln = createInvuln();
+
 /** Single vitals mutation path: store `next`, repaint the HUD, hide the bar
  *  when null — and (Task 9) emit `vitals-changed` whenever a HUD-visible value
  *  changed, i.e. an integer hp or hunger value moved. Saturation-first
@@ -705,6 +719,12 @@ function spawnTick(): void {
  *  `setVitals` path (creative → vitals null → no-op), which emits
  *  `vitals-changed` when an integer hp/hunger value moves (Task 9 producer);
  *  shoot spawns an Arrow entity.
+ *  Task 9: a landed melee/arrow hit is gated by the 0.5 s `invuln` window — a
+ *  blocked hit is a full no-op (no damage, no exhaustion, no red flash) and
+ *  returns BEFORE the death cause below, so only damage that really landed can
+ *  claim this life. The landed hit banks `EXHAUST_HURT` and flashes the
+ *  vignette. This gate covers MOB damage only: fall damage (frame loop) and
+ *  starvation (tickVitals) never consult `invuln`.
  *  Task 13: melee/arrow damage also records `deathCause` — arrows always come
  *  from skeletons, while melee looks up the live mob's kind by `mobId`
  *  (despawned/killed since → 'unknown'). Shoot events deal no damage yet, so
@@ -715,13 +735,19 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
     return;
   }
   if (!vitals) return; // creative (or dead) — nothing to hurt
+  // One clock read per event feeds both halves: calling performance.now() twice
+  // could straddle the window edge and mark a hit that was just allowed.
+  const nowSec = performance.now() / 1000;
+  if (!canBeHurt(invuln, nowSec)) return; // inside the 0.5 s window — ignore
+  invuln = markHurt(invuln, nowSec);
   if (fromArrow) {
     deathCause = 'skeleton';
   } else {
     const kind = mobs.find((m) => m.id === ev.mobId)?.kind;
     deathCause = kind ?? 'unknown';
   }
-  setVitals(damage(vitals, ev.amount));
+  setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
+  hurtFlash.flash();
 }
 
 function refreshQueues(): void {
@@ -2056,6 +2082,10 @@ gs.renderer.setAnimationLoop(() => {
             mobs = atk.mobs;
             attackCd = ATTACK_COOLDOWN_SEC;
             mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
+            // Task 9: a landed hit (not a swing) banks vanilla's 0.1
+            // exhaustion — hidden until the bank drains saturation/hunger,
+            // same path as sprint/jump. Creative (vitals null) never banks.
+            if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
             const beforeKill = mobs.length;
             const dead = mobs.filter((m) => isDead(m));
             mobs = mobs.filter((m) => !isDead(m));

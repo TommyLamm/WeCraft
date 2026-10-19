@@ -411,6 +411,17 @@
   image-rendering: pixelated;
 }
 
+/* Hurt feedback (Task 9): red vignette flashed on every landed mob hit by
+   ui/hurt.ts (one node, 300 ms). Passive — pointer-events stay off — and below
+   the death screen (10) / toasts (20) in the stack. */
+.hurt-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  background: radial-gradient(ellipse at center, rgba(200, 0, 0, 0) 42%, rgba(190, 0, 0, 0.45) 100%);
+}
+
 /* Advancement toasts (Task 12): fixed top-right notification stack, one toast
    slides in per unlock and is auto-removed by toast.ts (4 s default). z-index
    20 keeps them above every overlay; pointer-events stay off — passive. */
