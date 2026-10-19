@@ -9,6 +9,12 @@ export interface Menus {
    *  ONLY when a save exists (Task 14 settled: hidden, no fallback); 單人遊戲
    *  always renders and starts a new game. */
   showTitle(opts: { hasSave: boolean; onContinue: () => void; onNewGame: () => void }): void;
+  /** B1.4: modal confirmation — used by the title screen when 新遊戲 would
+   *  overwrite an existing save. SINGLE-FIRE: the FIRST trigger wins
+   *  (確定／取消／Esc), the dialog clears itself BEFORE the callback runs, and
+   *  the `fired` guard makes any later trigger (a second click on the now
+   *  detached button, a second Esc) a no-op. Esc = cancel. */
+  showConfirm(opts: { message: string; onConfirm: () => void; onCancel: () => void }): void;
   /** `onToggleMode` is required — a mode button that can't notify is a dead
    *  control. main.ts wires it to emit `mode-changed` (Decision A: ui modules
    *  never import the bus; the handler persists + applies). The label re-reads
@@ -164,6 +170,38 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       if (hasSave) el.append(btn('繼續遊戲', onContinue));
       el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
       mount(el);
+    },
+    showConfirm({ message, onConfirm, onCancel }) {
+      clear(); // replaces whatever menu was mounted (same single `current` slot)
+      const el = document.createElement('div');
+      el.className = 'ui-overlay interactive';
+      const panel = document.createElement('div');
+      panel.className = 'ui-settings'; // existing panel style: stacked full-width buttons
+      const msg = document.createElement('div');
+      msg.className = 'row'; // existing settings-panel text style
+      msg.textContent = message;
+      // single-fire: the first trigger sets `fired`, unmounts the dialog (which
+      // also drops the Esc listener) and only then runs the callback. A second
+      // click on the detached button, or a second Esc, finds `fired === true`.
+      let fired = false;
+      const fire = (cb: () => void) => {
+        if (fired) return;
+        fired = true;
+        clear();
+        cb();
+      };
+      panel.append(msg, btn('確定', () => fire(onConfirm)), btn('取消', () => fire(onCancel)));
+      el.append(panel);
+      mount(el);
+      // Esc = cancel via the shared overlay-Esc slot (removed in clear()).
+      // The leading clear() already nulled any previous handler; explicit for
+      // the same shape as showPause's registerEsc().
+      clearEsc();
+      escHandler = (e: KeyboardEvent) => {
+        if (e.code !== 'Escape') return;
+        fire(onCancel);
+      };
+      document.addEventListener('keydown', escHandler);
     },
     showPause({ onResume, onQuit, onSaveQuit, onToggleMode, onToggleShadows, onToggleClouds, cloudStatus, cloudRetryable, onRetryCloud }) {
       clear();

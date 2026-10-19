@@ -145,6 +145,78 @@ describe('ui smoke', () => {
   });
 });
 
+describe('confirm dialog (B1.4)', () => {
+  const MSG = '將覆蓋現有進度。確定要開始新遊戲嗎？';
+
+  it('confirm dialog renders the message and both buttons', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showConfirm({ message: MSG, onConfirm: () => {}, onCancel: () => {} });
+    const overlay = root.querySelector('.ui-overlay');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.textContent).toContain(MSG);
+    const labels = [...overlay!.querySelectorAll('.ui-btn')].map((b) => b.textContent);
+    expect(labels.length).toBe(2);
+    expect(labels).toContain('確定');
+    expect(labels).toContain('取消');
+    expect(menus.isVisible()).toBe(true);
+    menus.hideAll();
+  });
+
+  it('confirm fires onConfirm exactly once and unmounts', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    menus.showConfirm({ message: MSG, onConfirm, onCancel });
+    const ok = btnByText(root, '確定');
+    ok.click();
+    // the first trigger cleared the dialog: this click hits a DETACHED node —
+    // the single-fire guard must swallow it (no second world reset / no cancel)
+    ok.click();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(root.querySelector('.ui-overlay')).toBeNull();
+    expect(menus.isVisible()).toBe(false);
+    // a button trigger must ALSO drop the Esc listener (no stale cancel)
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('cancel fires onCancel exactly once and unmounts', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    menus.showConfirm({ message: MSG, onConfirm, onCancel });
+    const cancel = btnByText(root, '取消');
+    cancel.click();
+    cancel.click(); // detached second click — guard, not a live listener
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(root.querySelector('.ui-overlay')).toBeNull();
+    expect(menus.isVisible()).toBe(false);
+  });
+
+  it('Escape cancels exactly once and removes the listener after', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    menus.showConfirm({ message: MSG, onConfirm, onCancel });
+    // non-Escape keys reach the listener but must not trigger it
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w' }));
+    expect(onCancel).not.toHaveBeenCalled();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(root.querySelector('.ui-overlay')).toBeNull();
+    // the unmount removed the keydown listener — the second Esc is a no-op
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+});
+
 describe('hud debug overlay', () => {
   it('setDebug shows lines then hides with null', () => {
     const root = document.getElementById('ui-root')!;

@@ -851,12 +851,27 @@ function setState(next: GameState): void {
     // or a successful in-session save); no save → hidden (settled).
     // Ruling I/J: a boot-applied CLOUD payload is also an entry (cloud wins
     // when both exist) — the decision is the pure, unit-pinned titleEntry().
+    // B1.4: computed ONCE per render — `hasSave` and the 新遊戲 overwrite
+    // confirm below read the same value, so they can never disagree.
+    const hasSaveEntry =
+      titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !== 'none';
     menus.showTitle({
-      hasSave:
-        titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !==
-        'none',
+      hasSave: hasSaveEntry,
       onContinue: handleContinue,
-      onNewGame: startGame,
+      // B1.4: 新遊戲 discards the session that 繼續遊戲 offers — an entry
+      // (local or boot-applied cloud) must be confirmed first. 取消 returns to
+      // the title (save untouched); with no entry it stays the one-click start.
+      onNewGame: () => {
+        if (!hasSaveEntry) {
+          startGame();
+          return;
+        }
+        menus.showConfirm({
+          message: '將覆蓋現有進度。確定要開始新遊戲嗎？',
+          onConfirm: startGame,
+          onCancel: () => setState('title'),
+        });
+      },
     });
     document.exitPointerLock?.();
   } else if (next === 'paused') {
