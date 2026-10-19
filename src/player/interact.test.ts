@@ -181,10 +181,11 @@ describe('toolSpeed (Task 5 vanilla tool tiers: wood 2 / stone 4 / iron 6)', () 
     expect(toolSpeed(BLOCK.LOG, held('iron_axe'))).toBe(6);
   });
 
-  it('the other axe-fast blocks take axe speed too (planks, crafting table, furnace)', () => {
+  it('the crafting table is axe-fast; the furnace is pickaxe-fast (vanilla 1.20)', () => {
     expect(toolSpeed(BLOCK.PLANKS, held('stone_axe'))).toBe(4);
     expect(toolSpeed(BLOCK.CRAFTING_TABLE, held('wooden_axe'))).toBe(2);
-    expect(toolSpeed(BLOCK.FURNACE, held('iron_axe'))).toBe(6);
+    expect(toolSpeed(BLOCK.FURNACE, held('iron_pickaxe'))).toBe(6);
+    expect(toolSpeed(BLOCK.FURNACE, held('iron_axe'))).toBe(1); // wrong kind
   });
 
   it('wrong kind is 1× (pickaxe on a log, axe on stone)', () => {
@@ -340,8 +341,9 @@ describe('spawnBlockDrop (Task 7 + Task 6 harvest gate)', () => {
   });
 
   it('bare hands cannot harvest stone (no drop, same ref); wooden pickaxe drops cobblestone', () => {
-    const bare = spawnBlockDrop([], 'survival', BLOCK.STONE, at, null);
-    expect(bare).toHaveLength(0);
+    const base = spawnBlockDrop([], 'survival', BLOCK.DIRT, at, null); // non-empty base
+    const bare = spawnBlockDrop(base, 'survival', BLOCK.STONE, at, null);
+    expect(bare).toBe(base); // same ref — not merely an empty result
     const picked = spawnBlockDrop([], 'survival', BLOCK.STONE, at, woodenPick);
     expect(picked).toHaveLength(1);
     expect(picked[0]).toMatchObject({ item: 'cobblestone', count: 1 });
