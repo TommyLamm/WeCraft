@@ -98,4 +98,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_REPO: ${{ github.repository }}
           GAME_ZIP: ${{ runner.temp }}/playroom-release/game.zip
-        run: gh release create "$RELEASE_TAG" "$GAME_ZIP" --repo "$RELEASE_REPO" --verify-tag --generate-notes --prerelease="$RELEASE_PRERELEASE"
+        run: |
+          NOTES_ARGS=(--generate-notes)
+          if [ -f "docs/releases/$RELEASE_TAG.md" ]; then
+            NOTES_ARGS=(--notes-file "docs/releases/$RELEASE_TAG.md")
+          fi
+          gh release create "$RELEASE_TAG" "$GAME_ZIP" --repo "$RELEASE_REPO" --verify-tag "${NOTES_ARGS[@]}" --prerelease="$RELEASE_PRERELEASE"

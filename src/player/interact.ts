@@ -66,7 +66,8 @@ export function canHarvest(blockId: number, held: ItemStack | null): boolean {
 /** Mining-speed multiplier for `held` while digging `blockId` (survival only —
  *  creative breaks instantly): the matching tool's vanilla speed when the held
  *  tool's kind is the block's required kind (stone family) or its fast kind
- *  (shovel on dirt/grass/sand/snow, axe on log/planks/crafting table/furnace),
+ *  (shovel on dirt/grass/sand/snow, axe on log/planks/crafting table; furnace
+ *  is pickaxe-fast like the stone family),
  *  else 1 — a wrong kind never speeds a block up. Unbreakable blocks
  *  (hardness Infinity) report 1 too: their break time is Infinity regardless.
  *  Note the tier gate is NOT applied here — a wooden pickaxe still mines iron
