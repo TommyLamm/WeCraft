@@ -286,6 +286,54 @@ describe('inventory mode split (B1.2)', () => {
     inv.close();
     expect(onPick).not.toHaveBeenCalled();
   });
+
+  it('gives each duplicate stack its own icon canvas (shared-icon regression)', async () => {
+    // jsdom has no 2d context, so `itemIcon` returns an UNCACHED fresh canvas
+    // per call and the shared-node bug stays invisible. Install a no-op 2d
+    // context FIRST, then load a FRESH inventory+icons module pair — `icons.ts`
+    // memoizes `ctx2dAvailable` (`icons.ts:7,14,18`) and earlier tests in this
+    // file already probed it to false, so the real caching path only runs in a
+    // fresh module graph.
+    const noopCtx = new Proxy({} as Record<string | symbol, unknown>, {
+      get(_target, prop) {
+        if (prop === 'createImageData' || prop === 'getImageData') {
+          // createImageData(w,h) / getImageData(x,y,w,h): caller draws into .data
+          return (a: number, b: number, c?: number, d?: number) => ({
+            data: new Uint8ClampedArray((c ?? a) * (d ?? b) * 4),
+            width: c ?? a,
+            height: d ?? b,
+          });
+        }
+        return () => undefined; // every draw/stroke/fill call is a no-op
+      },
+      set: () => true, // property writes (imageSmoothingEnabled, styles, …)
+    });
+    const proto = HTMLCanvasElement.prototype as unknown as { getContext: (id: string) => unknown };
+    const original = proto.getContext;
+    proto.getContext = () => noopCtx;
+    try {
+      vi.resetModules();
+      const { createInventory: freshInventory } = await import('./inventory');
+      const root = document.getElementById('ui-root')!;
+      const stacks: Array<ItemStack | null> = Array.from({ length: 9 }, () => null);
+      stacks[0] = { item: 'dirt', count: 3 }; // two ordinary dirt stacks (mining
+      stacks[1] = { item: 'dirt', count: 3 }; // 65 blocks spills 64 + 1)
+      const inv = freshInventory(root);
+      inv.open(stacks, 0, () => {}, undefined, undefined, 'survival');
+      const els = [...root.querySelectorAll<HTMLElement>('.ui-inv-grid .ui-slot')];
+      const own = els.map((el) => el.querySelector('canvas'));
+      expect(own[0]).not.toBeNull(); // both slots must render an icon
+      expect(own[1]).not.toBeNull();
+      expect(own[0]).not.toBe(own[1]); // cached node shared → second append moves it
+      expect(els[0].contains(own[0]!)).toBe(true);
+      expect(els[1].contains(own[1]!)).toBe(true);
+      expect(root.querySelectorAll('.ui-inv-grid canvas').length).toBe(2);
+      inv.close();
+    } finally {
+      proto.getContext = original;
+      vi.resetModules(); // drop the mocked-graph instance
+    }
+  });
 });
 
 describe('pause menu', () => {

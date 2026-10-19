@@ -231,6 +231,18 @@
 .ui-inv-grid .ui-slot:hover {
   outline: 2px solid #fff;
 }
+/* B1.2 survival panel: this grid lists the 9-slot hotbar (not the 7-wide
+   palette) and every slot is read-only — no pointer affordance. Placed after
+   the palette rules, whose specificity ties on the slot selectors. */
+.ui-inv-grid.ui-inv-grid-hotbar {
+  grid-template-columns: repeat(9, 44px);
+}
+.ui-inv-grid-hotbar .ui-slot {
+  cursor: default;
+}
+.ui-inv-grid-hotbar .ui-slot:hover {
+  outline: none;
+}
 
 /* Crafting section (Task 11): grid + arrow + result slot, then the hotbar row
    used as the transfer source (click a slot to select it, click a cell to move

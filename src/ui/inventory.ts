@@ -1,9 +1,26 @@
 import './ui.css';
 import { PLACEABLE } from '../world/blocks';
-import { stackFromBlock, stackName, type ItemStack } from '../core/items';
+import { stackFromBlock, stackName, type ItemId, type ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
-import { itemIcon } from './icons';
+import { ICON_PX, getContext2d, itemIcon } from './icons';
 import { mountCrafting, type CraftingParams } from './crafting';
+
+/** Draw `item`'s icon in a slot using that slot's OWN canvas. `itemIcon` hands
+ *  back ONE cached canvas per item, so appending the node directly would MOVE
+ *  it whenever two slots hold the same item (duplicate stacks are ordinary:
+ *  a 65-dirt pickup spills 64 + 1) and the earlier slot would render iconless.
+ *  Same own-canvas copy as crafting's `fillSlot` (see crafting.ts:48-49). */
+function fillIcon(slot: HTMLElement, item: ItemId): void {
+  const canvas = document.createElement('canvas');
+  canvas.width = ICON_PX;
+  canvas.height = ICON_PX;
+  const ctx = getContext2d(canvas);
+  if (ctx) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(itemIcon(item), 0, 0);
+  } // jsdom has no 2d context: the canvas stays empty (slot/title still assertable)
+  slot.appendChild(canvas);
+}
 
 export interface InventoryUi {
   /** `crafting` (Task 11) mounts a 2×2 crafting section into the panel —
@@ -61,7 +78,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       // the hotbar (the whole inventory) as-is.
       h.textContent = survival ? '背包' : `方塊（點選放入欄位 ${selected + 1}）`;
       const grid = document.createElement('div');
-      grid.className = 'ui-inv-grid';
+      // the survival list is the 9-wide hotbar, not the 7-wide palette (B1.2)
+      grid.className = survival ? 'ui-inv-grid ui-inv-grid-hotbar' : 'ui-inv-grid';
       if (survival) {
         // B1.2: owned items only, one slot per hotbar entry. Deliberately NO
         // click handler — picking here would mint a free full stack.
@@ -70,7 +88,7 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
           s.className = 'ui-slot';
           if (stack) {
             s.title = stackName(stack.item);
-            s.appendChild(itemIcon(stack.item));
+            fillIcon(s, stack.item);
           }
           grid.appendChild(s);
         }
@@ -81,7 +99,7 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
           const s = document.createElement('div');
           s.className = 'ui-slot';
           s.title = stackName(stack.item);
-          s.appendChild(itemIcon(stack.item));
+          fillIcon(s, stack.item);
           s.addEventListener('click', () => onPick(selected, { ...stack }));
           grid.appendChild(s);
         }
