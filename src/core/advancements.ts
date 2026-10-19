@@ -62,9 +62,11 @@ export type AdvancementEvent =
   | { type: 'ate'; item: ItemId; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
-/** Obtain → advancement map (Task 11 brief): the 14 item triggers across 8
+/** Obtain → advancement map (Task 11 brief): the 15 item triggers across 8
  *  ids. wood/stone/iron tools share one id per tier; `stone_sword` only triggers
- *  stone_tool here — monster_hunter needs the kill event. */
+ *  stone_tool here — monster_hunter needs the kill event. Both iron inputs map
+ *  to iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
+ *  stays for legacy saves/creative. */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
   crafting_table: 'crafting_table',
@@ -80,6 +82,7 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   cobblestone: 'stone_age',
   coal: 'coal_miner',
   iron_ore: 'iron_age',
+  raw_iron: 'iron_age',
 };
 
 /** Apply one game event to the progress state. PURE: the input state is never

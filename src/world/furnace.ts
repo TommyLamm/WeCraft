@@ -3,10 +3,13 @@ import type { ItemId, ItemStack } from '../core/items';
 /** Seconds to smelt one item. */
 export const SMELT_TIME_SEC = 10 as const;
 
-/** Smeltable input item → output item. coal_ore is deliberately absent: it
- *  drops coal directly (see dropItemFor) instead of smelting. */
+/** Smeltable input item → output item. Both iron inputs smelt to iron_ingot:
+ *  `raw_iron` is what iron_ore blocks drop now (MC 1.17+ parity); legacy
+ *  `iron_ore` items from pre-B1 saves still smelt. coal_ore is deliberately
+ *  absent: it drops coal directly (see dropItemFor). */
 export const SMELT_RECIPES: Readonly<Record<string, ItemId>> = {
   iron_ore: 'iron_ingot',
+  raw_iron: 'iron_ingot',
   sand: 'glass',
 };
 

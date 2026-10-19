@@ -43,7 +43,13 @@ const TRIGGERS: ReadonlyArray<
   ['tasty', [[{ type: 'ate', item: 'apple', mode: 'survival' }]]],
   ['stone_age', [[{ type: 'obtain', item: 'cobblestone', mode: 'survival' }]]],
   ['coal_miner', [[{ type: 'obtain', item: 'coal', mode: 'survival' }]]],
-  ['iron_age', [[{ type: 'obtain', item: 'iron_ore', mode: 'survival' }]]],
+  [
+    'iron_age',
+    [
+      [{ type: 'obtain', item: 'iron_ore', mode: 'survival' }],
+      [{ type: 'obtain', item: 'raw_iron', mode: 'survival' }],
+    ],
+  ],
   ['monster_hunter', [[{ type: 'mob-killed', mode: 'survival' }]]],
   [
     'first_night',

@@ -23,11 +23,22 @@ function burning(overrides: Partial<FurnaceState> = {}): FurnaceState {
 }
 
 describe('furnace tables', () => {
-  it('smelt takes 10 s; iron_ore→iron_ingot and sand→glass; coal_ore excluded', () => {
+  it('smelt takes 10 s; raw_iron/iron_ore→iron_ingot and sand→glass; coal_ore excluded', () => {
     expect(SMELT_TIME_SEC).toBe(10);
-    expect(SMELT_RECIPES).toEqual({ iron_ore: 'iron_ingot', sand: 'glass' });
+    expect(SMELT_RECIPES).toEqual({
+      iron_ore: 'iron_ingot',
+      raw_iron: 'iron_ingot',
+      sand: 'glass',
+    });
     expect(SMELT_RECIPES['coal_ore' as keyof typeof SMELT_RECIPES]).toBeUndefined();
     expect(FUEL_VALUES).toEqual({ coal: 8, oak_log: 2, oak_planks: 2, stick: 1 });
+  });
+
+  it('smelts raw_iron into an iron ingot', () => {
+    const r = stepFurnace(burning({ input: stack('raw_iron', 1) }), 10);
+    expect(r.completed).toBe(1);
+    expect(r.state.output).toEqual(stack('iron_ingot', 1));
+    expect(r.state.input).toBeNull(); // the single raw iron was consumed
   });
 });
 

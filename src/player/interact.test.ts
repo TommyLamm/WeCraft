@@ -322,11 +322,13 @@ describe('canPlaceAt', () => {
   });
 });
 
-describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => {
+describe('spawnBlockDrop (Task 7 + Task 6 harvest gate)', () => {
   const at = { x: 5.5, y: 70.5, z: 5.5 }; // block centre = break pos + 0.5
+  const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
+  const stonePick = { item: 'stone_pickaxe', count: 1 } as const;
 
   it('survival spawns 1× the block item at the given position', () => {
-    const drops = spawnBlockDrop([], 'survival', BLOCK.DIRT, at);
+    const drops = spawnBlockDrop([], 'survival', BLOCK.DIRT, at, null);
     expect(drops).toHaveLength(1);
     expect(drops[0]).toMatchObject({
       item: 'dirt',
@@ -337,36 +339,45 @@ describe('spawnBlockDrop (Task 7 — broken blocks drop into the world)', () => 
     });
   });
 
-  it('mined stone drops cobblestone (Minecraft parity — verification fix)', () => {
-    const drops = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
-    expect(drops).toHaveLength(1);
-    expect(drops[0]).toMatchObject({ item: 'cobblestone', count: 1 });
+  it('bare hands cannot harvest stone (no drop, same ref); wooden pickaxe drops cobblestone', () => {
+    const bare = spawnBlockDrop([], 'survival', BLOCK.STONE, at, null);
+    expect(bare).toHaveLength(0);
+    const picked = spawnBlockDrop([], 'survival', BLOCK.STONE, at, woodenPick);
+    expect(picked).toHaveLength(1);
+    expect(picked[0]).toMatchObject({ item: 'cobblestone', count: 1 });
+  });
+
+  it('iron_ore needs stone tier: wooden pick same ref (no drop), stone pick drops raw_iron', () => {
+    const existing = spawnBlockDrop([], 'survival', BLOCK.STONE, at, woodenPick); // non-empty base
+    expect(spawnBlockDrop(existing, 'survival', BLOCK.IRON_ORE, at, woodenPick)).toBe(existing);
+    const got = spawnBlockDrop([], 'survival', BLOCK.IRON_ORE, at, stonePick);
+    expect(got).toHaveLength(1);
+    expect(got[0].item).toBe('raw_iron');
   });
 
   it('spawns nothing in creative (infinite supply, no world drops)', () => {
     // Assert against a NON-empty array: a `return []` bug here would wipe every
     // live drop on each creative break — same-ref is the real contract.
-    const existing = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
-    expect(spawnBlockDrop(existing, 'creative', BLOCK.STONE, at)).toBe(existing);
-    expect(spawnBlockDrop(existing, 'creative', BLOCK.DIRT, at)).toBe(existing);
+    const existing = spawnBlockDrop([], 'survival', BLOCK.STONE, at, woodenPick);
+    expect(spawnBlockDrop(existing, 'creative', BLOCK.STONE, at, null)).toBe(existing);
+    expect(spawnBlockDrop(existing, 'creative', BLOCK.DIRT, at, null)).toBe(existing);
     expect(existing).toHaveLength(1); // input left intact
   });
 
   it('adds nothing for blocks without an item form (air, water)', () => {
-    const existing = spawnBlockDrop([], 'survival', BLOCK.DIRT, at);
-    expect(spawnBlockDrop(existing, 'survival', BLOCK.AIR, at)).toBe(existing);
-    expect(spawnBlockDrop(existing, 'survival', BLOCK.WATER, at)).toBe(existing);
+    const existing = spawnBlockDrop([], 'survival', BLOCK.DIRT, at, null);
+    expect(spawnBlockDrop(existing, 'survival', BLOCK.AIR, at, null)).toBe(existing);
+    expect(spawnBlockDrop(existing, 'survival', BLOCK.WATER, at, null)).toBe(existing);
     expect(existing).toHaveLength(1);
   });
 
-  it('coal_ore drops coal; iron_ore stays iron_ore (smelting-free)', () => {
-    expect(spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at)[0].item).toBe('coal');
-    expect(spawnBlockDrop([], 'survival', BLOCK.IRON_ORE, at)[0].item).toBe('iron_ore');
+  it('coal_ore drops coal with the wooden pickaxe (tier 0 gate)', () => {
+    expect(spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at, woodenPick)[0].item).toBe('coal');
   });
 
   it('appends to existing drops without mutating the input array', () => {
-    const first = spawnBlockDrop([], 'survival', BLOCK.STONE, at);
-    const second = spawnBlockDrop(first, 'survival', BLOCK.DIRT, at);
+    const first = spawnBlockDrop([], 'survival', BLOCK.DIRT, at, null);
+    const second = spawnBlockDrop(first, 'survival', BLOCK.STONE, at, woodenPick);
     expect(first).toHaveLength(1); // input untouched
     expect(second).toHaveLength(2);
     expect(second[0]).toBe(first[0]); // existing entities kept as-is

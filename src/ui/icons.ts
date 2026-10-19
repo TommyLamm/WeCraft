@@ -126,6 +126,21 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fillRect(10, 12, 12, 3);
       break;
     }
+    case 'raw_iron': {
+      // rough ore lumps: two light-gold blobs, one darker blob overlapping
+      ctx.fillStyle = '#d8b28e';
+      ctx.beginPath();
+      ctx.arc(13, 14, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(20, 12, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#c4915f';
+      ctx.beginPath();
+      ctx.arc(19, 20, 4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
     case 'gravel': {
       ctx.fillStyle = '#9a968e';
       ctx.fillRect(4, 10, 24, 16);

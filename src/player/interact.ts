@@ -10,17 +10,23 @@ import { damageMob, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
  *  of adding straight to the inventory: survival only — creative spawns nothing
- *  (infinite supply). Air/water have no item form and spawn nothing too.
- *  Drop mapping via `dropItemFor` (coal_ore → coal; iron_ore stays iron_ore —
- *  smelting-free). Pickup is proximity-based (main loop + `pickable`/`pickup`).
+ *  (infinite supply). Task 6 harvest gate: blocks that require a tool (stone
+ *  family, iron ore) drop NOTHING — same-ref — unless the `held` stack (null =
+ *  bare hand) is a tool of the required kind at or above the required level
+ *  (vanilla: no drop when not harvestable). Air/water have no item form and
+ *  spawn nothing too. Drop mapping via `dropItemFor` (coal_ore → coal;
+ *  iron_ore → raw_iron; grass → dirt; leaves/glass/snow → nothing). Pickup is
+ *  proximity-based (main loop + `pickable`/`pickup`).
  *  Returns the new drops array — unchanged (same ref) when nothing spawns. */
 export function spawnBlockDrop(
   drops: DropEntity[],
   mode: GameMode,
   blockId: number,
   pos: { x: number; y: number; z: number },
+  held: ItemStack | null,
 ): DropEntity[] {
   if (mode === 'creative') return drops;
+  if (!canHarvest(blockId, held)) return drops;
   const item = dropItemFor(blockId);
   if (!item) return drops;
   return spawnDrop(drops, item, 1, pos);

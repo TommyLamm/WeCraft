@@ -24,7 +24,7 @@ const TOOL_ITEMS: ItemId[] = [
   'wooden_axe', 'stone_axe', 'iron_axe',
   'wooden_sword', 'stone_sword', 'iron_sword',
 ];
-const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'arrow', 'apple'];
+const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'raw_iron', 'arrow', 'apple'];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
@@ -34,7 +34,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    expect(ALL_ITEMS.length).toBe(31);
+    expect(ALL_ITEMS.length).toBe(32);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
     for (const id of Object.values(BLOCK)) {
@@ -43,8 +43,8 @@ describe('items', () => {
     }
   });
 
-  it('ALL_ITEM_IDS is the canonical list: 31 entries, no dupes, same set as the union', () => {
-    expect(ALL_ITEM_IDS.length).toBe(31);
+  it('ALL_ITEM_IDS is the canonical list: 32 entries, no dupes, same set as the union', () => {
+    expect(ALL_ITEM_IDS.length).toBe(32);
     expect(new Set(ALL_ITEM_IDS).size).toBe(ALL_ITEM_IDS.length);
     // Same membership as the test's own hand-maintained union mirror — the
     // Record<ItemId, true> source makes drift a tsc error (Minor 5).
@@ -86,6 +86,11 @@ describe('items', () => {
     expect(maxStack('stick')).toBe(64);
     expect(maxStack('apple')).toBe(64);
     expect(maxStack('furnace')).toBe(64); // block item, stacks like stone
+  });
+
+  it('raw_iron is a plain item: not a block, stacks to 64 (Task 6)', () => {
+    expect(blockFromItem('raw_iron')).toBeNull();
+    expect(maxStack('raw_iron')).toBe(64);
   });
 
   it('maxStack is 1 for tools and weapons', () => {

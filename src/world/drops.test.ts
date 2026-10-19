@@ -304,23 +304,33 @@ describe('pickup', () => {
   });
 });
 
-describe('dropItemFor (block → drop mapping)', () => {
+describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
   it('coal_ore drops coal (the raw ore item, never the block item)', () => {
     expect(dropItemFor(BLOCK.COAL_ORE)).toBe('coal');
   });
 
-  it('iron_ore drops iron_ore (the smelt input — see furnace recipes)', () => {
-    expect(dropItemFor(BLOCK.IRON_ORE)).toBe('iron_ore');
+  it('iron_ore drops raw_iron (the smelt input — see furnace recipes)', () => {
+    expect(dropItemFor(BLOCK.IRON_ORE)).toBe('raw_iron');
   });
 
   it('stone drops cobblestone (Minecraft parity — the only cobble source)', () => {
     expect(dropItemFor(BLOCK.STONE)).toBe('cobblestone');
   });
 
+  it('grass drops dirt (vanilla: the grass block itself needs silk touch)', () => {
+    expect(dropItemFor(BLOCK.GRASS)).toBe('dirt');
+  });
+
+  it('leaves/glass/snow drop nothing (silk-touch-only drops)', () => {
+    expect(dropItemFor(BLOCK.LEAVES)).toBeNull();
+    expect(dropItemFor(BLOCK.GLASS)).toBeNull();
+    expect(dropItemFor(BLOCK.SNOW)).toBeNull();
+  });
+
   it('regular blocks map through itemFromBlock', () => {
-    expect(dropItemFor(BLOCK.GRASS)).toBe('grass');
     expect(dropItemFor(BLOCK.LOG)).toBe('oak_log');
     expect(dropItemFor(BLOCK.COBBLE)).toBe('cobblestone');
+    expect(dropItemFor(BLOCK.DIRT)).toBe('dirt');
   });
 
   it('blocks without an item form drop nothing (air, water)', () => {

@@ -36,17 +36,24 @@ export interface DropEntity {
   bounced: boolean; // has it used its single bounce?
 }
 
-/** Block → drop item, with per-block overrides:
- *  coal_ore drops `coal` directly (its BLOCK_PAIRS item is `coal_ore`);
- *  stone drops `cobblestone` (Minecraft parity — without this override no
- *  cobblestone is obtainable: terrain generates no COBBLE blocks, so stone
- *  tools, the furnace recipe and the stone_age advancement were unreachable).
- *  iron_ore keeps `iron_ore` (the raw furnace input — it smelts to iron_ingot,
- *  it does not drop one). Null when the block has no item form (air, water) →
- *  nothing spawns. */
+/** Block → drop item, with vanilla-parity overrides:
+ *  - coal_ore → `coal` (its BLOCK_PAIRS item is the ore block itself);
+ *  - iron_ore → `raw_iron` (the raw ore item, MC 1.17+ style — it smelts to
+ *    iron_ingot; the block never drops itself);
+ *  - stone → `cobblestone` (without this override no cobblestone is
+ *    obtainable: terrain generates no COBBLE blocks, so stone tools, the
+ *    furnace recipe and the stone_age advancement were unreachable);
+ *  - grass → `dirt` (vanilla: the grass block itself needs silk touch);
+ *  - leaves/glass/snow → null (silk-touch-only drops; no shears/silk touch
+ *    in this game).
+ *  Null also when the block has no item form at all (air, water) → nothing
+ *  spawns. */
 export function dropItemFor(blockId: number): ItemId | null {
   if (blockId === BLOCK.COAL_ORE) return 'coal';
+  if (blockId === BLOCK.IRON_ORE) return 'raw_iron';
   if (blockId === BLOCK.STONE) return 'cobblestone';
+  if (blockId === BLOCK.GRASS) return 'dirt';
+  if (blockId === BLOCK.LEAVES || blockId === BLOCK.GLASS || blockId === BLOCK.SNOW) return null;
   return itemFromBlock(blockId);
 }
 

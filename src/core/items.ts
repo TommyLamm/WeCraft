@@ -4,7 +4,7 @@ export type ItemId =
   | 'grass' | 'dirt' | 'stone' | 'cobblestone' | 'oak_log' | 'oak_planks'
   | 'sand' | 'gravel' | 'glass' | 'coal_ore' | 'iron_ore'
   | 'crafting_table' | 'furnace' | 'chest'
-  | 'stick' | 'coal' | 'iron_ingot'
+  | 'stick' | 'coal' | 'iron_ingot' | 'raw_iron'
   | 'wooden_pickaxe' | 'stone_pickaxe' | 'iron_pickaxe'
   | 'wooden_axe' | 'stone_axe' | 'iron_axe'
   | 'wooden_sword' | 'stone_sword' | 'iron_sword'
@@ -22,7 +22,7 @@ const ITEM_IDS: Record<ItemId, true> = {
   grass: true, dirt: true, stone: true, cobblestone: true, oak_log: true, oak_planks: true,
   sand: true, gravel: true, glass: true, coal_ore: true, iron_ore: true,
   crafting_table: true, furnace: true, chest: true,
-  stick: true, coal: true, iron_ingot: true,
+  stick: true, coal: true, iron_ingot: true, raw_iron: true,
   wooden_pickaxe: true, stone_pickaxe: true, iron_pickaxe: true,
   wooden_axe: true, stone_axe: true, iron_axe: true,
   wooden_sword: true, stone_sword: true, iron_sword: true,
@@ -30,7 +30,7 @@ const ITEM_IDS: Record<ItemId, true> = {
   oak_leaves: true, snow_block: true, bedrock: true,
 };
 
-/** Every ItemId, canonically (31 today). */
+/** Every ItemId, canonically (32 today). */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }

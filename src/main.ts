@@ -32,6 +32,7 @@ import {
   EXHAUST_SPRINT_PER_METER,
   EXHAUST_JUMP,
   EXHAUST_SPRINT_JUMP,
+  EXHAUST_BREAK_BLOCK,
   type Vitals,
 } from './player/survival';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
@@ -2084,12 +2085,15 @@ gs.renderer.setAnimationLoop(() => {
         if (digStep(currentMode, dig, id, hit, dt, held)) {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
           // Task 7: the broken block becomes a world drop (survival only; creative
-          // spawns nothing). Inventory no longer changes here — pickups do that.
+          // spawns nothing). Task 6: the held stack gates the drop (bare hands
+          // can't harvest stone/iron ore) and breaking costs exhaustion — one
+          // small constant per break (exhaust caps before draining, never batch).
           const spawned = spawnBlockDrop(drops, currentMode, id, {
             x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5, // block centre
-          });
+          }, held);
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
+          if (vitals) setVitals(exhaust(vitals, EXHAUST_BREAK_BLOCK));
           // Task 6: a mined furnace spills its whole contents and loses its state.
           if (id === BLOCK.FURNACE) {
             const key = furnaceKey(hit.x, hit.y, hit.z);
