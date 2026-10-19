@@ -4,7 +4,7 @@ import { createMenus } from './menus';
 import type { CloudStatus } from '../platform/playroom';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
-import { itemFromBlock, maxStack, stackFromBlock, type ItemStack } from '../core/items';
+import { itemFromBlock, maxStack, stackFromBlock, stackName, type ItemStack } from '../core/items';
 import { loadSettings, saveSettings } from '../core/settings';
 
 /** Build the stack form of a block list (every placeable block has an item). */
@@ -242,6 +242,49 @@ describe('inventory backdrop close', () => {
     backdrop.click();
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(inv.isOpen()).toBe(false);
+  });
+});
+
+describe('inventory mode split (B1.2)', () => {
+  /** Nine hotbar slots with one 3× stone stack in slot 0 (the rest empty). */
+  function survivalStacks(): Array<ItemStack | null> {
+    const slots: Array<ItemStack | null> = Array.from({ length: 9 }, () => null);
+    slots[0] = { item: 'stone', count: 3 };
+    return slots;
+  }
+
+  it('survival panel shows owned slots and cannot pick free blocks', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const onPick = vi.fn();
+    inv.open(survivalStacks(), 0, onPick, undefined, undefined, 'survival');
+    const slots = [...root.querySelectorAll<HTMLElement>('.ui-inv-grid .ui-slot')];
+    expect(slots.length).toBe(9);
+    expect(slots[0].querySelector('canvas')).not.toBeNull(); // owned stack → icon
+    expect(slots[0].title).toBe(stackName('stone'));
+    expect(slots[1].querySelector('canvas')).toBeNull(); // empty slot stays empty
+    expect(root.querySelector('.ui-inventory')?.textContent).toContain('背包');
+    slots[0].click(); // no palette in survival: clicking must not mint a stack
+    expect(onPick).not.toHaveBeenCalled();
+    inv.close();
+  });
+
+  it('survival panel closes cleanly with no click handlers left behind', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const onPick = vi.fn();
+    inv.open(survivalStacks(), 0, onPick, undefined, undefined, 'survival');
+    expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(9); // survival panel is mounted
+    inv.close();
+    expect(inv.isOpen()).toBe(false);
+    expect(root.querySelector('.ui-inv-backdrop')).toBeNull();
+    expect(root.innerHTML).toBe('');
+    // re-opening without a mode still yields the full creative palette (no
+    // survival leftovers / stale handlers on the shared root)
+    inv.open(DEFAULT_STACKS, 0, onPick);
+    expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(PLACEABLE.length);
+    inv.close();
+    expect(onPick).not.toHaveBeenCalled();
   });
 });
 

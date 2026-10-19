@@ -969,6 +969,8 @@ function setState(next: GameState): void {
       // Task 11: 2×2 crafting section embedded at the top of the panel.
       // creative: crafting hidden (plan 12.4) → no params, no section mounted.
       currentMode === 'survival' ? craftingParams(2) : undefined,
+      // B1.2: survival lists the OWNED hotbar; creative keeps the palette.
+      currentMode,
     );
   } else if (next === 'crafting') {
     // Task 11: right-click on a placed crafting table → standalone 3×3 overlay.
