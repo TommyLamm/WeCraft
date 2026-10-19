@@ -108,6 +108,9 @@
   justify-content: center;
   gap: 12px;
   background: rgba(0, 0, 0, 0.55);
+  /* Menus above the hurt-flash vignette (8), below the death screen (10) and
+     toasts (20); same-z-index overlays keep DOM-order stacking. */
+  z-index: 9;
 }
 .ui-overlay.title-screen {
   background: rgba(0, 0, 0, 0.35);
@@ -386,6 +389,17 @@
 .ui-settings .ui-btn {
   min-width: 0;
   width: 100%;
+}
+/* New-game overwrite confirm (Task 8): centered message above the stacked
+   buttons. White like the rest of the menu text — the .ui-settings panel is a
+   dark translucent plate, so a dark text color would be unreadable. */
+.ui-confirm .ui-confirm-msg {
+  margin: 4px 0 14px;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  text-align: center;
 }
 
 /* Survival vitals HUD: hearts left, hunger right, above the hotbar (Task 4). */

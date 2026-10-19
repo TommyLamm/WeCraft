@@ -73,8 +73,9 @@ export function loadModeSlots(stash: ModeStash, mode: GameMode): Array<ItemStack
 /** Rebuild a live stash from a save record — works for every payload version:
  *  - v3 carries a stash: both sides are sanitized (unknown ids and junk counts
  *    read as empty slots) and `survivalVitals` is normalized. A side that is
- *    MISSING from the record is filled with that mode's `starterSlots`; a side
- *    that is present but corrupt sanitizes to nulls.
+ *    MISSING from the record is filled with that mode's `starterSlots` — also
+ *    when the stash records only `survivalVitals` (those vitals are kept); a
+ *    side that is present but corrupt sanitizes to nulls.
  *  - v1/v2 carry only the recorded mode's live inventory + vitals, so those
  *    become that mode's side, the other mode starts from its starter kit, and
  *    survival vitals come from the record (creative saves carry none → fresh).
@@ -84,7 +85,10 @@ export function normalizeModeStash(
   legacy: { mode: GameMode; inventory: unknown; vitals: unknown },
 ): ModeStash {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
-  if ('survival' in r || 'creative' in r) {
+  // A side-less stash that still records vitals is treated as a stash too:
+  // the LEGACY branch would re-derive vitals and drop the recorded values
+  // (progress loss). Missing sides below still get their starter kits.
+  if ('survival' in r || 'creative' in r || 'survivalVitals' in r) {
     return {
       survival: 'survival' in r ? sanitizeSlots(r.survival, SLOTS_PER_MODE) : starterSlots('survival'),
       creative: 'creative' in r ? sanitizeSlots(r.creative, SLOTS_PER_MODE) : starterSlots('creative'),

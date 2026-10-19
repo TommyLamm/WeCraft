@@ -184,6 +184,22 @@ describe('normalizeModeStash — payload restore', () => {
     expect(fromJunk.creative).toEqual(starterSlots('creative'));
   });
 
+  it('normalizeModeStash keeps vitals from a stash that carries only survivalVitals', () => {
+    // A malformed v3 stash can lack both slot sides but still record vitals —
+    // the gate must see it as a stash (vitals preserved), not as "no stash"
+    // (which would drop the recorded hp/hunger and re-derive from legacy).
+    const recorded = { ...createVitals(), hp: 7, hunger: 12, saturation: 1 };
+    const stash = normalizeModeStash(
+      { survivalVitals: recorded },
+      legacy('survival', [{ item: 'stone', count: 32 }], createVitals()),
+    );
+    expect(stash.survivalVitals).toEqual(recorded); // recorded vitals kept, hp 7
+    expect(stash.survivalVitals).not.toBe(recorded); // fresh object, never aliased
+    // the MISSING sides still get their starter kits (survival = empty)
+    expect(stash.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(stash.creative).toEqual(starterSlots('creative'));
+  });
+
   it('normalizeModeStash prefers a present stash over legacy fields', () => {
     const raw = {
       survival: [{ item: 'apple', count: 3 }],

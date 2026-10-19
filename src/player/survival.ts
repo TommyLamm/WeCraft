@@ -112,7 +112,10 @@ export const EXHAUST_PER_HP_REGEN = 6;
  *  `EXHAUSTION_MAX` and every completed `EXHAUSTION_DRAIN` points spend one
  *  saturation — or one hunger once saturation is empty — while the remainder
  *  stays banked. Never touches hp — the hp decay rule lives in `tickVitals`.
- *  Zero, negative or non-finite amounts are a no-op. */
+ *  Zero, negative or non-finite amounts are a no-op. Callers must never batch
+ *  large sums into one call: the cap applies BEFORE the drain, so an oversized
+ *  single add discards what a chunked sequence would have spent — the largest
+ *  legitimate single call is the 6-point regen charge inside `tickVitals`. */
 export function exhaust(v: Vitals, amount: number): Vitals {
   if (!Number.isFinite(amount) || amount <= 0) return { ...v };
   let exhaustion = Math.min(EXHAUSTION_MAX, v.exhaustion + amount);
@@ -140,8 +143,16 @@ export function starve(v: Vitals, amount: number): Vitals {
  *    hp spends `EXHAUST_PER_HP_REGEN` exhaustion through `exhaust()`;
  *  - starve: hunger 0, saturation 0 and hp > 0 → −1 hp per `TICK_INTERVAL_SEC`
  *    via `starveAcc`.
- *  The inactive accumulator resets to 0 — even when `dtSec` is non-positive
+ *  An inactive accumulator resets to 0 — even when `dtSec` is non-positive
  *  or non-finite (treated as 0, never propagated into the accumulators).
+ *  One corner survives the call instead: when the regen loop itself loses the
+ *  condition mid-call (the last heal's exhaustion spend drained the final
+ *  saturation point, or dropped hunger below 18 with saturation already 0),
+ *  the loop exits with `regenAcc` still banked. The next call's else-branch
+ *  clears it; only a meal before that call turns the remainder into regen
+ *  credit (the remainder is whatever was banked on entry + the call's dt −
+ *  the intervals it spent — under one frame in the game loop, whose dt is
+ *  capped at 0.1 s).
  *  Movement exhaustion is NOT handled here — callers invoke `exhaust()`. */
 export function tickVitals(v: Vitals, dtSec: number): Vitals {
   if (!Number.isFinite(dtSec) || dtSec <= 0) dtSec = 0; // clamp, do NOT return: resets below must still run

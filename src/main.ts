@@ -578,13 +578,14 @@ let invuln = createInvuln();
 
 /** Single vitals mutation path: store `next`, repaint the HUD, hide the bar
  *  when null — and (Task 9) emit `vitals-changed` whenever a HUD-visible value
- *  changed, i.e. an integer hp or hunger value moved. Saturation-first
- *  exhaustion and the regen/starve accumulators are invisible in the HUD, so
- *  those are carried silently — this is what keeps the per-frame tick from
- *  spamming the bus (~4×/s worst case, damage/regen/starve emit immediately
- *  because their hp integers move). Creative never reaches the emit (next is
- *  null). The emit re-enters the consumer below with identical integers → its
- *  visible gate stops the recursion after one hop. */
+ *  changed, i.e. an integer hp or hunger value moved. The exhaustion bank and
+ *  the saturation it drains first (one point per completed 4 — and saturation
+ *  has no HUD bar) are invisible in the HUD, and so are the regen/starve
+ *  accumulators; those changes are carried silently — this is what keeps the
+ *  per-frame tick from spamming the bus (~4×/s worst case, damage/regen/starve
+ *  emit immediately because their hp integers move). Creative never reaches
+ *  the emit (next is null). The emit re-enters the consumer below with
+ *  identical integers → its visible gate stops the recursion after one hop. */
 function setVitals(next: Vitals | null): void {
   const prev = vitals;
   vitals = next;
@@ -1165,8 +1166,10 @@ function applyCloudData(data: CloudData): void {
   );
   // B1.3: restore the per-mode stash that travelled with the payload (the
   // other mode's hotbar + survival vitals). acceptCloudData always hands one
-  // over — an old format-1 payload carries none and gets it derived here from
-  // the fields it DID write (the recorded mode's inventory + vitals).
+  // over: for an old format-1 payload that carries none it derives the stash
+  // UPSTREAM (cloud-save.ts) from the fields the payload did write (the
+  // recorded mode's inventory + vitals) — the args below are a defensive
+  // fallback only.
   modeStash = normalizeModeStash(data.stash, {
     mode: data.settings.mode,
     inventory: data.inventory,

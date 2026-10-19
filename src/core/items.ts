@@ -16,8 +16,9 @@ export type ItemId =
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
- *  runtime allow-lists (main's cloud-apply KNOWN_ITEMS) can never silently
- *  drift behind the union again. */
+ *  the runtime allow-list derived from it (`ITEM_ID_SET`, used by
+ *  `sanitizeStack`/`sanitizeSlots`) can never silently drift behind the
+ *  union again. */
 const ITEM_IDS: Record<ItemId, true> = {
   grass: true, dirt: true, stone: true, cobblestone: true, oak_log: true, oak_planks: true,
   sand: true, gravel: true, glass: true, coal_ore: true, iron_ore: true,

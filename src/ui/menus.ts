@@ -176,9 +176,9 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       const el = document.createElement('div');
       el.className = 'ui-overlay interactive';
       const panel = document.createElement('div');
-      panel.className = 'ui-settings'; // existing panel style: stacked full-width buttons
+      panel.className = 'ui-settings ui-confirm'; // panel style + dialog text style
       const msg = document.createElement('div');
-      msg.className = 'row'; // existing settings-panel text style
+      msg.className = 'ui-confirm-msg'; // centered dialog copy (ui.css)
       msg.textContent = message;
       // single-fire: the first trigger sets `fired`, unmounts the dialog (which
       // also drops the Esc listener) and only then runs the callback. A second

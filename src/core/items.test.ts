@@ -180,5 +180,14 @@ describe('items', () => {
     // a non-array source is all nulls — never a throw
     expect(sanitizeSlots('junk', 2)).toEqual([null, null]);
     expect(sanitizeSlots(undefined, 2)).toEqual([null, null]);
+    // the requested count itself is defended: non-finite / negative reads as
+    // 0 slots (never an infinite loop), fractional counts floor down
+    expect(sanitizeSlots([{ item: 'stone', count: 1 }], Infinity)).toEqual([]);
+    expect(sanitizeSlots([{ item: 'stone', count: 1 }], Number.NaN)).toEqual([]);
+    expect(sanitizeSlots([{ item: 'stone', count: 1 }], -1)).toEqual([]);
+    expect(sanitizeSlots([{ item: 'stone', count: 1 }, { item: 'dirt', count: 2 }], 2.7)).toEqual([
+      { item: 'stone', count: 1 },
+      { item: 'dirt', count: 2 },
+    ]);
   });
 });

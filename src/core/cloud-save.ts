@@ -62,9 +62,13 @@ export interface CloudBuildSource {
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
  *  (fresh arrays/objects) so later live mutations never leak into the data —
  *  including the per-mode stash, copied slot by slot like the inventory.
- *  Non-finite pos (any component, or a non-triple at runtime) → [0,0,0] and
- *  non-finite yaw → 0; never throws. seed/clockT pass through untouched —
- *  malformed values are rejected downstream by `validateCloudData`. */
+ *  Never throws on pos/yaw: however malformed, a non-finite component (or a
+ *  non-triple at runtime) becomes [0,0,0] and a non-finite yaw becomes 0. The
+ *  nested copies dereference their inputs directly (inventory/stash arrays,
+ *  advancements/settings objects) — callers pass live, type-guaranteed state,
+ *  and the game-side caller wraps the call in try/catch. seed/clockT pass
+ *  through untouched — malformed values are rejected downstream by
+ *  `validateCloudData`. */
 export function buildCloudData(src: CloudBuildSource): CloudData {
   const pos: [number, number, number] =
     Array.isArray(src.pos) &&

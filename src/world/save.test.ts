@@ -188,6 +188,24 @@ describe('saveGame / loadGame', () => {
     expect(reloaded?.stash.creative).toEqual(slots());
   });
 
+  it('derives the stash when a v3 record carries a corrupt or missing one', async () => {
+    const expected = {
+      survival: slots({ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }),
+      creative: starterSlots('creative'),
+      survivalVitals: createVitals(), // the recorded vitals, normalized
+    };
+    // present-but-corrupt stash values fall back to the legacy derivation
+    for (const stash of ['junk', 42]) {
+      await putRawRecord({ ...makePayload(), stash });
+      expect((await loadGame())?.stash).toEqual(expected);
+    }
+    // a v3 record missing the key entirely falls back the same way
+    const noStash = makePayload() as Partial<SavePayload>;
+    delete noStash.stash;
+    await putRawRecord(noStash);
+    expect((await loadGame())?.stash).toEqual(expected);
+  });
+
   it('migrates a raw v1 record to v3 with derived stash and empty advancements', async () => {
     const v1 = makeV1Payload();
     await putRawRecord(v1);
