@@ -78,7 +78,7 @@ const DEFS: Record<number, BlockDef> = {
   13: { id: 13, name: 'coal_ore', hardness: 3.0, solid: true, transparent: false, top: T.COAL, side: T.COAL, bottom: T.COAL, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
   14: { id: 14, name: 'iron_ore', hardness: 3.0, solid: true, transparent: false, top: T.IRON, side: T.IRON, bottom: T.IRON, requiredTool: { kind: 'pickaxe', level: 1 }, fastTool: 'pickaxe' },
   15: { id: 15, name: 'crafting_table', hardness: 2.5, solid: true, transparent: false, top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
-  16: { id: 16, name: 'furnace', hardness: 3.5, solid: true, transparent: false, top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE, requiredTool: null, fastTool: 'axe' },
+  16: { id: 16, name: 'furnace', hardness: 3.5, solid: true, transparent: false, top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
 };
 
 export function getBlockDef(id: number): BlockDef {

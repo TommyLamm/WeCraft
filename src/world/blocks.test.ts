@@ -70,7 +70,7 @@ describe('blocks', () => {
       [BLOCK.COAL_ORE, { kind: 'pickaxe', level: 0 }, 'pickaxe'],
       [BLOCK.IRON_ORE, { kind: 'pickaxe', level: 1 }, 'pickaxe'],
       [BLOCK.CRAFTING_TABLE, null, 'axe'],
-      [BLOCK.FURNACE, null, 'axe'],
+      [BLOCK.FURNACE, { kind: 'pickaxe', level: 0 }, 'pickaxe'],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);

@@ -346,13 +346,13 @@ git commit -m "feat(cloud): B1.3 雲端附加 stash 欄位（維持 format 1）"
 
 - [ ] **Step 3: 實作**
 
-- `blocks.ts`：`ToolKind`；`BlockDef` 兩欄位；`DEFS` 逐格填硬度＋`requiredTool`（STONE／COBBLE／COAL_ORE `{pickaxe,0}`、IRON_ORE `{pickaxe,1}`、其餘 null）＋`fastTool`（石類 `pickaxe`；DIRT／GRASS／SAND／SNOW `shovel`；LOG／PLANKS／CRAFTING_TABLE／FURNACE `axe`；其餘 null）。
+- `blocks.ts`：`ToolKind`；`BlockDef` 兩欄位；`DEFS` 逐格填硬度＋`requiredTool`（STONE／COBBLE／COAL_ORE／FURNACE `{pickaxe,0}`、IRON_ORE `{pickaxe,1}`、其餘 null）＋`fastTool`（石類與 FURNACE `pickaxe`；DIRT／GRASS／SAND／SNOW `shovel`；LOG／PLANKS／CRAFTING_TABLE `axe`；其餘 null）。
 - `interact.ts`：
   - `const TOOL_INFO: Readonly<Record<string, { kind: ToolKind; level: number; speed: number }>>`：`wooden_* {2, 0}`、`stone_* {4, 1}`、`iron_* {6, 2}`（pickaxe／axe 各三階；劍不入表）。
   - `canHarvest`：`requiredTool === null → true`；否則 `TOOL_INFO[held?.item]?.kind === req.kind && info.level >= req.level`。
   - `toolSpeed`：不可破 → 1；`const wanted = def.requiredTool?.kind ?? def.fastTool; const info = held ? TOOL_INFO[held.item] : null; return info && wanted && info.kind === wanted ? info.speed : 1;`
   - `getBreakTime`：`const h = def.hardness; if (!Number.isFinite(h)) return Infinity; return h * (canHarvest(...) ? 1.5 : 5) / toolSpeed(...);`
-  - `DigProgress`／`digStep` 依新簽名；`digStep` 內部算 `time`／`speed`（`if (!Number.isFinite(time)) return false;`）。
+  - `DigProgress`／`digStep` 依新簽名；`digStep` 內部算 `time`（速度僅透過 `getBreakTime` 生效一次；`if (!Number.isFinite(time)) return false;`）。
   - 刪除舊 `PICKAXES`／`AXES`／`SWORDS`／`IRON_TOOLS`／`requiredTool` 表；更新「Minecraft parity」註解。
 - `main.ts`：dig 區塊（L2038-2052）改 `const held = hotbar[selected];`、`digTarget` 判定用 `getBreakTime(id, held)`、移除外部 `toolSpeed` 呼叫、`digStep(currentMode, dig, id, hit, dt, held)`。
 
