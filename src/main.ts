@@ -260,16 +260,26 @@ let attackedThisFrame = false;
 // 相機 FOV 的平滑值（core/fov.ts 的 `stepFov` 產出）→ 相機實際套用的值。
 let fovCurrent = BASE_FOV;
 
-/** B2.1：疾跑狀態與 FOV 歸零（開新局／讀檔進入時呼叫）。
+/** B2.1：把相機 FOV 拉回基準值（70）——平滑值與相機值一起歸零。
  *
- *  - 疾跑狀態歸零 → 不會有跨局的「雙擊 W 鎖存」殘留。
- *  - FOV 硬回到 `BASE_FOV`（70）→ 新局／讀檔不帶著上一局的疾跑視野。
- *  （模式切換只重置疾跑狀態：FOV 由下一幀的平滑自然回到 70。） */
-function resetSprintState(): void {
-  sprintState = createSprintState();
+ *  為什麼需要「硬重置」而不是靠下一幀的平滑：FOV 只在 `state === 'playing'`
+ *  的分支裡套用（主迴圈相機區），離開 playing（暫停選單／背包等覆蓋層／
+ *  死亡／標題）時那個分支根本不跑 → 平滑值不會收斂，凍結的世界會停在
+ *  ≈77° 的疾跑視野。凡是「離開 playing」或「切換模式」的路徑都要呼叫它。 */
+function resetCameraFov(): void {
   fovCurrent = BASE_FOV;
   gs.camera.fov = BASE_FOV;
   gs.camera.updateProjectionMatrix();
+}
+
+/** B2.1：疾跑狀態與 FOV 一起歸零（新局／讀檔／模式切換／死亡／回到標題）。
+ *
+ *  - 疾跑狀態歸零 → 不會有跨局／跨模式的「雙擊 W 鎖存」殘留。
+ *  - FOV 硬回到 `BASE_FOV`（70）→ 不帶著上一個情境的疾跑視野進新局／讀檔，
+ *    也不讓模式切換（只能從暫停選單觸發）時的凍結世界停在 ≈77°。 */
+function resetSprintAndFov(): void {
+  sprintState = createSprintState();
+  resetCameraFov();
 }
 
 // ---- Crafting state (Task 11) ----
@@ -693,9 +703,11 @@ bus.on('mode-changed', ({ mode }) => {
   modeStash = saveModeState(modeStash, currentMode, [...hotbar], vitals);
   currentMode = mode;
   input.setFlyEnabled(currentMode === 'creative'); // survival: force a landing
-  // B2.1：疾跑狀態歸零 → 跨模式不殘留「雙擊 W 鎖存」（創造模式切回生存時
-  // 不會莫名其妙地處於疾跑）。FOV 不在此硬重置：下一幀的平滑會自然回到 70。
-  sprintState = createSprintState();
+  // B2.1：疾跑狀態與 FOV 一起歸零 → 跨模式不殘留「雙擊 W 鎖存」（創造模式
+  // 切回生存時不會莫名其妙地處於疾跑），且 FOV 立刻回到 70。**必須硬重置**：
+  // 模式切換只能從暫停選單觸發（此時 state !== 'playing' → 主迴圈的 FOV
+  // 平滑分支不跑），不重置的話暫停選單背後的凍結世界會停在 ≈77°。
+  resetSprintAndFov();
   settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
@@ -933,6 +945,18 @@ function relockCanvas(): void {
 }
 
 function setState(next: GameState): void {
+  // B2.1：離開 playing 的這一刻要把疾跑「本幀/本情境」的暫存狀態收乾淨。
+  //  - `attackedThisFrame` 是「上一幀攻擊命中」的一次性旗標，只在 playing
+  //    分支被消費（下一幀的狀態機讀它）→ 跨狀態殘留會讓恢復後的第一幀用
+  //    一次陳舊的「攻擊」取消疾跑。（實務上 `input.clearActive()` 會清掉按鍵
+  //    → `no-forward` 已先取消，但那是副作用不是契約。）
+  //  - FOV 只在 playing 分支套用 → 離開時不拉回基準，暫停選單／背包等覆蓋層
+  //    背後的凍結世界會停在 ≈77° 的疾跑視野。
+  // （疾跑**狀態機**的重置不在這裡：各入口自己呼叫 `resetSprintAndFov()`。）
+  if (state === 'playing' && next !== 'playing') {
+    attackedThisFrame = false;
+    resetCameraFov();
+  }
   state = next;
   menus.hideAll();
   inv.close();
@@ -1489,7 +1513,7 @@ function quitToTitle(): void {
   resetPlayerToSpawn();
   // B2.1：標題畫面的環繞相機也用同一台相機 → 疾跑 FOV 必須在離開遊戲時
   // 歸零（否則標題畫面會停在 77° 的疾跑視野）。
-  resetSprintState();
+  resetSprintAndFov();
   setState('title');
 }
 
@@ -1563,7 +1587,7 @@ function startGame(): void {
   craftExcess = [];
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
-  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
+  resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
   sessionStarted = true;
   resetPlayerToSpawn();
@@ -1657,7 +1681,7 @@ function continueGame(payload: SavePayload): void {
   advancements = payload.advancements;
 
   clock.t = payload.time.t; // 4. time-of-day
-  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
+  resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   // Phase 3 Task 10: arm + start audio for the restored session (the Continue
   // click IS the gesture); ambience follows the restored time-of-day.
   audio.ensureStarted();
@@ -1677,7 +1701,7 @@ function continueGame(payload: SavePayload): void {
  *  cloud never carries voxel edits). Body = continueGame's entry tail only. */
 function continueFromCloud(): void {
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
-  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
+  resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
@@ -2111,9 +2135,10 @@ gs.renderer.setAnimationLoop(() => {
       if (v.hp < hpBeforeTick && v.hunger <= 0) deathCause = 'starve';
       setVitals(v); // repaint + emit only on an integer change (see setVitals)
       if (isPlayerDead(v) && state === 'playing') {
-        // B2.1：死亡＝這條命的疾跑狀態結束 → 鎖存清掉（重生不會莫名疾跑），
-        // FOV 回到 70（死亡畫面不會停在 77° 的疾跑視野）。
-        resetSprintState();
+        // B2.1：死亡＝這條命的疾跑狀態結束 → 鎖存清掉（重生不會莫名疾跑）。
+        // FOV 也一併拉回 70（死亡畫面不會停在 77° 的疾跑視野）；下面的
+        // `setState('dead')` 另有一道「離開 playing → FOV 回基準」的保險。
+        resetSprintAndFov();
         setState('dead'); // death screen + player-died emit + freeze (Task 10)
       }
     }
