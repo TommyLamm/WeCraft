@@ -14,7 +14,8 @@
  *  `src/player/physics.ts` 的 yaw 慣例一致 → 面前視角看得到玩家正面。
  *
  *  **比例**：模型原高 2.0 格，整體縮放 0.9 → 顯示高度 1.8 格，與玩家 hitbox
- *  同高（與生物模型的 `group.scale.setScalar(0.9)` 同一做法）。
+ *  同高（與生物模型的 `group.scale.setScalar(0.9)` 同一做法）；模型**腳底對齊**
+ *  `setPose` 傳入的腳底座標（`player.position`），不是眼睛高度 → 底面貼地。
  *
  *  **材質**：沿用 `src/render/scene.ts` 生物模型的扁平調色盤風格——純色
  *  `MeshLambertMaterial`（會受日光／環境光影響），**不**貼圖、不進紋理陣列。 */
@@ -24,7 +25,14 @@ import * as THREE from 'three';
 export interface PlayerModel {
   /** 模型根節點（已加入場景；幾何／材質由本模組擁有）。 */
   group: THREE.Group;
-  /** 把模型放到玩家腳下的位置並轉成玩家朝向（yaw 慣例：yaw=0 面向 −z）。
+  /** 把模型移到玩家的**腳底位置**並轉成玩家朝向（yaw 慣例：yaw=0 面向 −z）。
+   *
+   *  `feet` 指的是**腳底**（feet）座標——即 `src/player/physics.ts` 的
+   *  `player.position`（玩家腳底所在的那一點），**不是**眼睛高度
+   *  （`EYE_HEIGHT = 1.62` 的 `player.position.y + 1.62`）→ 模型底面貼合腳底、
+   *  頂端 = 腳底 + 1.8 格，與 `PLAYER_HEIGHT = 1.8` 的玩家 hitbox 同高。
+   *  若誤傳眼睛高度，模型會整個浮空 1.62 格。
+   *
    *  非有限值（NaN／±∞）視為 0，避免壞值擴散成 NaN 汙染場景。 */
   setPose(feet: { x: number; y: number; z: number }, yaw: number): void;
   /** 切換整個模型的可見性（第一人稱隱藏、第三身顯示）。初始值沿用 Three 預設

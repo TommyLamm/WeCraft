@@ -12,6 +12,23 @@ function triangleCount(geometry: THREE.BufferGeometry): number {
   return geometry.getAttribute('position').count / 3;
 }
 
+/** 盒子的尺寸參數（brief 部位表的 width／height／depth）。 */
+function boxSize(mesh: THREE.Mesh): { width: number; height: number; depth: number } {
+  const geo = mesh.geometry as THREE.BoxGeometry;
+  return { width: geo.parameters.width, height: geo.parameters.height, depth: geo.parameters.depth };
+}
+
+/** 平面貼片的尺寸參數（brief 部位表的 width／height）。 */
+function planeSize(mesh: THREE.Mesh): { width: number; height: number } {
+  const geo = mesh.geometry as THREE.PlaneGeometry;
+  return { width: geo.parameters.width, height: geo.parameters.height };
+}
+
+/** 材質顏色（hex）。 */
+function meshColor(mesh: THREE.Mesh): number {
+  return (mesh.material as THREE.MeshLambertMaterial).color.getHex();
+}
+
 describe('createPlayerModel', () => {
   it('the model is added to the scene with a head, a body, arms and legs', () => {
     const scene = new THREE.Scene();
@@ -71,6 +88,11 @@ describe('createPlayerModel', () => {
     expect(g.position.y).toBe(65);
     expect(g.position.z).toBe(2);
     expect(g.rotation.y).toBeCloseTo(Math.PI / 2, 10);
+    // 契約：`feet` 是**腳底**位置（`player.position`），不是眼睛高度（+1.62）
+    // → 模型底面貼合腳底、頂端 = 腳底 + 1.8 格（與玩家 hitbox `PLAYER_HEIGHT` 同高）
+    const box = new THREE.Box3().setFromObject(g);
+    expect(box.min.y).toBeCloseTo(65, 6);
+    expect(box.max.y).toBeCloseTo(66.8, 6);
   });
 
   it('setVisible toggles the whole group', () => {
@@ -91,7 +113,81 @@ describe('createPlayerModel', () => {
     expect(scene.children).toHaveLength(0);
   });
 
-  // ---- 以下釘住 brief Step 3 的明文行為（尺寸／貼片位置／效能預算） ----
+  // ---- 釘住 brief Step 3 的明文行為（尺寸／位置／顏色／效能預算） ----
+
+  it('the model stands 1.8 blocks tall with its feet on the ground', () => {
+    const scene = new THREE.Scene();
+    createPlayerModel(scene);
+    const g = scene.children[0] as THREE.Group;
+    // 量世界座標（group.scale 0.9 已套用）：腳底貼地（min.y = 0）、頭頂 = 1.8 格
+    const box = new THREE.Box3().setFromObject(g);
+    expect(box.min.y).toBeCloseTo(0, 6);
+    expect(box.max.y).toBeCloseTo(1.8, 6);
+    expect(box.max.y - box.min.y).toBeCloseTo(1.8, 6);
+  });
+
+  it('the head and the body match the brief sizes and positions', () => {
+    const scene = new THREE.Scene();
+    createPlayerModel(scene);
+    const g = scene.children[0] as THREE.Group;
+
+    // 頭：0.5×0.5×0.5、y 1.5–2.0（中心 1.75）
+    const head = g.getObjectByName('head') as THREE.Mesh;
+    expect(head.position.y).toBeCloseTo(1.75, 10);
+    expect(boxSize(head)).toEqual({ width: 0.5, height: 0.5, depth: 0.5 });
+    expect(head.scale.toArray()).toEqual([1, 1, 1]); // 尺寸來自幾何，不是部件縮放
+
+    // 身：0.5×0.75×0.25、y 0.75–1.5（中心 1.125）
+    const body = g.getObjectByName('body') as THREE.Mesh;
+    expect(body.position.y).toBeCloseTo(1.125, 10);
+    expect(boxSize(body)).toEqual({ width: 0.5, height: 0.75, depth: 0.25 });
+    expect(body.scale.toArray()).toEqual([1, 1, 1]);
+  });
+
+  it('the arms and the legs match the brief sizes and positions', () => {
+    const scene = new THREE.Scene();
+    createPlayerModel(scene);
+    const g = scene.children[0] as THREE.Group;
+
+    // 手臂：0.25×0.75×0.25、x = ±0.375、y 0.75–1.5（中心 1.125）
+    const armL = g.getObjectByName('armL') as THREE.Mesh;
+    const armR = g.getObjectByName('armR') as THREE.Mesh;
+    expect(armL.position.x).toBeCloseTo(0.375, 10);
+    expect(armL.position.y).toBeCloseTo(1.125, 10);
+    expect(armR.position.x).toBeCloseTo(-0.375, 10);
+    expect(armR.position.y).toBeCloseTo(1.125, 10);
+    for (const arm of [armL, armR]) {
+      expect(boxSize(arm)).toEqual({ width: 0.25, height: 0.75, depth: 0.25 });
+      expect(arm.scale.toArray()).toEqual([1, 1, 1]);
+    }
+
+    // 腿：0.25×0.75×0.25、x = ±0.125、y 0–0.75（中心 0.375）
+    const legL = g.getObjectByName('legL') as THREE.Mesh;
+    const legR = g.getObjectByName('legR') as THREE.Mesh;
+    expect(legL.position.x).toBeCloseTo(0.125, 10);
+    expect(legL.position.y).toBeCloseTo(0.375, 10);
+    expect(legR.position.x).toBeCloseTo(-0.125, 10);
+    expect(legR.position.y).toBeCloseTo(0.375, 10);
+    for (const leg of [legL, legR]) {
+      expect(boxSize(leg)).toEqual({ width: 0.25, height: 0.75, depth: 0.25 });
+      expect(leg.scale.toArray()).toEqual([1, 1, 1]);
+    }
+  });
+
+  it('every part uses the brief palette colors', () => {
+    const scene = new THREE.Scene();
+    createPlayerModel(scene);
+    const g = scene.children[0] as THREE.Group;
+    const part = (name: string): THREE.Mesh => g.getObjectByName(name) as THREE.Mesh;
+    // 膚色 0xc9915f：頭＋手臂；上衣 0x3f6fb5：身；褲子 0x35415c：腿；臉 0x2b1d12
+    expect(meshColor(part('head'))).toBe(0xc9915f);
+    expect(meshColor(part('armL'))).toBe(0xc9915f);
+    expect(meshColor(part('armR'))).toBe(0xc9915f);
+    expect(meshColor(part('body'))).toBe(0x3f6fb5);
+    expect(meshColor(part('legL'))).toBe(0x35415c);
+    expect(meshColor(part('legR'))).toBe(0x35415c);
+    expect(meshColor(part('face'))).toBe(0x2b1d12);
+  });
 
   it('the face patch sits on the front of the head, facing the player front', () => {
     const scene = new THREE.Scene();
@@ -99,6 +195,8 @@ describe('createPlayerModel', () => {
     const g = scene.children[0] as THREE.Group;
     const face = g.getObjectByName('face') as THREE.Mesh;
     expect(face).toBeInstanceOf(THREE.Mesh);
+    // 貼片尺寸 0.4×0.25
+    expect(planeSize(face)).toEqual({ width: 0.4, height: 0.25 });
     // 頭的 −z 面（半深 0.25）＋ 0.01 浮出量 → z = −0.26；y = 1.75（頭中央）
     expect(face.position.z).toBeCloseTo(-0.26, 10);
     expect(face.position.y).toBeCloseTo(1.75, 10);
