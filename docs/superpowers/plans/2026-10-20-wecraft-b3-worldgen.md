@@ -38,7 +38,7 @@
 
 | 檔案 | 既有測試 | 怎麼改（不得弱化） |
 |---|---|---|
-| `src/world/terrain.test.ts` | `'no trees on sand columns'` | → `'no tree grows on a sand column'`：種子 1337 的 64×64 範圍內有 **452 個沙柱**（沙漠＋海洋）→ 掃描式斷言不會空轉（Task 1 Step 5） |
+| `src/world/terrain.test.ts` | `'no trees on sand columns'` | → `'no tree grows on a sand column'`：種子 1337 在**出生區 64×64（世界座標 (0,0)–(63,63)）有 29 個沙柱** → 掃描式斷言不會空轉；**必須先斷言 `sandColumns > 0`**（守衛 `if (sandColumns === 0) return;` 另留）（Task 1 Step 5）。**（2026-10-20 複審修正）原寫的「452 個沙柱」不成立**：±2048 範圍內 4,225 個對齊 64×64 視窗的沙柱數 min 0／max 4,071，沒有任何一個是 452 |
 | `src/world/terrain.test.ts` | `'columns below sea level are filled with water'` | → `'every column below sea level is filled with water up to sea level'`：**改用 chunk (2,−2)**（種子 1337 該塊有 69 個 `h<62` 的柱、地面高度 60–63）；原用的 chunk (0,0) 全是陸地（0 個水柱）→ 斷言會變成空轉。**必須先斷言 `waterColumns > 0`**（Task 1 Step 5） |
 | `src/world/terrain.test.ts` | `'classifies the four biomes'`／`'uses strict thresholds'`／`'checks snow before forest'` | → 合併改寫成新的 `pickBiome({ height, temp, moist })` 判定測試（Task 2 Step 1）。**等號邊界必須補齊**（`temp = −0.24`／`temp = −0.12`／`moist = 0.20`／`moist = 0.00`／`h = 63`／`h = 64`／`h = 92`／`h = 91`），否則舊測試專測的「門檻等號落點」覆蓋會消失＝弱化 |
 | `src/world/terrain.test.ts` | `'matches generateChunk's noise construction exactly (deterministic)'` | 氣候場的頻率／層數變了 → 改用 `terrain-noise` 的 `temperature`／`moisture` 重算並比對 `biomeAt`（Task 2 Step 1） |
@@ -100,7 +100,7 @@
 
 - `temperature(x, z) = clim.fbm2(x * 0.002, z * 0.002, 3)`
 - `moisture(x, z) = clim.fbm2(x * 0.002 + 50, z * 0.002 + 50, 3)` —— **`+50` 是「縮放空間偏移」**：加在**乘過頻率之後**的座標上（沿用舊 `biomeNoise` 的 `x * 0.004 + 50` 寫法）。
-- **不可改成世界空間偏移** `fbm2((x + 50) * 0.002, …)`：實測那會讓 §4 的 8 生態面積比例跑掉（forest 19.3%（容差 12%–18%）、desert 0.5%（容差 4%–10%），其餘 6 項也偏移）；**只有縮放空間偏移能逐格重現 §4 的表格**（8 項面積比例全部 0.1% 內吻合）。
+- **不可改成世界空間偏移** `fbm2((x + 50) * 0.002, …)`：實測那會讓 §4 的生態面積比例跑掉——**實際位移的是 4 項**：forest **19.33%**（計畫 15.1%、容差 12%–18%）、desert **0.49%**（計畫 6.9%、容差 4%–10%）、birch_forest **10.41%**（計畫 7.6%、容差 5%–11%）、taiga **8.07%**（計畫 8.7%、容差 6%–12%）；ocean 33.39%／snowy_plains 7.66%／mountains 4.18% 幾乎不變、plains 16.47% 只差 0.03 個百分點。**只有縮放空間偏移能逐格重現 §4 的表格**（8 項面積比例全部在 0.04 個百分點內吻合）。
 - **grad noise 在格點恆為 0**（`src/core/noise.ts` 的 `noise2`：格點上 `xf = yf = 0` → 梯度項全為 0）→ 氣候場在「縮放後座標為整數」的格點上必然是 0（`x`、`z` 皆為 500 的倍數，含 `(0,0)`；實測 27 個格點取樣全部為 0）。**非格點則是正常值**（跨距取樣 65,536 點：temp ∈ [−0.698, 0.648]、moist ∈ [−0.679, 0.671]）。
 - **後續計畫／測試不得再把「整數格點上兩場不相等」釘成斷言**（例如 `expect(temperature(0, 0, s)).not.toBe(moisture(0, 0, s))` 必然失敗——那是噪音原語的性質，不是欄位性質）。Task 1 已把該斷言改在非格點取樣（`[0.5,0.5]`、`[37,53.5]`、`[123.25,-456.75]`、`[-2048.5,512.25]`）。
 
@@ -116,9 +116,11 @@ pv    = 1 - |3*|w| - 2|                                    // 原版 PV 公式
 relief = clamp01((0.15 - ero) / 0.30)                      // 0=平坦 1=崎嶇
 peak   = clamp01(pv)
 land   = clamp01((cont - (-0.107)) / 0.10)                 // 岸線以上才加起伏
-h      = 62 + 2 + splineDelta(cont) + land*relief*(8 + 40*peak)
+h      = 62 + BASE_LIFT + splineDelta(cont) + land*relief*(8 + 40*peak)
 h      = clamp(floor(h), 4, 246)
 ```
+
+（`BASE_LIFT = 2`：基準面在海平面之上 2 格——把原本的裸值 `2` 具名化，**數值不變**。）
 
 （2026-10-20 稽核修正：三個噪音層的實測幅度是 ±0.62／±0.70／±1.0，**原註解寫的 ±0.42／±0.42／±0.7 偏低**——會誤導實作者以為門檻過寬而往下調。對應的測試門檻見 Task 1 Step 1 的 `'the raw noise layers stay inside their expected range'`（±0.75）。）
 
@@ -328,6 +330,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - Consumes: `Noise`、`hash2`（`src/core/noise.ts`）。
 - Produces（後續任務依賴，名稱與簽名不得再改）：
   - `export const SEA_LEVEL = 62;`（terrain-noise 定義；`terrain.ts` 以 `export { SEA_LEVEL }` 轉出，既有 import 路徑不變）
+  - `export const BASE_LIFT = 2;`（基準抬升：基準面在海平面之上 2 格；高度公式裡原本的裸值 `2` 具名化，**數值不變**）
   - `export const CONT_FREQ = 0.001; export const CONT_OCTAVES = 3;`
   - `export const ERO_FREQ = 0.0022; export const ERO_OCTAVES = 3;`
   - `export const RIDGE_FREQ = 0.0045;`
@@ -381,7 +384,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
     const relief = clamp01((ERO_FLAT - ero) / ERO_SPAN);
     const peak = clamp01(pv);
     const land = clamp01((cont - CONT_SHORE) / LAND_SPAN);
-    const h = SEA_LEVEL + 2 + splineDelta(cont) + land * relief * (RELIEF_BASE + RELIEF_PEAK * peak);
+    const h = SEA_LEVEL + BASE_LIFT + splineDelta(cont) + land * relief * (RELIEF_BASE + RELIEF_PEAK * peak);
     return Math.max(4, Math.min(CHUNK_HEIGHT - 10, Math.floor(h)));
     ```
   - `splineDelta`：節點 `[-0.66,-34] [-0.45,-26] [-0.28,-17] [-0.107,-2] [0,3] [0.12,7] [0.28,11] [0.45,15]`，節點外夾端點；線性內插。
