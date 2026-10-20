@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stepPlayer, createPlayer, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
+import { stepPlayer, createPlayer, wallContactAngleDeg, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import { BLOCK } from '../world/blocks';
@@ -184,5 +184,58 @@ describe('stepPlayer', () => {
     z0 = p2.position.z;
     for (let i = 0; i < 60; i++) stepPlayer(p2, { ...groundInput, fwd: 1, sneak: true }, w, 1 / 60);
     expect(z0 - p2.position.z).toBeCloseTo(1.3, 5);
+  });
+});
+
+describe('wall contact angle — 撞牆夾角回報 (B2.1)', () => {
+  it('wallContactAngleDeg measures the angle between the movement and the wall face', () => {
+    // 語意：回傳「移動方向與『被擋住那面牆的表面』的夾角」→ 正面撞 = 90°、沿牆擦過 ≈ 0°
+    // （wiki：「Sprinting ends when the player collides with a solid block at an angle of
+    //   greater than 8 degrees」→ 正面撞（90°）取消疾跑、擦邊（<8°）不取消）。
+    // 被擋的軸是 'z' → 取 |dir.z|：z 分量越大＝越「正面」撞上 z 方向的牆。
+    expect(wallContactAngleDeg({ x: 0, z: -1 }, 'z')).toBeCloseTo(90, 5); // 正面撞 → 90°（>8° → 取消疾跑）
+    expect(wallContactAngleDeg({ x: 0.9987, z: -0.05 }, 'z')).toBeCloseTo(2.87, 1); // 擦邊（沿牆走）→ 2.87°（<8° → 不取消）
+    expect(wallContactAngleDeg({ x: 0.7071, z: -0.7071 }, 'z')).toBeCloseTo(45, 1); // 斜撞 → 45°
+  });
+
+  it('wallContactAngleDeg applies the same rule to the x axis', () => {
+    // 被擋的是 x 軸 → 取 |dir.x|：x 分量越大＝越「正面」撞上 x 方向的牆
+    expect(wallContactAngleDeg({ x: -1, z: 0 }, 'x')).toBeCloseTo(90, 5);
+    expect(wallContactAngleDeg({ x: -0.05, z: 0.9987 }, 'x')).toBeCloseTo(2.87, 1);
+  });
+
+  it('stepPlayer reports no wall angle on flat ground', () => {
+    const w = flatWorld();
+    const p = createPlayer(0.5, 70, 0.5);
+    for (let i = 0; i < 120; i++) stepPlayer(p, groundInput, w, 1 / 60);
+    expect(p.onGround).toBe(true);
+    const res = stepPlayer(p, { ...groundInput, fwd: 1 }, w, 1 / 60);
+    expect(res.wallAngleDeg).toBeNull();
+  });
+
+  it('running head on into a wall reports 90 degrees', () => {
+    const w = flatWorld();
+    // 在 z=-2 處建牆（高於地面）
+    for (let x = -4; x <= 4; x++)
+      for (let y = 65; y <= 68; y++) w.setBlock(x, y, -2, BLOCK.STONE);
+    const p = createPlayer(0.5, 65, 0.5);
+    let res = { wallAngleDeg: null as number | null };
+    for (let i = 0; i < 300 && res.wallAngleDeg === null; i++) {
+      res = stepPlayer(p, { ...groundInput, fwd: 1 }, w, 1 / 60);
+    }
+    expect(res.wallAngleDeg).toBeCloseTo(90, 5);
+  });
+
+  it('a diagonal wall collision reports about 45 degrees', () => {
+    const w = flatWorld();
+    // 同一面牆，改用斜向前進（fwd + strafe → 方向正規化為 45°）
+    for (let x = -4; x <= 4; x++)
+      for (let y = 65; y <= 68; y++) w.setBlock(x, y, -2, BLOCK.STONE);
+    const p = createPlayer(0.5, 65, 0.5);
+    let res = { wallAngleDeg: null as number | null };
+    for (let i = 0; i < 300 && res.wallAngleDeg === null; i++) {
+      res = stepPlayer(p, { ...groundInput, fwd: 1, strafe: 1 }, w, 1 / 60);
+    }
+    expect(res.wallAngleDeg).toBeCloseTo(45, 0);
   });
 });

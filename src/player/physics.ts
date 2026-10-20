@@ -1,3 +1,12 @@
+/** 玩家物理：位置積分、逐軸解碰撞、撞牆夾角回報。
+ *
+ *  **撞牆夾角語意（B2.1）**：物理層只回報「本次步進撞到方塊的角度」，**不做門檻
+ *  判斷**。原版 wiki Sprinting §Usage：「Sprinting ends when the player collides
+ *  with a solid block at an angle of greater than 8 degrees」→ 本層回報的角度是
+ *  「移動方向與『被擋住那面牆的表面』的夾角」：**正面撞＝90°、沿牆擦過≈0°**
+ *  （所以正面撞牆的角度大於沿牆擦過）。8° 門檻由 `src/player/sprint.ts` 判定
+ *  （`SPRINT_WALL_ANGLE_DEG`），不在此層。 */
+
 import type { World } from '../world/world';
 import { BLOCK } from '../world/blocks';
 
@@ -33,6 +42,28 @@ export interface MoveInput {
   fly: boolean;
   flyUp: boolean;
   flyDown: boolean;
+}
+
+/** 一次 `stepPlayer` 的結果（回傳全新物件，入參不被修改）。 */
+export interface StepResult {
+  /** 本次步進的最大撞牆夾角（度）；無撞牆為 null */
+  wallAngleDeg: number | null;
+}
+
+/** 移動方向與「被擋住那面牆的表面」的夾角（度）。
+ *
+ *  語意：**正面撞＝90°、沿牆擦過≈0°**（見檔頭註解）。`axis` 是「被擋住的那個
+ *  軸」：被擋的是 `z` 軸 → 牆面法線沿 z → 夾角由移動方向的 z 分量決定（z 分量
+ *  越大＝越正面撞上 z 方向的牆）；`x` 軸同理。
+ *
+ *  `dir` 應為**單位長度**的方向向量（`stepOnce` 內的 `dirX/dirZ` 即是）→ 該軸
+ *  分量的絕對值就是夾角的正弦值；非有限輸入回 0（不讓 NaN 滲出）、分量上限
+ *  截到 1（避免 `asin` 的定義域問題）。 */
+export function wallContactAngleDeg(dir: { x: number; z: number }, axis: 'x' | 'z'): number {
+  const component = axis === 'x' ? dir.x : dir.z;
+  if (!Number.isFinite(component)) return 0;
+  const c = Math.min(1, Math.abs(component));
+  return (Math.asin(c) * 180) / Math.PI;
 }
 
 export function createPlayer(x: number, y: number, z: number): PlayerState {
@@ -71,11 +102,19 @@ export function stepPlayer(
   input: MoveInput,
   world: World,
   dt: number,
-): void {
-  if (!Number.isFinite(dt)) return;
+): StepResult {
+  if (!Number.isFinite(dt)) return { wallAngleDeg: null };
   const steps = Math.max(1, Math.ceil(dt / MAX_SUBSTEP));
   const h = dt / steps;
-  for (let i = 0; i < steps; i++) stepOnce(p, input, world, h);
+  // 跨子步取最大撞牆夾角（任一子步撞到就回報；沒撞到 → null）
+  let wallAngleDeg: number | null = null;
+  for (let i = 0; i < steps; i++) {
+    const substepAngle = stepOnce(p, input, world, h);
+    if (substepAngle !== null && (wallAngleDeg === null || substepAngle > wallAngleDeg)) {
+      wallAngleDeg = substepAngle;
+    }
+  }
+  return { wallAngleDeg };
 }
 
 function stepOnce(
@@ -83,7 +122,7 @@ function stepOnce(
   input: MoveInput,
   world: World,
   dt: number,
-): void {
+): number | null {
   // 水檢查（腳或頭）
   const feetId = world.getBlock(Math.floor(p.position.x), Math.floor(p.position.y + 0.1), Math.floor(p.position.z));
   const headId = world.getBlock(Math.floor(p.position.x), Math.floor(p.position.y + 1.6), Math.floor(p.position.z));
@@ -142,9 +181,21 @@ function stepOnce(
   }
 
   // 逐軸移動 + 解碰撞
-  moveAxis(p, world, 'x', p.velocity.x * dt);
-  moveAxis(p, world, 'z', p.velocity.z * dt);
+  const blockedX = moveAxis(p, world, 'x', p.velocity.x * dt);
+  const blockedZ = moveAxis(p, world, 'z', p.velocity.z * dt);
   moveAxis(p, world, 'y', p.velocity.y * dt);
+
+  // 撞牆夾角：只算水平兩軸（y 軸被擋＝站在地上／撞到天花板，不是牆）。
+  // 兩軸都被擋＝撞到角落 → 取較大的那一個角度。
+  // dirX/dirZ 是移動方向（輸入層的 fwd/strafe 只會是 -1/0/1 → 非零方向正規化後
+  // 長度為 1）→ 分量的絕對值就是夾角的正弦值；角度與速度無關。
+  let wallAngleDeg: number | null = null;
+  if (blockedX) wallAngleDeg = wallContactAngleDeg({ x: dirX, z: dirZ }, 'x');
+  if (blockedZ) {
+    const angle = wallContactAngleDeg({ x: dirX, z: dirZ }, 'z');
+    wallAngleDeg = wallAngleDeg === null ? angle : Math.max(wallAngleDeg, angle);
+  }
+  return wallAngleDeg;
 }
 
 function moveAxis(
@@ -152,14 +203,14 @@ function moveAxis(
   world: World,
   axis: 'x' | 'y' | 'z',
   delta: number,
-): void {
-  if (delta === 0) return;
+): boolean {
+  if (delta === 0) return false;
   const pos = p.position;
   pos[axis] += delta;
 
   if (!boxCollides(world, pos.x, pos.y, pos.z)) {
     if (axis === 'y') p.onGround = false;
-    return;
+    return false;
   }
 
   // 推回：沿軸退回直到不重疊（0.01 粒度）
@@ -188,4 +239,5 @@ function moveAxis(
   } else {
     p.velocity[axis] = 0;
   }
+  return true; // 被方塊擋下
 }
