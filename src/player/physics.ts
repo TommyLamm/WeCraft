@@ -1,11 +1,24 @@
-/** 玩家物理：位置積分、逐軸解碰撞、撞牆夾角回報。
+/** 玩家物理：位置積分、逐軸解碰撞、撞牆夾角回報、潛行防摔邊。
  *
  *  **撞牆夾角語意（B2.1）**：物理層只回報「本次步進撞到方塊的角度」，**不做門檻
  *  判斷**。原版 wiki Sprinting §Usage：「Sprinting ends when the player collides
  *  with a solid block at an angle of greater than 8 degrees」→ 本層回報的角度是
  *  「移動方向與『被擋住那面牆的表面』的夾角」：**正面撞＝90°、沿牆擦過≈0°**
  *  （所以正面撞牆的角度大於沿牆擦過）。8° 門檻由 `src/player/sprint.ts` 判定
- *  （`SPRINT_WALL_ANGLE_DEG`），不在此層。 */
+ *  （`SPRINT_WALL_ANGLE_DEG`），不在此層。
+ *
+ *  **潛行防摔邊語意（B2.3）**：潛行**且著地**時，若水平位移會讓腳下失去支撐，就
+ *  **取消該軸位移**（x／z 各自獨立判斷）。語意對應 minecraft.wiki/Sneaking
+ *  §Effects：「Players are prevented from walking off edges … as long as they are
+ *  up to 0.6 blocks above the ground」，以及 spec §B2.3。
+ *
+ *  本批**兩處刻意簡化**（與原版的差異，勿誤讀為原版行為）：
+ *  ① 支撐判定只看「腳下正下方（玩家中心點）一格」（`supportedAt`）；原版以
+ *     **整個 hitbox 是否仍被支撐**判定 → 本批中心點不越過方塊邊界，原版可讓身體
+ *     探出邊緣約半個身位。
+ *  ② **不做** step_height 0.6 的高度差判斷，也**不做**「離地 0.6 格內仍受保護」。
+ *  起跳後（離地）保護即解除 → 可跳離邊緣（對應 wiki「can still dismount blocks
+ *  while sneaking by jumping over the block's edge」）。 */
 
 import type { World } from '../world/world';
 import { BLOCK } from '../world/blocks';
@@ -76,6 +89,16 @@ export function createPlayer(x: number, y: number, z: number): PlayerState {
     flying: false,
     inWater: false,
   };
+}
+
+/** 「腳下正下方」是否為實心方塊（純查詢，不改任何狀態）。
+ *
+ *  潛行防摔邊的支撐判定：只看玩家**中心點正下方那一格**——`floor(feetY - 0.05)`
+ *  → 腳底所在那一層（站在 y=64 方塊上時 feetY=65 → 查 y=64 那一格）。
+ *  非有限座標一律回 false（不讓 NaN 滲出成「有支撐」）。 */
+export function supportedAt(world: World, feetX: number, feetY: number, feetZ: number): boolean {
+  if (!Number.isFinite(feetX) || !Number.isFinite(feetY) || !Number.isFinite(feetZ)) return false;
+  return world.isSolid(Math.floor(feetX), Math.floor(feetY - 0.05), Math.floor(feetZ));
 }
 
 /** 玩家 AABB 是否與實心方塊重疊 */
@@ -181,8 +204,11 @@ function stepOnce(
   }
 
   // 逐軸移動 + 解碰撞
-  const blockedX = moveAxis(p, world, 'x', p.velocity.x * dt);
-  const blockedZ = moveAxis(p, world, 'z', p.velocity.z * dt);
+  // 潛行防摔邊（B2.3）：只有「潛行 ＋ 著地 ＋ 非飛行 ＋ 非水中」才啟用保護。
+  // 起跳時上面的 jump 分支已把 onGround 清成 false → 保護解除 → 可跳離邊緣。
+  const guardSneakEdge = input.sneak && p.onGround && !p.flying && !p.inWater;
+  const blockedX = moveAxis(p, world, 'x', p.velocity.x * dt, guardSneakEdge);
+  const blockedZ = moveAxis(p, world, 'z', p.velocity.z * dt, guardSneakEdge);
   moveAxis(p, world, 'y', p.velocity.y * dt);
 
   // 撞牆夾角：只算水平兩軸（y 軸被擋＝站在地上／撞到天花板，不是牆）。
@@ -198,14 +224,26 @@ function stepOnce(
   return wallAngleDeg;
 }
 
+/** 沿單軸移動並解碰撞；回傳「是否被方塊擋下」。
+ *
+ *  `guardSneakEdge`（潛行防摔邊，B2.3）只作用於水平軸：位移前先算候選位置，若
+ *  候選位置「腳下正下方」沒有支撐（`supportedAt`）就**取消該軸位移**——位置與
+ *  速度都不變（仍可繼續輸入，會反覆被擋）。回傳 false：潛行取消位移**不是**撞牆，
+ *  不能走撞牆夾角回報路徑（否則會誤觸疾跑取消）。 */
 function moveAxis(
   p: PlayerState,
   world: World,
   axis: 'x' | 'y' | 'z',
   delta: number,
+  guardSneakEdge = false,
 ): boolean {
   if (delta === 0) return false;
   const pos = p.position;
+  if (guardSneakEdge && axis !== 'y') {
+    const candidateX = axis === 'x' ? pos.x + delta : pos.x;
+    const candidateZ = axis === 'z' ? pos.z + delta : pos.z;
+    if (!supportedAt(world, candidateX, pos.y, candidateZ)) return false; // 取消該軸位移
+  }
   pos[axis] += delta;
 
   if (!boxCollides(world, pos.x, pos.y, pos.z)) {

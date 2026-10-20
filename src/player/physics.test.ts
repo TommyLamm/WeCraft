@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stepPlayer, createPlayer, wallContactAngleDeg, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
+import { stepPlayer, createPlayer, wallContactAngleDeg, supportedAt, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import { BLOCK } from '../world/blocks';
@@ -237,5 +237,53 @@ describe('wall contact angle — 撞牆夾角回報 (B2.1)', () => {
       res = stepPlayer(p, { ...groundInput, fwd: 1, strafe: 1 }, w, 1 / 60);
     }
     expect(res.wallAngleDeg).toBeCloseTo(45, 0);
+  });
+});
+
+/** 小平台：y=64 上的 3×3 石頭板（方塊 x,z ∈ [0,2] → 邊界在 x=3／z=3） */
+function platformWorld(): World {
+  const w = new World();
+  for (let x = 0; x < 3; x++) for (let z = 0; z < 3; z++) w.setBlock(x, 64, z, BLOCK.STONE);
+  return w;
+}
+
+describe('sneak edge protection — 潛行防摔邊 (B2.3)', () => {
+  it('sneaking keeps the player from walking off the edge', () => {
+    const w = platformWorld();
+    const p = createPlayer(2.5, 65, 1.5); // 站在 x=2 這塊板的右緣（中心點在板上）
+    for (let i = 0; i < 60; i++) stepPlayer(p, { ...groundInput, sneak: true, strafe: 1 }, w, 1 / 60);
+    expect(p.position.x).toBeLessThan(3.0); // 中心點沒走出這塊板（身體可探出邊緣）
+    expect(p.position.x).toBeGreaterThan(2.9);
+    expect(p.position.y).toBeCloseTo(65, 5); // 沒有掉下去
+    expect(p.onGround).toBe(true);
+  });
+
+  it('walking without sneak falls off the edge', () => {
+    const w = platformWorld();
+    const p = createPlayer(2.5, 65, 1.5);
+    for (let i = 0; i < 60; i++) stepPlayer(p, { ...groundInput, strafe: 1 }, w, 1 / 60);
+    expect(p.position.y).toBeLessThan(64);
+  });
+
+  it('jumping while sneaking still leaves the edge', () => {
+    const w = platformWorld();
+    const p = createPlayer(2.5, 65, 1.5);
+    for (let i = 0; i < 60; i++) stepPlayer(p, { ...groundInput, sneak: true, strafe: 1, jump: true }, w, 1 / 60);
+    expect(p.position.x).toBeGreaterThan(3.0);
+  });
+
+  it('supportedAt reports the platform and the void', () => {
+    const w = platformWorld();
+    expect(supportedAt(w, 1.5, 65, 1.5)).toBe(true);
+    expect(supportedAt(w, 3.5, 65, 1.5)).toBe(false);
+  });
+
+  it('sneaking at the edge does not report a wall angle', () => {
+    // 潛行「取消位移」不是撞牆 → 不得走撞牆夾角回報路徑（否則會誤觸疾跑取消）
+    const w = platformWorld();
+    const p = createPlayer(2.5, 65, 1.5);
+    let res = { wallAngleDeg: null as number | null };
+    for (let i = 0; i < 60; i++) res = stepPlayer(p, { ...groundInput, sneak: true, strafe: 1 }, w, 1 / 60);
+    expect(res.wallAngleDeg).toBeNull();
   });
 });
