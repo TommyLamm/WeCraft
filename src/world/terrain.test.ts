@@ -264,10 +264,24 @@ describe('pickBiome', () => {
   });
 
   it('the biome order gives the earlier rule priority', () => {
-    // 高度優先於氣候：山頂就算很冷也是高山
-    expect(pickBiome({ height: 100, temp: -0.30, moist: 0 })).toBe('mountains');
-    // 海洋優先於沙漠：海裡就算又熱又乾也是海洋
+    // 規則 1（海洋）優先於氣候規則：海裡就算很冷或又熱又乾也是海洋
+    expect(pickBiome({ height: 50, temp: -0.30, moist: 0.2 })).toBe('ocean');
     expect(pickBiome({ height: 50, temp: 0.3, moist: -0.3 })).toBe('ocean');
+    // 規則 2（高山）優先於氣候規則：山頂就算很冷或又熱又乾也是高山
+    expect(pickBiome({ height: 100, temp: -0.30, moist: 0 })).toBe('mountains');
+    expect(pickBiome({ height: 100, temp: 0.3, moist: -0.3 })).toBe('mountains');
+    // 規則 3（雪原）優先於規則 4（針葉林）：同樣「冷」，雪原的門檻更嚴
+    expect(pickBiome({ height: 70, temp: -0.30, moist: 0.3 })).toBe('snowy_plains');
+    // 規則 4（針葉林）優先於規則 6／7（白樺林／森林）：又冷又濕時是針葉林，
+    // 不是白樺林（moist 0.30 > 0.20）也不是森林（moist 0.09 > 0）
+    expect(pickBiome({ height: 70, temp: -0.16, moist: 0.30 })).toBe('taiga');
+    expect(pickBiome({ height: 70, temp: -0.16, moist: 0.09 })).toBe('taiga');
+    // 規則 6（白樺林）優先於規則 7（森林）：同一條濕度門檻，更濕的是白樺林
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.21 })).toBe('birch_forest');
+    // 其餘的規則對互斥、不可能同時成立 → 沒有「誰優先」的組合可測：
+    //   規則 1 vs 2（h ≤ 63 與 h ≥ 92）、規則 4 vs 5（temp < −0.12 與 temp > 0.08）、
+    //   規則 5 vs 6／7（moist < −0.08 與 moist > 0.20／> 0）。
+    //   這三對的「其中一條會命中」已由上面的案例與門檻案例覆蓋。
   });
 });
 
@@ -310,19 +324,50 @@ describe('biomeAt', () => {
   });
 
   it('the surface material matches the biome table', () => {
+    // 取樣必須涵蓋多種生態與多種材質，否則這條案例抓不到回歸：
+    // 舊的硬編碼分支（desert → SAND、snow → SNOW、其餘 → GRASS）會把 ocean
+    // 的沙灘判成草地，而只要取樣全是 plains，那個錯誤就不會被看見。
+    //
+    // 取樣區塊（種子 1337，審查者實測的生態分佈）：
+    //   (0,0) plains｜(3,1) plains＋desert｜(4,1) desert＋ocean（沙灘）｜
+    //   (0,4) snowy_plains＋taiga（雪與草）
     const seed = 1337;
-    const c = generateChunk(0, 0, seed);
+    const chunks: Array<[number, number]> = [
+      [0, 0],
+      [3, 1],
+      [4, 1],
+      [0, 4],
+    ];
+    const biomes = new Set<Biome>();
+    const surfaces = new Set<number>();
     let checked = 0;
-    for (let lz = 0; lz < CHUNK_SIZE; lz += 5) {
-      for (let lx = 0; lx < CHUNK_SIZE; lx += 5) {
-        const y = topTerrainY(c, lx, lz);
-        const id = c[chunkIndex(lx, y, lz)];
-        const h = surfaceHeight(lx, lz, seed);
-        expect(id).toBe(surfaceBlockOf(biomeAt(lx, lz, seed), h));
-        checked++;
+    for (const [cx, cz] of chunks) {
+      const c = generateChunk(cx, cz, seed);
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const y = topTerrainY(c, lx, lz);
+          const id = c[chunkIndex(lx, y, lz)];
+          const wx = cx * CHUNK_SIZE + lx;
+          const wz = cz * CHUNK_SIZE + lz;
+          const h = surfaceHeight(wx, wz, seed);
+          const biome = biomeAt(wx, wz, seed);
+          // 表層（y === h）與表層以下（y === h − 1）都要符合 §4 的材質表
+          expect(id).toBe(surfaceBlockOf(biome, h));
+          expect(c[chunkIndex(lx, h - 1, lz)]).toBe(subsurfaceBlockOf(biome));
+          biomes.add(biome);
+          surfaces.add(id);
+          checked++;
+        }
       }
     }
     expect(checked).toBeGreaterThan(0);
+    // 守衛：取樣必須真的涵蓋多種生態與多種材質，否則這個案例會變成空轉
+    // （例如日後地形的氣候塊換位置 → 只剩一種生態 → 回歸抓不到）。
+    expect(biomes.size).toBeGreaterThanOrEqual(3);
+    expect([...biomes].some((b) => b !== 'plains')).toBe(true);
+    expect(surfaces.has(BLOCK.SAND)).toBe(true); // ocean／desert
+    expect(surfaces.has(BLOCK.SNOW)).toBe(true); // snowy_plains
+    expect(surfaces.has(BLOCK.GRASS)).toBe(true); // plains／forest／taiga
   });
 });
 

@@ -3,8 +3,9 @@
  *  so walking from plains into desert/forest/snowy_plains subtly recolors the
  *  haze and the horizon. `main.ts` samples the biome every 0.5 s and passes
  *  the tinted colors to `scene.setDayNight` (fog + background).
- *  B3 Task 2: the table grew from 4 to 8 biomes (the new ids are the ones
- *  `biomeAt` reports: ocean / birch_forest / taiga / snowy_plains / mountains). */
+ *  B3 Task 2：霧色表由 4 種擴到 8 種（新增的 id 是 `biomeAt` 會回報的
+ *  ocean／birch_forest／taiga／snowy_plains／mountains；舊的 `snow` 改名為
+ *  `snowy_plains`，色值沿用 0xe8f4ff）。 */
 
 import { lerpColor } from './daynight';
 import type { Biome } from '../world/terrain';

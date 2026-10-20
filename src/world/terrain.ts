@@ -83,11 +83,13 @@ export function pickBiome(params: { height: number; temp: number; moist: number 
 }
 
 /**
- * 表層方塊（y === 地表高度）。
+ * 表層方塊表（`Record<Biome, number>` 窮舉 → 新增生態時編譯器會強制補列）。
  *
- * 對應原版的「地表覆蓋層」：海洋與沙漠是沙、雪原是雪、高山依高度由草 → 裸岩 →
- * 雪頂，其餘陸地是草。`Record<Biome, number>` 是窮舉型別 → 新增生態時編譯器
- * 會強制補列。
+ * 對應原版的「地表覆蓋層」：海洋與沙漠是沙、雪原是雪、其餘陸地是草。
+ *
+ * `mountains` 這一列是**山體最低段**（92 ≤ h < 104 的草坡）；高山的另外兩段
+ * （104 ≤ h < 112 裸岩、h ≥ 112 雪頂）由 `surfaceBlockOf` 依地表高度覆寫 →
+ * 這一列的值不會直接被回傳（見該函式的分層邏輯與 §4 的表）。
  */
 const SURFACE_BLOCK: Record<Biome, number> = {
   ocean: BLOCK.SAND,
@@ -97,14 +99,20 @@ const SURFACE_BLOCK: Record<Biome, number> = {
   taiga: BLOCK.GRASS,
   snowy_plains: BLOCK.SNOW,
   desert: BLOCK.SAND,
-  mountains: BLOCK.GRASS,
+  mountains: BLOCK.GRASS, // 山體最低段（草坡）；裸岩與雪頂見 `surfaceBlockOf`
 };
 
-/** 表層方塊：回傳 `y === 地表高度` 那一格該放的方塊 id。 */
+/**
+ * 表層方塊：回傳 `y === 地表高度` 那一格該放的方塊 id。
+ *
+ * 高山是唯一依高度分層的生態（§4）：92 ≤ h < 104 草坡、104 ≤ h < 112 裸岩、
+ * h ≥ 112 雪頂 → 高山在這裡單獨處理，其餘生態查 `SURFACE_BLOCK`。
+ */
 export function surfaceBlockOf(biome: Biome, height: number): number {
   if (biome === 'mountains') {
     if (height >= MOUNTAIN_SNOW_HEIGHT) return BLOCK.SNOW;
     if (height >= MOUNTAIN_STONE_HEIGHT) return BLOCK.STONE;
+    return BLOCK.GRASS; // 92 ≤ h < 104：草坡
   }
   return SURFACE_BLOCK[biome];
 }
@@ -127,6 +135,23 @@ export function subsurfaceBlockOf(biome: Biome): number {
 }
 
 /**
+ * 一個世界柱的生物群系：地表高度 ＋ 氣候場 → `pickBiome`。
+ *
+ * 三個取樣點（`biomeAt`／`generateChunk`／`plantTrees`）都走這裡 → 同一個座標
+ * 在任何地方都得到同一個生態（地表材質、F3 的 `Biome:` 與霧色才會一致）。
+ *
+ * `height` 由呼叫端帶入（`surfaceHeight` 有逐欄位快取，重算也不會變慢，但帶入
+ * 可讓呼叫端少算一次、也讓「判定用的高度就是生成用的高度」這件事更明顯）。
+ */
+function biomeOfColumn(x: number, z: number, seed: number, height: number): Biome {
+  return pickBiome({
+    height,
+    temp: temperature(x, z, seed),
+    moist: moisture(x, z, seed),
+  });
+}
+
+/**
  * 某個世界座標的生物群系。
  *
  * 氣候場（`temperature`／`moisture`）與高度一律取自 `terrain-noise.ts`
@@ -137,8 +162,7 @@ export function subsurfaceBlockOf(biome: Biome): number {
  * 0.5 秒呼叫一次。
  */
 export function biomeAt(x: number, z: number, seed: number): Biome {
-  const h = surfaceHeight(x, z, seed);
-  return pickBiome({ height: h, temp: temperature(x, z, seed), moist: moisture(x, z, seed) });
+  return biomeOfColumn(x, z, seed, surfaceHeight(x, z, seed));
 }
 
 export function generateChunk(cx: number, cz: number, seed: number): Uint8Array {
@@ -156,9 +180,7 @@ export function generateChunk(cx: number, cz: number, seed: number): Uint8Array 
       const h = surfaceHeight(wx, wz, seed);
 
       // 生物群系取樣：與 `biomeAt` 同一條路徑（terrain-noise 的氣候場）
-      const temp = temperature(wx, wz, seed);
-      const moist = moisture(wx, wz, seed);
-      const biome = pickBiome({ height: h, temp, moist });
+      const biome = biomeOfColumn(wx, wz, seed, h);
 
       for (let y = 0; y < CHUNK_HEIGHT; y++) {
         let id: number = BLOCK.AIR;
@@ -205,14 +227,10 @@ function plantTrees(data: Uint8Array, cx: number, cz: number, seed: number): voi
       if (h % 100 >= 6) continue;
 
       const ground = surfaceHeight(wx, wz, seed);
-      if (ground <= SEA_LEVEL + 1) continue; // 海洋（含沙灘）不長樹
+      if (ground <= OCEAN_MAX_HEIGHT) continue; // 海洋（含沙灘）不長樹
 
       // 生物群系取樣與 `generateChunk`／`biomeAt` 同一條路徑（terrain-noise 的氣候場）
-      const biome = pickBiome({
-        height: ground,
-        temp: temperature(wx, wz, seed),
-        moist: moisture(wx, wz, seed),
-      });
+      const biome = biomeOfColumn(wx, wz, seed, ground);
       if (biome === 'desert') continue; // 沙漠不長樹
 
       const trunkH = 4 + (h % 3);
