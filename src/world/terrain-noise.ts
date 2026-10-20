@@ -28,6 +28,10 @@ import { CHUNK_HEIGHT } from './chunk';
 /** 海平面（原版 Y=62：空氣在 Y=62 以下會被水取代）。既有 import 路徑不變。 */
 export const SEA_LEVEL = 62;
 
+/** 基準抬升：高度公式的起點是「海平面 + 2 格」——基準面在海平面之上 2 格，
+ *  讓近內陸（continentalness ≈ 0）的陸地高出水面幾格、不會整片貼著水線。 */
+export const BASE_LIFT = 2;
+
 /** continentalness（大陸度）取樣頻率／層數。 */
 export const CONT_FREQ = 0.001;
 export const CONT_OCTAVES = 3;
@@ -110,8 +114,18 @@ export function terrainNoises(seed: number): TerrainNoises {
  * 快取就是每塊數千次欄位計算，8 ms/區塊的預算會直接爆掉。
  */
 class ColumnCache {
-  /** 單一種子的欄位數上限：遊戲跑久了欄位數無上限會讓記憶體無限成長，
-   * 超過上限就整批清掉（重算成本遠低於無限成長的記憶體壓力）。 */
+  /**
+   * 每個「欄位層 × seed」的欄位數上限。
+   *
+   * 上限與淘汰策略（實測：30 萬個不重複欄位跑完後 heapUsed 成長約 62 MB，
+   * 之後維持平不再上升 → **記憶體是有界的，不會無限成長**）：
+   * - 上限：250,000 欄／層／seed。本模組共 6 層（cont／ero／pv／height／temp／
+   *   moist），每個 seed 的合計上限約 150 萬欄（約 60 MB）。
+   * - 淘汰：**整層清空**（該 seed 該欄位層的所有欄位一次清掉），不是 LRU。
+   *   觸發時機是「寫入第 250,001 欄的那一刻」→ 該欄位自己會被重新算一次。
+   * - 清空只影響效能、不影響結果（同一座標重算的值完全相同，見
+   *   `terrain-noise.test.ts` 的確定性斷言）。
+   */
   private static readonly CAP = 250_000;
 
   private readonly layers = new Map<number, { columns: Map<number, Map<number, number>>; count: number }>();
@@ -218,6 +232,8 @@ export function peaksAndValleys(x: number, z: number, seed: number): number {
  * h      = 62 + 2 + splineDelta(cont) + land · relief · (8 + 40 · peak)
  * h      = clamp(floor(h), 4, 246)
  * ```
+ *
+ * （`62 + 2` 的 `2` 是具名的 `BASE_LIFT`＝基準面在海平面之上 2 格。）
  */
 export function surfaceHeight(x: number, z: number, seed: number): number {
   const hit = heightCache.get(seed, x, z);
@@ -228,7 +244,7 @@ export function surfaceHeight(x: number, z: number, seed: number): number {
   const relief = clamp01((ERO_FLAT - ero) / ERO_SPAN);
   const peak = clamp01(pv);
   const land = clamp01((cont - CONT_SHORE) / LAND_SPAN);
-  const h = SEA_LEVEL + 2 + splineDelta(cont) + land * relief * (RELIEF_BASE + RELIEF_PEAK * peak);
+  const h = SEA_LEVEL + BASE_LIFT + splineDelta(cont) + land * relief * (RELIEF_BASE + RELIEF_PEAK * peak);
   const value = Math.max(4, Math.min(CHUNK_HEIGHT - 10, Math.floor(h)));
   heightCache.set(seed, x, z, value);
   return value;

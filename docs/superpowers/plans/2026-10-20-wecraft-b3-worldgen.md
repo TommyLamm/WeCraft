@@ -93,8 +93,16 @@
 - continentalness → `CONT_FREQ = 0.001`（波長約 1000 格）的 3 層 fbm，經**分段線性 spline** 映射到「離海平面的高度差」；岸線的大陸度門檻取 `SHORE_CONT = -0.107`（實測約 30% 面積落在其下 → 水域 29%）。
 - erosion → `ERO_FREQ = 0.0022` 的 3 層 fbm；`relief = clamp01((0.15 − ero) / 0.30)`，侵蝕越高越平坦（與原版「erosion 高 → 地形平」一致）。
 - weirdness → `RIDGE_FREQ = 0.0045` 的單層 noise2，套用原版 PV 公式 `1 − |3·|w| − 2|`；`peak = clamp01(PV)` 決定山脊高度。
-- temperature／humidity → `CLIM_FREQ = 0.002` 的 3 層 fbm（氣候鹽值沿用舊的 `seed ^ 0x9e3779b9`，但頻率由 0.004 改 0.002、層數由 2 改 3，讓生態塊更大）。
+- temperature／humidity → `CLIM_FREQ = 0.002` 的 3 層 fbm（氣候鹽值沿用舊的 `seed ^ 0x9e3779b9`，但頻率由 0.004 改 0.002、層數由 2 改 3，讓生態塊更大）。**取樣形式已於 Task 1 定案（後續不可再改，見下方子條）**。
 - depth → **不實作**（洞穴生態本輪不做，維持單一噪音門檻）。
+
+**氣候場的取樣形式（Task 1 定案，後續任務一律照抄）**：
+
+- `temperature(x, z) = clim.fbm2(x * 0.002, z * 0.002, 3)`
+- `moisture(x, z) = clim.fbm2(x * 0.002 + 50, z * 0.002 + 50, 3)` —— **`+50` 是「縮放空間偏移」**：加在**乘過頻率之後**的座標上（沿用舊 `biomeNoise` 的 `x * 0.004 + 50` 寫法）。
+- **不可改成世界空間偏移** `fbm2((x + 50) * 0.002, …)`：實測那會讓 §4 的 8 生態面積比例跑掉（forest 19.3%（容差 12%–18%）、desert 0.5%（容差 4%–10%），其餘 6 項也偏移）；**只有縮放空間偏移能逐格重現 §4 的表格**（8 項面積比例全部 0.1% 內吻合）。
+- **grad noise 在格點恆為 0**（`src/core/noise.ts` 的 `noise2`：格點上 `xf = yf = 0` → 梯度項全為 0）→ 氣候場在「縮放後座標為整數」的格點上必然是 0（`x`、`z` 皆為 500 的倍數，含 `(0,0)`；實測 27 個格點取樣全部為 0）。**非格點則是正常值**（跨距取樣 65,536 點：temp ∈ [−0.698, 0.648]、moist ∈ [−0.679, 0.671]）。
+- **後續計畫／測試不得再把「整數格點上兩場不相等」釘成斷言**（例如 `expect(temperature(0, 0, s)).not.toBe(moisture(0, 0, s))` 必然失敗——那是噪音原語的性質，不是欄位性質）。Task 1 已把該斷言改在非格點取樣（`[0.5,0.5]`、`[37,53.5]`、`[123.25,-456.75]`、`[-2048.5,512.25]`）。
 
 ### 3. 本批的高度公式與實測分佈（數字已釘死）
 
@@ -354,7 +362,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
     種子 4242：`(0,0) → 71`、`(8,8) → 70`、`(16,16) → 68`、`(100,50) → 68`、`(-37,220) → 94`。
   - `'surfaceHeight is deterministic and inside the world bounds'`：同一點兩次呼叫相等；所有取樣點的高度 ∈ [4, 246]（不得超出 0–255 的現行世界）。
   - `'the height formula keeps the sea level at 62'`：`expect(SEA_LEVEL).toBe(62)`；`'a column below sea level is water'` 由 Task 2 的 terrain 測試負責，這裡只釘 `SEA_LEVEL`。
-  - `'temperature and moisture are independent fields'`：`expect(temperature(0, 0, 1337)).not.toBe(moisture(0, 0, 1337))`；兩者皆為有限數。
+  - `'temperature and moisture are independent fields'`：**（2026-10-20 Task 1 審查修正）原寫的 `expect(temperature(0, 0, 1337)).not.toBe(moisture(0, 0, 1337))` 不可實作**——grad noise 在格點恆為 0，而氣候場在 `(0,0)` 正好落在格點上 → 兩者必然都是 0（理由見 §2〈氣候場的取樣形式〉）。改為**非格點取樣**（`[0.5,0.5]`、`[37,53.5]`、`[123.25,-456.75]`、`[-2048.5,512.25]`）逐一斷言 `t !== m` 且兩者皆為有限數；另外把「格點上兩者皆為 0」這個原語性質一併釘住（`expect(temperature(0, 0, 1337)).toBe(0)`、`expect(moisture(0, 0, 1337)).toBe(0)`）。**後續計畫不得再把整數格點的不等式釘成測試。**
 
 - [ ] **Step 2: 跑測試確認失敗**
 
@@ -363,7 +371,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - [ ] **Step 3: 實作 `src/world/terrain-noise.ts`**
 
   - 鹽值（固定，寫死在模組內）：continentalness `seed ^ 0x2545f491`、erosion `seed ^ 0x7feb352d`、ridges `seed ^ 0x846ca68b`、氣候 `seed ^ 0x9e3779b9`（**氣候沿用舊 biome 噪音的鹽值**，只是頻率／層數改變）。
-  - 取樣偏移（固定）：erosion `+37.13`、ridges `+91.31`；氣候的濕度場用 `+50` 偏移（沿用舊實作）。
+  - 取樣偏移（固定）：erosion `+37.13`、ridges `+91.31`；氣候的濕度場用 `+50` 偏移（沿用舊實作）——**是「縮放空間偏移」**（`fbm2(x * 0.002 + 50, …)`，加在乘過頻率之後的座標上），**不是**世界空間偏移 `fbm2((x + 50) * 0.002, …)`；兩者只差在格點上，而格點上 grad noise 恆為 0（細節與實測見 §2〈氣候場的取樣形式〉）。**取樣形式已於 Task 1 定案，後續不可再改。**
   - `peaksAndValleys`：`const w = ridge.noise2(x*RIDGE_FREQ + 91.31, z*RIDGE_FREQ + 91.31); return 1 - Math.abs(3 * Math.abs(w) - 2);`
   - `surfaceHeight`（逐字實作 §3 的公式）：
     ```ts
@@ -393,7 +401,8 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
   舊測試把「哪一塊是沙地／哪一塊是水」寫死成座標，新生成器的地形本來就不同 → 這些測試會釘死在舊生成器上。改寫理由要寫進 commit 訊息。
 
   `src/world/terrain.test.ts`：
-  - 舊 `'no trees on sand columns'`（硬編碼 chunk `(3,−2)`）→ 改寫為 `'no tree grows on a sand column'`：在種子 1337 的 64×64 格範圍內掃描所有「表層是 SAND」的柱（實測 **452 個沙柱**），斷言其上方沒有任何原木（`BLOCK.LOG`）；若範圍內沒有沙柱則直接結束該案例（守衛 `if (sandColumns === 0) return;`）。
+  - 舊 `'no trees on sand columns'`（硬編碼 chunk `(3,−2)`）→ 改寫為 `'no tree grows on a sand column'`：在種子 1337 的 64×64 格範圍內掃描所有「表層是 SAND」的柱，斷言其上方沒有任何原木（`BLOCK.LOG`）；若範圍內沒有沙柱則直接結束該案例（守衛 `if (sandColumns === 0) return;`）。
+    - **（2026-10-20 Task 1 審查修正）**掃描範圍定為**世界座標 `(0,0)–(63,63)`（chunk `(0,0)`–`(3,3)`，玩家出生區）**，實測 **29 個沙柱**。原寫的「452 個沙柱」不成立：種子 1337 在 ±2048 範圍內的 **4,225 個對齊 64×64 視窗**中，沙柱數最小 0、最大 4,071，**沒有任何一個視窗是 452**（舊沙漠區 chunk `(3,-2)` 起的視窗是 2,769）。**以 29 為準**（並保留「範圍內確有沙柱」的額外斷言，避免案例變成空斷言）。
   - 舊 `'columns below sea level are filled with water'`（硬編碼 chunk `(−7,3)`）→ 改寫為 `'every column below sea level is filled with water up to sea level'`：**改取 chunk `(2,−2)`**（種子 1337 該塊有 **69 個 `h < SEA_LEVEL` 的柱**，地面高度 60–63 → 陸海交界），對每個 `h < SEA_LEVEL` 的柱，斷言 `y ∈ [h+1, SEA_LEVEL]` 全是 `BLOCK.WATER`。
     - **必須先斷言 `waterColumns > 0`**（守衛：種子 1337 的 chunk (0,0) 全是陸地、0 個水柱 → 用舊的 (0,0) 會讓整條斷言永遠不執行＝弱化；2026-10-20 稽核修正）。
   - 其餘既有測試（bedrock、洞穴、礦石、確定性、邊界高度）**不動**。
@@ -433,7 +442,8 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - [ ] **Step 8: 全量驗證**
 
   Run: `npm run typecheck && npm test && npm run build && npm run lint` → Expected: 全綠（既有 806 個測試**全部保留且不得弱化**；新增測試另計）。
-  人工（記錄結果）：`npm run dev` → 新遊戲，站在出生點觀察遠景：應看得到大片水面與岸線、平原帶與遠山帶的落差（不再是「整片同一高度」）。
+  人工（記錄結果）：`npm run dev` → 新遊戲，站在出生點觀察遠景：**可分辨大片水面與岸線、平原的連續起伏（不再是「整片同一高度」）**。
+  - **（2026-10-20 Task 1 審查修正）本條驗收條件原本要求在出生點看到「遠山帶」，但那在結構上不可達**：種子 1337 最近的 `h ≥ 92` 在 **≈230 格外**（Task 1 實測，取樣間隔 4 格；審查者獨立實測 ≈233），而 `renderDistance = 10` ＝ **160 格**、`FOG_FAR` ＝ **140**（`src/render/scene.ts`）→ 山帶落在可視範圍之外，屬**預期**而非缺陷。要看到山帶必須另外走到高地處或放大 render distance（見〈批末驗收〉第 3 點的記錄要求）。
 
 - [ ] **Step 9: Commit**
 
@@ -454,7 +464,11 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - Test: 同上
 
 **Interfaces:**
-- Consumes: Task 1 的 `temperature`、`moisture`、`surfaceHeight`、`SEA_LEVEL`。
+- Consumes: Task 1 的 `temperature`、`moisture`、`surfaceHeight`、`SEA_LEVEL`（全部來自 `src/world/terrain-noise.ts`）。
+- **交接（Task 1 → Task 2，必做）**：Task 1 依「不動生物群系邏輯」的要求**刻意不碰** `terrain.ts` 的生態取樣 → `terrain.ts` 裡仍留著**舊的** `biomeNoise`（`new Noise(seed ^ 0x9e3779b9)` @ `0.004`／2 層）與 `biomeNoiseCache`，而 Task 1 新增的 `temperature`／`moisture`（`CLIM_FREQ = 0.002`／`CLIM_OCTAVES = 3`）**在本任務之前沒有任何呼叫端（是刻意留下的過渡狀態）**。
+  - **Task 2 必須把 `biomeAt` 與 `generateChunk` 的生物群系取樣改接 `terrain-noise.ts` 的 `temperature`／`moisture`，不可沿用舊 `biomeNoise`。** 否則地形（Task 1 的新高度）與生態判定／霧色會用**兩套不同的氣候場**，互相矛盾（同一個座標的地表材質與 F3 的 `Biome:`／霧色可能對不上）。
+  - 改接後**刪除** `terrain.ts` 的 `biomeNoise` 與 `biomeNoiseCache`（避免留下沒有呼叫端的死碼；`hash2` 仍被礦石判定使用，不可一併刪）。
+  - 氣候場的取樣形式（縮放空間偏移 `+50`、格點恆為 0 的性質）已於 Task 1 定案 → 見 §2〈氣候場的取樣形式〉，**不得自行改寫**。
 - Produces:
   - `export type Biome = 'ocean' | 'plains' | 'forest' | 'birch_forest' | 'taiga' | 'snowy_plains' | 'desert' | 'mountains';`（**取代**舊的 4 種 union）
   - `export function pickBiome(params: { height: number; temp: number; moist: number }): Biome`（純判定；順序即優先級，見 §4 表）
@@ -523,8 +537,9 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
   - `terrain.ts`：
     - `Biome` union 換成 8 種（**不加中文名對照表**：F3 顯示原始 id，避免為了中文名去改 `ui.test.ts` 的既有斷言；README 的〈與原版的差異〉列出 id 對照）。
     - `pickBiome({ height, temp, moist })`：逐條實作 §4 的判定順序。
-    - `biomeAt`：`const h = surfaceHeight(x, z, seed); return pickBiome({ height: h, temp: temperature(x, z, seed), moist: moisture(x, z, seed) });`
-    - `generateChunk` 的材質分支改用 `surfaceBlockOf`／`subsurfaceBlockOf`（含「水下 ≤ SEA_LEVEL 是水」規則不變）。
+    - `biomeAt`：`const h = surfaceHeight(x, z, seed); return pickBiome({ height: h, temp: temperature(x, z, seed), moist: moisture(x, z, seed) });` —— **`temperature`／`moisture` 一律取自 `src/world/terrain-noise.ts`（`CLIM_FREQ = 0.002`／`CLIM_OCTAVES = 3`），不可沿用 Task 1 留下的舊 `biomeNoise`（0.004／2 層）**（見〈Interfaces〉的交接條）。
+    - `generateChunk` 的材質分支改用 `surfaceBlockOf`／`subsurfaceBlockOf`（含「水下 ≤ SEA_LEVEL 是水」規則不變）；**生物群系取樣同樣改用新的 `temperature`／`moisture`**（不可保留 `biomeN` 的舊取樣）。
+    - **刪除** `biomeNoise` 與 `biomeNoiseCache`（改接後已無呼叫端；`hash2` 仍被礦石判定使用，不可一併刪）。
   - `biome-fog.ts`：`BIOME_FOG_TINT` 補 4 個新鍵（值見上）。`applyBiomeTint` 的中性判斷不變（`plains` 仍是 `0xffffff`）。
   - `hud.ts`：**不改**（仍印 `Biome: ${biome}` 原始 id；`ui.test.ts` 的 `'Biome: plains'` 斷言因此不動）。
 
@@ -1383,6 +1398,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
    - 裝飾密度（容差見 §6 表）：花 0.5–1.6 朵／256 可放置柱、草叢 5%–12% 覆蓋、仙人掌 1.36 棵／256 沙漠柱、冰佔水柱 2.4%。
    - 樹距不變量：同生態兩棵樹 Chebyshev 距離 ≥ 3。
 3. **目視**：新開一局，沿四個方向各走 200 格，確認能看到海洋＋沙灘、平原、橡木林、白樺林、針葉林、雪原、沙漠與帶雪頂的高山；F3 的 Biome 行與霧色同步。
+   - **（2026-10-20 Task 1 審查修正）**「帶雪頂的高山」在**出生點**看不到屬**預期**：種子 1337 最近的 `h ≥ 92` 在 ≈230 格外（審查者獨立實測 ≈233），超過 `renderDistance = 10`（160 格）與 `FOG_FAR`（140 格，`src/render/scene.ts`）→ 山帶要走到高地處或放大 render distance 後才看得到。目視驗收時**記錄實際視距與看到的地帶**（出生點可見：水面、岸線、平原／森林的連續起伏；山帶另記錄觀察位置與視距），不要把「出生點看不到山帶」當成缺陷。
 4. **效能**：單區塊生成 ≤ 8 ms（實測約 2–3 ms；**此預算以觀察值回報**——測試會印出實測毫秒數）；回歸門檻＝16 區塊總時間 < 500 ms（≈31 ms/區塊）且任一單區塊 ≤ 50 ms；worker 降級（同步生成）時主執行緒不卡幀。
 5. **worker 相容**：`worker-client.test.ts` 驗「worker 失效後的**同步退路**回傳的位元組與主執行緒 `generateChunk` 完全相同」（worker 失效是唯一會走主執行緒生成的路徑，兩者必須位元組相同）。
 6. **Playwright**：**本批不需要**——生成結果是「世界資料」，無法用 CDP 合成鍵在真實瀏覽器裡可靠地驗證視覺資產（地形、生物群系、植被貼圖需要人工目視或截圖比對，而 CDP 只能操作輸入，無法斷言生成內容）。可選的替代驗收：若環境允許，用 `npm run dev` 起本地伺服器 + Playwright 只做「**頁面載入無 console error、canvas 有非零像素**」的煙霧測試（不對生成內容做任何斷言），並把「地形視覺未經自動化驗證」明列於回報。

@@ -103,7 +103,7 @@ describe('climate fields', () => {
       expect(Number.isFinite(m)).toBe(true);
       expect(t).not.toBe(m);
     }
-    // 格點上的 0 是噪音原语的性質（不是欄位重複），一併釘住
+    // 格點上的 0 是噪音原語的性質（不是欄位重複），一併釘住
     expect(temperature(0, 0, 1337)).toBe(0);
     expect(moisture(0, 0, 1337)).toBe(0);
   });
