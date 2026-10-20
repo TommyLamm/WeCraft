@@ -99,6 +99,7 @@ describe('spawnDrop options (B2.5)', () => {
   it('spawnDrop keeps its default delay and pop when no options are given', () => {
     const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 });
     expect(d.pickupDelay).toBe(SPAWN_PICKUP_DELAY);
+    expect(d.vel.y).toBe(3); // the default pop (upward) — the name promises it
   });
 
   it('copies the custom velocity (the caller can mutate its own object afterwards)', () => {

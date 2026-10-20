@@ -69,7 +69,21 @@ import {
   DROP_REPEAT_SEC,
   type RepeatState,
 } from './player/hold-repeat';
-import { stepDrops, pickable, pickup, spawnDrop, PLAYER_DROP_PICKUP_DELAY, type DropEntity } from './world/drops';
+// B2.5：Q 丟棄的**決策規則**（純函式）：創造模式不消耗、單個 vs 整疊、丟出數量
+// 不得超過持有數量 —— 三條不變式由 `src/player/drop.test.ts` 把關。
+import { dropCount } from './player/drop';
+import {
+  stepDrops,
+  pickable,
+  pickup,
+  spawnDrop,
+  PLAYER_DROP_PICKUP_DELAY,
+  PLAYER_DROP_THROW_SPEED,
+  PLAYER_DROP_LIFT_SPEED,
+  PLAYER_DROP_FORWARD_OFFSET,
+  PLAYER_DROP_HEIGHT_OFFSET,
+  type DropEntity,
+} from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
   stepMobs,
@@ -548,16 +562,18 @@ let drops: DropEntity[] = [];
  *  首次使用路徑與連放路徑共用同一份實作 → 不會兩邊走樣（音效語意、扣物品的
  *  順序、與玩家重疊的判定都只有一份）。
  *
- *  回傳是否真的放下去（false ＝ 手上沒有方塊／位置不能放／扣不到物品）。 */
-function tryPlaceBlock(target: RayHit): boolean {
+ *  **沒有回傳值**：呼叫端（首次使用路徑與連放路徑）都不消費「是否成功」——
+ *  結果本來就看得見（熱鍵欄計數、世界裡的方塊），留一個沒人用的回傳值只會
+ *  誤導後人（審查 Minor 1）。放不成時什麼都不做即可。 */
+function tryPlaceBlock(target: RayHit): void {
   const t = placeTarget(target);
   const held = hotbar[selected];
   const placeId = held ? blockFromItem(held.item) : null;
-  if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return false;
+  if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return;
   // no pay, no place: the stack is spent FIRST (creative's spendFromSlot is a
   // free `true`), so a rejected spend never writes the world — unreachable in
   // practice, structural defense
-  if (!inventory.spendFromSlot(selected, 1)) return false;
+  if (!inventory.spendFromSlot(selected, 1)) return;
   world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
   hud.setHotbar(hotbar, selected);
   // Phase 3 Task 10: material-accurate place thud at the target centre
@@ -565,28 +581,36 @@ function tryPlaceBlock(target: RayHit): boolean {
   audio.play('place', materialGroup(placeId), {
     pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
   });
-  return true;
 }
 
 /** B2.5：丟棄選取格（Q）。`wholeStack` ＝整疊丟棄（Ctrl+Q），否則只丟 1 個。
+ *
+ *  **「丟幾個」由純函式決定**（`src/player/drop.ts` 的 `dropCount`）→ 創造模式
+ *  不消耗、單個 vs 整疊、丟出數量不得超過持有數量這三條不變式有單元測試把關
+ *  （Task 10 review Important 1）。這裡只負責「執行」：扣物品 → 生成掉落物。
  *
  *  語意（minecraft.wiki/Controls，2026-10-20）：「If items are stacked, only one
  *  gets thrown/tossed/dropped.」「**Control+Q drops the whole stack of items.**」
  *  → 普通 Q 丟 1 個、Ctrl+Q 丟整疊。
  *
- *  - **創造模式不作用**（不丟、不消耗）：本批的簡化，README 記錄。
+ *  - **創造模式不作用**（不丟、不消耗）：本批的簡化（Task 14 收斂 README 時要寫的
+ *    內容之一）。
  *  - **不複製也不吞物品**：`count` 先算出來、`spendFromSlot` 先扣掉，再以同一個
  *    `count` 生成掉落物 → 熱鍵欄減掉的數量與地上出現的數量必然相等。
  *  - **玩家丟出的物品 2 秒（40 tick）內不可拾**：minecraft.wiki/Item (entity)
  *    「or 40 ticks (2 seconds) if thrown by a player」→ 傳
  *    `pickupDelay: PLAYER_DROP_PICKUP_DELAY`（方塊破壞掉落仍是 0.5 秒）。
- *  - 拋出方向＝玩家視線的水平分量（`yaw`）；距離是簡化值（原版約 2～3 格）。 */
-function dropSelected(wholeStack: boolean): boolean {
-  if (currentMode === 'creative') return false; // 創造模式不丟棄（簡化，README 記錄）
+ *  - 拋出方向＝玩家視線的水平分量（`yaw`）；距離是簡化值（原版約 2～3 格，見
+ *    `src/world/drops.ts` 的拋出幾何常數）。
+ *
+ *  **沒有回傳值**（審查 Minor 1）：呼叫端不消費「是否丟成功」，結果看得見
+ *  （熱鍵欄計數、地上有沒有東西）。 */
+function dropSelected(wholeStack: boolean): void {
   const stack = hotbar[selected];
-  if (!stack || stack.count < 1) return false;
-  const count = wholeStack ? stack.count : 1;
-  if (!inventory.spendFromSlot(selected, count)) return false;
+  // 決策交給純函式：創造模式 → 0；空手／數量不合法 → 0；普通 Q → 1；Ctrl+Q → 整疊
+  const count = dropCount(stack, wholeStack, currentMode);
+  if (!stack || count <= 0) return; // 不丟、不消耗
+  if (!inventory.spendFromSlot(selected, count)) return;
   const fx = -Math.sin(player.yaw);
   const fz = -Math.cos(player.yaw);
   drops = spawnDrop(
@@ -594,18 +618,21 @@ function dropSelected(wholeStack: boolean): boolean {
     stack.item,
     count,
     {
-      x: player.position.x + fx * 0.5,
-      y: player.position.y + 1.0,
-      z: player.position.z + fz * 0.5,
+      x: player.position.x + fx * PLAYER_DROP_FORWARD_OFFSET,
+      y: player.position.y + PLAYER_DROP_HEIGHT_OFFSET,
+      z: player.position.z + fz * PLAYER_DROP_FORWARD_OFFSET,
     },
     {
       pickupDelay: PLAYER_DROP_PICKUP_DELAY,
-      vel: { x: fx * 2.5, y: 1.5, z: fz * 2.5 },
+      vel: {
+        x: fx * PLAYER_DROP_THROW_SPEED,
+        y: PLAYER_DROP_LIFT_SPEED,
+        z: fz * PLAYER_DROP_THROW_SPEED,
+      },
     },
   );
   hud.setHotbar(hotbar, selected); // 熱鍵欄計數變了 → 刷新
   bus.emit('drops-changed', {}); // 掉落物清單變了（與其它生成路徑一致）
-  return true;
 }
 
 // ---- 生物与箭矢（Task 8）----
@@ -2552,7 +2579,17 @@ gs.renderer.setAnimationLoop(() => {
       // stack of items.」）。連丟：按住 Q 每 0.2 秒（DROP_REPEAT_SEC）丟一次；
       // 按住 Ctrl 時連丟的是整疊（`input.state.sprint` ＝「Ctrl 是否按住」，
       // **不是**疾跑狀態機的 active —— 兩者不可混用）。
-      // 創造模式：`dropSelected` 直接回 false（不丟、不消耗）。
+      // 創造模式：`dropCount()` 回 0 → 不丟、不消耗（純函式層已有單元測試）。
+      //
+      // **Ctrl 的取樣時機（統一語意：每一次觸發都以「該觸發當下」的 Ctrl 為準）**：
+      //  - 單次丟棄的觸發點＝Q 的 **keydown** → 輸入層在 keydown 當下快照 Ctrl
+      //    （`input.ts` 的 `dropWholeStack = state.sprint`）。
+      //  - 連續丟棄的觸發點＝每 0.2 秒的**節拍發火幀** → 讀當下的
+      //    `input.state.sprint`。
+      // 兩者同屬「觸發當下的 Ctrl」，差別只在觸發點如何定義。實務後果（刻意、
+      // 寫在這裡免得被當成 bug）：「先按住 Q、之後才按 Ctrl」→ **後續的連丟**會
+      // 變成整疊丟棄；而那一次 Ctrl+Q 的**首次**丟棄仍以 keydown 當下的 Ctrl 為準
+      // （當下沒按 Ctrl → 只丟 1 個）。
       const dropReq = input.consumeDrop();
       if (dropReq) dropSelected(dropReq.wholeStack);
       const dropStep = stepRepeat(dropRepeat, input.state.dropHeld, dt, DROP_REPEAT_SEC);

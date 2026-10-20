@@ -16,6 +16,18 @@ export const SPAWN_PICKUP_DELAY = 0.5;
  *  fox.」→ 方塊破壞掉落維持 `SPAWN_PICKUP_DELAY`（10 tick），玩家丟出的用本常數
  *  （40 tick）。 */
 export const PLAYER_DROP_PICKUP_DELAY = 2;
+/** 玩家丟出（Q）的拋出幾何 —— 全部是**簡化值**。
+ *
+ *  原版（minecraft.wiki/Controls，2026-10-20 抓 raw 全文）：「There is no actual
+ *  "throw" command; "drop" (default `Q`) tosses an object approximately **2 to 3
+ *  blocks** from the player.」→ 本作沒有「投擲」命令，用「出生點在玩家前方
+ *  0.5 格、腳高 +1.0 格（視線高度附近）＋ 水平初速 2.5 格/秒 ＋ 上拋初速
+ *  1.5 格/秒」近似；掉落物的水平阻力（`HORIZONTAL_DRAG_PER_SEC`）會讓它很快
+ *  停住，實際落點約 1 格多。 */
+export const PLAYER_DROP_THROW_SPEED = 2.5; // 水平初速（格/秒）
+export const PLAYER_DROP_LIFT_SPEED = 1.5; // 上拋初速（格/秒）
+export const PLAYER_DROP_FORWARD_OFFSET = 0.5; // 出生點在玩家前方多遠（格）
+export const PLAYER_DROP_HEIGHT_OFFSET = 1.0; // 出生點比腳高多少（格）
 /** Default 3D pickup reach, blocks. */
 export const PICKUP_RADIUS = 1.5;
 /** Seconds before a dropped item despawns. */
