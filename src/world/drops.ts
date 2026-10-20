@@ -9,6 +9,13 @@ import { BLOCK } from './blocks';
 export const GRAVITY = 20;
 /** Seconds a fresh drop ignores pickup — lets the block-break pop land first. */
 export const SPAWN_PICKUP_DELAY = 0.5;
+/** Seconds a **player-thrown** drop ignores pickup — 40 ticks (2 s).
+ *  出處：minecraft.wiki/Item (entity)（2026-10-20 抓 raw 全文）：「Dropped items
+ *  have a delay of 10 ticks (half a second) between appearing and being able to
+ *  be picked up, or **40 ticks (2 seconds) if thrown by a player**, dolphin, or
+ *  fox.」→ 方塊破壞掉落維持 `SPAWN_PICKUP_DELAY`（10 tick），玩家丟出的用本常數
+ *  （40 tick）。 */
+export const PLAYER_DROP_PICKUP_DELAY = 2;
 /** Default 3D pickup reach, blocks. */
 export const PICKUP_RADIUS = 1.5;
 /** Seconds before a dropped item despawns. */
@@ -57,14 +64,29 @@ export function dropItemFor(blockId: number): ItemId | null {
   return itemFromBlock(blockId);
 }
 
+/** `spawnDrop` 的可選覆寫項——不給時**預設行為與既有呼叫端完全相同**
+ *  （既有呼叫端：`spawnBlockDrop`（src/player/interact.ts）與 main.ts 的掉落呼叫）。 */
+export interface SpawnDropOptions {
+  /** 拾取延遲秒數；預設 `SPAWN_PICKUP_DELAY`（0.5 秒／10 tick）。
+   *  玩家丟出的物品用 `PLAYER_DROP_PICKUP_DELAY`（2 秒／40 tick）。 */
+  pickupDelay?: number;
+  /** 初速度；預設 `{ 隨機 ±1.5 的水平速度, y = +3 }`（原地跳一下）。 */
+  vel?: { x: number; y: number; z: number };
+}
+
 /** Append a dropped stack at `pos` — returns a NEW array with one more entity
  *  (unique, max+1 id). Pops upward (vel.y = +3) with a small random horizontal
- *  velocity (x/z ∈ [−1.5, 1.5]) and starts the 0.5 s pickup delay. */
+ *  velocity (x/z ∈ [−1.5, 1.5]) and starts the 0.5 s pickup delay.
+ *
+ *  `opts` 可覆寫拾取延遲與初速度（玩家丟出的物品要 2 秒不可拾 → 傳
+ *  `pickupDelay: PLAYER_DROP_PICKUP_DELAY`）；**不傳時預設行為完全不變**。
+ *  傳入的 `pos`／`vel` 一律被**複製**——實體不引用呼叫端的物件。 */
 export function spawnDrop(
   drops: readonly DropEntity[],
   item: ItemId,
   count: number,
   pos: { x: number; y: number; z: number },
+  opts: SpawnDropOptions = {},
 ): DropEntity[] {
   let maxId = -1;
   for (const d of drops) if (d.id > maxId) maxId = d.id;
@@ -75,9 +97,11 @@ export function spawnDrop(
       item,
       count,
       pos: { x: pos.x, y: pos.y, z: pos.z }, // copy — never alias the caller's vector
-      vel: { x: Math.random() * 3 - 1.5, y: 3, z: Math.random() * 3 - 1.5 },
+      vel: opts.vel
+        ? { x: opts.vel.x, y: opts.vel.y, z: opts.vel.z } // copy — never alias the caller's vector
+        : { x: Math.random() * 3 - 1.5, y: 3, z: Math.random() * 3 - 1.5 },
       age: 0,
-      pickupDelay: SPAWN_PICKUP_DELAY,
+      pickupDelay: opts.pickupDelay ?? SPAWN_PICKUP_DELAY,
       bounced: false,
     },
   ];

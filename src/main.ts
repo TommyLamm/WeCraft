@@ -59,7 +59,17 @@ import {
 } from './player/interact';
 // Task 8: apple eating — pure slot consumption; vitals/sound/toast stay in main
 import { APPLE_FOOD, APPLE_SAT, eatFromSlot } from './player/eat';
-import { stepDrops, pickable, pickup, spawnDrop, type DropEntity } from './world/drops';
+// B2.2／B2.5：按住連放／連丟的節拍（純邏輯，不碰 DOM／Three、不自持時鐘）。
+// **本模組只負責「按住之後的重複」**：第一次觸發（第一次右鍵／第一次按 Q）由
+// main 的完整使用流程與 Q 脈衝負責 —— 節拍層自己不會觸發第一次動作。
+import {
+  createRepeatState,
+  stepRepeat,
+  PLACE_REPEAT_SEC,
+  DROP_REPEAT_SEC,
+  type RepeatState,
+} from './player/hold-repeat';
+import { stepDrops, pickable, pickup, spawnDrop, PLAYER_DROP_PICKUP_DELAY, type DropEntity } from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 import {
   stepMobs,
@@ -259,6 +269,14 @@ let lastWallAngleDeg: number | null = null;
 let attackedThisFrame = false;
 // 相機 FOV 的平滑值（core/fov.ts 的 `stepFov` 產出）→ 相機實際套用的值。
 let fovCurrent = BASE_FOV;
+
+// ---- B2.2／B2.5 按住節拍狀態（Task 10 接線）----
+// `placeRepeat`／`dropRepeat` 是「按住旗標 × 時間」的累積器（player/hold-repeat.ts，
+// 純邏輯）：**只負責按住之後的重複**——第一次觸發分別由既有的完整使用流程
+// （第一次右鍵）與 Q 脈衝（input.consumeDrop()）負責，節拍層自己不會觸發第一次
+// 動作。放開旗標 → 累積器歸零（下次要重新計時）。
+let placeRepeat: RepeatState = createRepeatState();
+let dropRepeat: RepeatState = createRepeatState();
 
 /** B2.1：把相機 FOV 拉回基準值（70）——平滑值與相機值一起歸零。
  *
@@ -519,6 +537,76 @@ let fallState: FallState = resetFall();
 // Pure entities stepped each frame while playing; survival breaks spawn them
 // (spawnBlockDrop), proximity picks them up (pickable + pickup).
 let drops: DropEntity[] = [];
+
+// ---- B2.2／B2.5 放置與丟棄（Task 10 接線）----
+// 兩個 helper 放在模組層（不是迴圈內）：每幀重建函式物件沒有好處，而且它們
+// 需要讀 `drops`／`hotbar`／`selected` 等模組層狀態。
+/** 在 `target` 命中的那一面放一個方塊 —— 「放置」這一件事的完整實作。
+ *
+ *  **為什麼要抽出來**：B2.2 的連放要求「第一次右鍵照完整流程（開工作台／開熔爐／
+ *  吃東西／放方塊），之後每 0.2 秒**只重複放方塊**」。把放置抽成獨立函式，
+ *  首次使用路徑與連放路徑共用同一份實作 → 不會兩邊走樣（音效語意、扣物品的
+ *  順序、與玩家重疊的判定都只有一份）。
+ *
+ *  回傳是否真的放下去（false ＝ 手上沒有方塊／位置不能放／扣不到物品）。 */
+function tryPlaceBlock(target: RayHit): boolean {
+  const t = placeTarget(target);
+  const held = hotbar[selected];
+  const placeId = held ? blockFromItem(held.item) : null;
+  if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return false;
+  // no pay, no place: the stack is spent FIRST (creative's spendFromSlot is a
+  // free `true`), so a rejected spend never writes the world — unreachable in
+  // practice, structural defense
+  if (!inventory.spendFromSlot(selected, 1)) return false;
+  world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
+  hud.setHotbar(hotbar, selected);
+  // Phase 3 Task 10: material-accurate place thud at the target centre
+  // (listener defaults to pos → full volume).
+  audio.play('place', materialGroup(placeId), {
+    pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
+  });
+  return true;
+}
+
+/** B2.5：丟棄選取格（Q）。`wholeStack` ＝整疊丟棄（Ctrl+Q），否則只丟 1 個。
+ *
+ *  語意（minecraft.wiki/Controls，2026-10-20）：「If items are stacked, only one
+ *  gets thrown/tossed/dropped.」「**Control+Q drops the whole stack of items.**」
+ *  → 普通 Q 丟 1 個、Ctrl+Q 丟整疊。
+ *
+ *  - **創造模式不作用**（不丟、不消耗）：本批的簡化，README 記錄。
+ *  - **不複製也不吞物品**：`count` 先算出來、`spendFromSlot` 先扣掉，再以同一個
+ *    `count` 生成掉落物 → 熱鍵欄減掉的數量與地上出現的數量必然相等。
+ *  - **玩家丟出的物品 2 秒（40 tick）內不可拾**：minecraft.wiki/Item (entity)
+ *    「or 40 ticks (2 seconds) if thrown by a player」→ 傳
+ *    `pickupDelay: PLAYER_DROP_PICKUP_DELAY`（方塊破壞掉落仍是 0.5 秒）。
+ *  - 拋出方向＝玩家視線的水平分量（`yaw`）；距離是簡化值（原版約 2～3 格）。 */
+function dropSelected(wholeStack: boolean): boolean {
+  if (currentMode === 'creative') return false; // 創造模式不丟棄（簡化，README 記錄）
+  const stack = hotbar[selected];
+  if (!stack || stack.count < 1) return false;
+  const count = wholeStack ? stack.count : 1;
+  if (!inventory.spendFromSlot(selected, count)) return false;
+  const fx = -Math.sin(player.yaw);
+  const fz = -Math.cos(player.yaw);
+  drops = spawnDrop(
+    drops,
+    stack.item,
+    count,
+    {
+      x: player.position.x + fx * 0.5,
+      y: player.position.y + 1.0,
+      z: player.position.z + fz * 0.5,
+    },
+    {
+      pickupDelay: PLAYER_DROP_PICKUP_DELAY,
+      vel: { x: fx * 2.5, y: 1.5, z: fz * 2.5 },
+    },
+  );
+  hud.setHotbar(hotbar, selected); // 熱鍵欄計數變了 → 刷新
+  bus.emit('drops-changed', {}); // 掉落物清單變了（與其它生成路徑一致）
+  return true;
+}
 
 // ---- 生物与箭矢（Task 8）----
 // Pure mob AI (world/mobs.ts) stepped each frame while playing; night spawns
@@ -2441,26 +2529,35 @@ gs.renderer.setAnimationLoop(() => {
             applyAdvancement({ type: 'ate', item: 'apple', mode: currentMode });
           } else if (hit) {
             viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
-            const t = placeTarget(hit);
-            const held = hotbar[selected];
-            const placeId = held ? blockFromItem(held.item) : null;
-            if (placeId !== null && canPlaceAt(world, t.x, t.y, t.z, player.position)) {
-              // no pay, no place: the stack is spent FIRST (creative's
-              // spendFromSlot is a free `true`), so a rejected spend never
-              // writes the world — unreachable in practice, structural defense
-              if (inventory.spendFromSlot(selected, 1)) {
-                world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
-                hud.setHotbar(hotbar, selected);
-                // Phase 3 Task 10: material-accurate place thud at the target
-                // centre (listener defaults to pos → full volume).
-                audio.play('place', materialGroup(placeId), {
-                  pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
-                });
-              }
-            }
+            // B2.2（Task 10）：「放方塊」已抽成 tryPlaceBlock() —— 首次使用路徑與
+            // 連放路徑共用同一份實作（見下方連放段）。
+            tryPlaceBlock(hit);
           }
         }
       }
+
+      // ---- B2.2 放置連放（Task 10 接線）----
+      // **第一次右鍵 vs 之後的連放**：上面那段 `wantPlace` 是「完整使用」（開工作台／
+      // 開熔爐／吃蘋果／放方塊），**只有它會開介面、吃東西**；連放只重複
+      // `tryPlaceBlock()`（放方塊）—— 不重複開介面、不重複進食。
+      // 節拍：`stepRepeat` 只負責「按住之後的重複」，第一次觸發由上面的完整流程
+      // 負責；按住需累積滿 0.2 秒（PLACE_REPEAT_SEC ＝ 4 tick）才發火。
+      // 滑鼠解鎖／視窗失焦 → `input.state.placeHeld` 歸 false → 節拍歸零（放開即停）。
+      const placeStep = stepRepeat(placeRepeat, input.state.placeHeld, dt, PLACE_REPEAT_SEC);
+      placeRepeat = placeStep.state;
+      if (placeStep.fired && hit) tryPlaceBlock(hit); // 沒瞄到方塊就不放
+
+      // ---- B2.5 Q 丟棄（Task 10 接線）----
+      // 單次：Q 丟 1 個、Ctrl+Q 丟整疊（wiki Controls「Control+Q drops the whole
+      // stack of items.」）。連丟：按住 Q 每 0.2 秒（DROP_REPEAT_SEC）丟一次；
+      // 按住 Ctrl 時連丟的是整疊（`input.state.sprint` ＝「Ctrl 是否按住」，
+      // **不是**疾跑狀態機的 active —— 兩者不可混用）。
+      // 創造模式：`dropSelected` 直接回 false（不丟、不消耗）。
+      const dropReq = input.consumeDrop();
+      if (dropReq) dropSelected(dropReq.wholeStack);
+      const dropStep = stepRepeat(dropRepeat, input.state.dropHeld, dt, DROP_REPEAT_SEC);
+      dropRepeat = dropStep.state;
+      if (dropStep.fired) dropSelected(input.state.sprint); // 按住 Ctrl 時連丟整疊
 
       // UI 脈衝
       if (input.consumeToggleDebug()) showDebug = !showDebug;

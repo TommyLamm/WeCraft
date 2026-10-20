@@ -7,6 +7,7 @@ import {
   dropItemFor,
   GRAVITY,
   SPAWN_PICKUP_DELAY,
+  PLAYER_DROP_PICKUP_DELAY,
   DESPAWN_AGE,
   SETTLE_OFFSET,
   type DropEntity,
@@ -80,6 +81,35 @@ describe('spawnDrop', () => {
       if (Math.abs(d.vel.x) > 0.5) sawSpread = true;
     }
     expect(sawSpread).toBe(true); // the range is actually used, not stuck near 0
+  });
+});
+
+// B2.5（Task 10）：玩家丟出的物品 2 秒（40 tick）內不可拾；方塊破壞掉落維持 0.5 秒。
+describe('spawnDrop options (B2.5)', () => {
+  it('spawnDrop accepts a custom pickup delay', () => {
+    const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 }, { pickupDelay: 2 });
+    expect(d.pickupDelay).toBe(2);
+  });
+
+  it('spawnDrop accepts a custom velocity', () => {
+    const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 }, { vel: { x: 1, y: 2, z: 3 } });
+    expect(d.vel).toEqual({ x: 1, y: 2, z: 3 });
+  });
+
+  it('spawnDrop keeps its default delay and pop when no options are given', () => {
+    const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 });
+    expect(d.pickupDelay).toBe(SPAWN_PICKUP_DELAY);
+  });
+
+  it('copies the custom velocity (the caller can mutate its own object afterwards)', () => {
+    const vel = { x: 1, y: 2, z: 3 };
+    const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 }, { vel });
+    vel.x = 99;
+    expect(d.vel).toEqual({ x: 1, y: 2, z: 3 }); // the entity never aliases the caller's vector
+  });
+
+  it('pins the player-drop pickup delay at 2 s (40 tick)', () => {
+    expect(PLAYER_DROP_PICKUP_DELAY).toBe(2);
   });
 });
 
