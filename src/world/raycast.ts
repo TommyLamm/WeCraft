@@ -18,18 +18,41 @@ export function reachFor(mode: GameMode): number {
   return mode === 'creative' ? 5 : 4.5;
 }
 
-/** DDA raycast. dir is normalized internally; maxDistance is euclidean world units. */
+/** 射線查詢選項（`raycast` 的第 5 參數；省略＝既有行為）。 */
+export interface RaycastOptions {
+  /** **跳過「原點所在的那一格」**：當射線原點位於實心方塊內時，該格**不會**
+   *  成為命中目標——射線照原路走出那一格，再找下一個實心方塊。
+   *
+   *  **為什麼需要**：第三身（面後／面前）時射線原點是**相機**，而相機可能被
+   *  地形夾住（玩家背靠土坡／面前有牆）→ 原點落在實心方塊內時，一般的 DDA
+   *  會在 `t = 0` 命中「相機所在的那一格」：那是一格玩家**看不到**的方塊，
+   *  挖它／在它上面放方塊都等於操作一個看不見的目標。
+   *
+   *  **行為定義（可預期）**：
+   *  - 原點在空氣中 → 與既有行為完全相同（此選項無作用）。
+   *  - 原點在實心方塊內 → 該格被跳過；命中的是「走出那一格之後的第一個實心
+   *    方塊」，且法線是**真正的入射面**（不是原點格的近似背面法線）。
+   *  - `t` 仍從**原點**起算 → reach 預算不因跳過而改變。
+   *  - 原點格之外沒有任何實心方塊 → 回傳 `null`（不會退回去命中原點格）。 */
+  skipOriginBlock?: boolean;
+}
+
+/** DDA raycast. dir is normalized internally; maxDistance is euclidean world units.
+ *
+ *  `options.skipOriginBlock`：跳過原點所在的實心方塊（見 `RaycastOptions`）。 */
 export function raycast(
   world: World,
   origin: { x: number; y: number; z: number },
   dir: { x: number; y: number; z: number },
   maxDist: number,
+  options?: RaycastOptions,
 ): RayHit | null {
   const len = Math.hypot(dir.x, dir.y, dir.z);
   if (len === 0) return null;
   const dx = dir.x / len;
   const dy = dir.y / len;
   const dz = dir.z / len;
+  const skipOriginBlock = options?.skipOriginBlock === true;
 
   let x = Math.floor(origin.x);
   let y = Math.floor(origin.y);
@@ -56,7 +79,9 @@ export function raycast(
   // Start-inside has no true entry face: emit the dominant-axis back-face
   // (ties resolved x, then y, then z) so the normal is always a single-axis
   // unit vector — keeps placeTarget = hit + normal face-adjacent (Task 15).
-  if (world.isSolid(x, y, z)) {
+  // **例外（`skipOriginBlock`）**：原點所在的那一格不算目標 → 不early return，
+  // 直接往下走 DDA：射線先走出那一格，再找下一個實心方塊（`t` 仍從原點起算）。
+  if (world.isSolid(x, y, z) && !skipOriginBlock) {
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
     const az = Math.abs(dz);

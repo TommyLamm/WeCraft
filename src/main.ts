@@ -153,7 +153,7 @@ import {
 // 用途：Task 13 的 Playwright 驗收需要在真實瀏覽器裡讀取「即時狀態」
 // （疾跑／FOV／飢餓／座標／熱鍵欄／掉落物／已改動方塊數）。
 // **唯讀**：每個欄位都是 getter，只回傳快照，不改變任何遊戲行為；內容全部是
-// 本機遊戲資料，沒有敏感資訊。Task 11 會再補 `viewMode` 欄位。
+// 本機遊戲資料，沒有敏感資訊。（`viewMode` 欄位已於 Task 11 補上。）
 interface WecraftDebug {
   /** 本幀是否處於疾跑（= `sprintState.active`，也就是真正餵給物理層的旗標）。 */
   sprint: () => boolean;
@@ -210,9 +210,8 @@ const clouds = createClouds(gs.scene, settings.seed);
 // Phase 3 Task 8: first-person held item — camera-attached block cube / icon
 // plane; the icon factory is injected (render/ never imports ui/)
 const viewmodel = createViewmodel(gs.scene, gs.camera, itemIcon);
-// B2.4: the blocky player model for the two third-person views (面後／面前).
-// It is added to the scene once here; every frame main feeds it the player's
-// FEET position + yaw and toggles its visibility (first person hides it).
+// B2.4：第三身視角（面後／面前）顯示的方塊人玩家模型。模型只建一次並加入場景；
+// 每幀由 main 餵入玩家的**腳底**位置與朝向，並切換可見性（第一人稱隱藏）。
 const playerModel = createPlayerModel(gs.scene);
 let terrain = new TerrainWorkerClient(settings.seed);
 /** Generation epoch for the async chunk fill (Phase 4 Task 4): a cloud-seed
@@ -278,13 +277,12 @@ const hotbar = inventory.slots;
 let selected = 0;
 let showDebug = false;
 // B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
-// 這是**工作階段層級**的狀態：不進存檔，切換模式／新局／讀檔時一律回到
-// `first`（見 `resetViewMode()`），避免玩家一進場就停在第三身。
+// 這是**工作階段層級**的狀態：不進存檔（重置點見 `resetViewMode()`）。
 let viewMode: ViewMode = 'first';
-/** B2.4：視角回到第一人稱。
+/** B2.4：視角回到第一人稱（`resetViewMode()` 唯一的重置點）。
  *
- *  視角是**工作階段層級**的狀態（不進存檔）：新局、讀檔、切換遊戲模式時一律
- *  重置 → 玩家不會在下一局突然看到自己的背面（也不會留著上一局的第三身姿態）。 */
+ *  新局、讀檔、切換遊戲模式時一律重置 → 玩家不會在下一局突然看到自己的背面
+ *  （也不會留著上一局的第三身姿態）。 */
 function resetViewMode(): void {
   viewMode = 'first';
 }
@@ -2370,15 +2368,31 @@ gs.renderer.setAnimationLoop(() => {
       // reach 依視角補回「相機 ↔ 玩家」的 4 格距離：第三身時射線是從相機出發的，
       // 必須多走 4 格才等於「從玩家眼睛出發的 reach」→ 補回後兩種視角的實際
       // 可互動距離相同（第一人稱補 0 格）。
+      // **精度事實**：相機實際位移是水平 4 格 **＋垂直 0.5 格** → 相機↔眼距為
+      // √(4² + 0.5²) ≈ 4.031，這裡仍補 4（計畫明訂「補回 4 格」）→ 第三身的
+      // 等效可互動距離比第一人稱**短約 0.03 格**。取捨：補實際距離會讓第三身
+      // 比第一人稱多挖到 0.03 格（可忽略），而「補 4」與計畫／規格一致、也與
+      // `THIRD_PERSON_DISTANCE` 同一個常數 → 日後若做相機夾牆，把這裡改成實際
+      // 距離即可（屆時兩者會一起變動）。
       const back = viewMode === 'first' ? 0 : THIRD_PERSON_DISTANCE;
-      // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
+      // reach 依模式（Task 5）：創造 5、生存 4.5（第三身再加上相機的 back-offset）
       const reach = reachFor(currentMode) + back;
-      const hit = raycast(world, rayOrigin, dir, reach);
-      // Melee reach (plan: "ray hits mob within 3.5 blocks") is its own constant —
-      // the block reach above still governs dig/place. The third-person camera
-      // back-offset is added with the same offset logic as block reach, so the
-      // effective reach from the eye stays 3.5 in both views.
+      // **第三身護欄**：相機可能被地形夾住（玩家背靠土坡／面前有牆）→ 原點落在
+      // 實心方塊內時，一般 DDA 會在 t=0 命中「相機所在的那一格」——那是玩家
+      // **看不到**的方塊，挖它／在它上面放方塊都等於操作看不見的目標。
+      // → 第三身跳過原點所在的那一格（射線走出那一格後再找目標，法線是真正的
+      // 入射面；reach 預算仍從原點起算）。
+      // 第一人稱**不跳過**：原點是**眼睛**，被卡在方塊裡時挖那一格正是玩家要的
+      // （挖出來）→ 第一人稱行為逐值不變。
+      const hit = raycast(world, rayOrigin, dir, reach, {
+        skipOriginBlock: viewMode !== 'first',
+      });
+      // 近戰 reach 是另一個常數（計畫：「ray hits mob within 3.5 blocks」）——方塊的
+      // reach 仍由上面的 `reachFor` 主導。第三身同樣加上相機的 back-offset，兩種
+      // 視角「從眼睛算起」的有效距離都維持 3.5。
       const meleeReach = MELEE_REACH + back;
+      // （近戰射線打的是**生物實體**、不是方塊 → 不需要上面的「跳過原點格」護欄：
+      //   生物不會長在實心方塊裡，原點在牆中不影響生物命中。）
 
       // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
       // Same origin/dir as the block raycast above, but the 3.5-block melee
@@ -2723,9 +2737,9 @@ gs.renderer.setAnimationLoop(() => {
 
   // Phase 3 Task 8: held-item viewmodel — a cheap cached compare tracks the
   // selected slot (this tail runs after spendFromSlot/slot switches, so the
-  // model swaps the same frame), then the swing/bob pose is applied. Swing and
-  // bob advance only while playing; the third-person views and every
-  // non-playing state hide the group.
+  // model swaps the same frame), then the swing/bob pose is applied.
+  // B2.4：揮手／擺動只在 playing 時推進；第三身（面後／面前）與所有非 playing
+  // 狀態都隱藏手持模型（第一人稱才看得到手上的東西）。
   const heldItem = hotbar[selected]?.item ?? null;
   if (heldItem !== heldViewmodelItem) {
     heldViewmodelItem = heldItem;
@@ -2741,6 +2755,13 @@ gs.renderer.setAnimationLoop(() => {
   // 非 playing 狀態（標題／暫停／背包／死亡）一律隱藏。
   // **位置傳玩家腳底**（`player.position`，不是眼睛高度 +1.62）→ 模型底面貼地。
   // 姿態每幀同步（模型無動畫，只需要位置與朝向）。
+  //
+  // **暫停／覆蓋層期間的樣子（刻意行為）**：相機姿態只在 playing 分支更新，
+  // 非 playing 時相機停在最後一幀的第三身位置，但玩家模型依上面「非 playing
+  // 一律隱藏」的規則被隱藏 → 暫停選單背後會看到「第三身視角、卻沒有玩家」。
+  // 這是 brief Step 1.9 明訂的行為（覆蓋層一律不顯示模型）；是否要在非 playing
+  // 也擺放玩家，留給 Task 12（暫停選單提示）一併決定（已記入計畫文件的
+  // 〈已知問題／後續〉）。
   playerModel.setPose(player.position, player.yaw);
   playerModel.setVisible(state === 'playing' && viewMode !== 'first');
 

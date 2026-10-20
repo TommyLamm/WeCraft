@@ -154,3 +154,78 @@ describe('reachFor (Task 5)', () => {
     expect(hit!.t).toBe(4.5);
   });
 });
+
+/** B2.4 第三身相機護欄：射線原點在實心方塊內時，那一格不得成為互動目標
+ *  （相機卡在土坡／牆裡時，不該挖到一個玩家看不見的方塊）。 */
+describe('raycast skipOriginBlock (B2.4 第三身相機護欄)', () => {
+  it('不傳選項時維持既有行為：原點在實心方塊內 → t=0 命中原點格', () => {
+    const w = setup();
+    w.setBlock(0, 64, 0, BLOCK.STONE);
+    const hit = raycast(w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: -1 }, 10);
+    expect(hit).not.toBeNull();
+    expect(hit!.x).toBe(0);
+    expect(hit!.y).toBe(64);
+    expect(hit!.z).toBe(0);
+    expect(hit!.t).toBe(0);
+  });
+
+  it('skipOriginBlock：原點所在的那一格被跳過，命中下一個實心方塊', () => {
+    const w = setup();
+    w.setBlock(0, 64, 0, BLOCK.STONE); // 原點所在格（相機卡在這裡）
+    w.setBlock(0, 64, -2, BLOCK.STONE); // 走出原點格後的第一個實心方塊
+    const hit = raycast(
+      w,
+      { x: 0.5, y: 64.5, z: 0.5 },
+      { x: 0, y: 0, z: -1 },
+      10,
+      { skipOriginBlock: true },
+    );
+    expect(hit).not.toBeNull();
+    expect(hit!.x).toBe(0);
+    expect(hit!.y).toBe(64);
+    expect(hit!.z).toBe(-2);
+    expect(hit!.t).toBe(1.5);
+    // 真正的入射面法線（+z 面朝向射線來向）
+    expect(hit!.nz).toBe(1);
+    expect(hit!.nx).toBe(0);
+    expect(hit!.ny).toBe(0);
+  });
+
+  it('skipOriginBlock：原點格之外沒有實心方塊 → null（不會退回去命中原點格）', () => {
+    const w = setup();
+    w.setBlock(0, 64, 0, BLOCK.STONE);
+    const hit = raycast(
+      w,
+      { x: 0.5, y: 64.5, z: 0.5 },
+      { x: 0, y: 0, z: -1 },
+      10,
+      { skipOriginBlock: true },
+    );
+    expect(hit).toBeNull();
+  });
+
+  it('skipOriginBlock：原點在空氣中時結果與既有行為逐值相同', () => {
+    const w = setup();
+    w.setBlock(0, 64, -3, BLOCK.STONE);
+    const origin = { x: 0.5, y: 64.5, z: 0.5 };
+    const dir = { x: 0, y: 0, z: -1 };
+    const plain = raycast(w, origin, dir, 10);
+    const guarded = raycast(w, origin, dir, 10, { skipOriginBlock: true });
+    expect(plain).not.toBeNull();
+    expect(guarded).toEqual(plain);
+  });
+
+  it('skipOriginBlock：t 仍從原點起算（reach 預算不因跳過而改變）', () => {
+    const w = setup();
+    w.setBlock(0, 64, 0, BLOCK.STONE); // 原點所在格
+    w.setBlock(0, 64, -2, BLOCK.STONE); // t = 1.5 才進得到
+    const hit = raycast(
+      w,
+      { x: 0.5, y: 64.5, z: 0.5 },
+      { x: 0, y: 0, z: -1 },
+      1.4,
+      { skipOriginBlock: true },
+    );
+    expect(hit).toBeNull(); // 1.4 < 1.5 → 超過 reach
+  });
+});
