@@ -120,7 +120,9 @@ npm run dev        # 開啟 http://localhost:5173
   「使用」（不會反覆開工作台／熔爐或進食）
 - **潛行防摔邊以「腳下正下方一格」判定支撐**（原版以整個 hitbox 是否仍被支撐判定，
   可探出邊緣約半個身位）；本作**不做** step_height 0.6 的高度差判斷，也**不做**
-  「離地 0.6 格內仍受保護」；腳下是水時會被擋在岸邊（潛行時進不了水）
+  「離地 0.6 格內仍受保護」；腳下是水時會被擋在岸邊（潛行時進不了水），
+  **世界邊緣尚未載入的區塊暫時視為空氣** → 那一帶的潛行防摔邊可能**短暫生效**
+  （被擋住），直到區塊載入
 - **F5 三態視角**（第一人稱 → 面後 → 面前 → 第一人稱）：面前視角相機 yaw 為
   玩家 yaw + π，但 **pitch 不鏡像**（不把「看上」翻成「看下」）——只涵蓋 yaw 與相機位置
 - **互動射線以相機姿態為準**（相機位置＋相機的 yaw／pitch）；第三身時 reach 補回
@@ -212,7 +214,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 919 tests / 57 files 全綠
+npm test           # vitest run — 924 tests / 57 files 全綠
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -227,14 +229,20 @@ npm run lint       # eslint .
   三新進度／存檔 payload v1→v2 相容）完成並通過最終驗證（749 tests / 48 files、
   typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過、瀏覽器走查見本任務回報；
   部分走查項目受環境限制，詳見回報）。
+- **B1 穩定化（0.4.0）**：飢餓 exhaustion 模型重新接上（疾跑／跳躍／挖掘／攻擊／受擊
+  累積疲勞、飽食度足夠時回血）、生存 E 面板分流（生存模式顯示自己的 9 格唯讀背包、
+  創造模式維持方塊調色盤）、兩模式狀態保留（切換時各自保留背包與生存數值）、
+  新遊戲覆蓋既有進度的二次確認、受擊 0.5 秒無敵幀與紅色暗角回饋、挖掘公式與
+  工具等級門檻對齊原版、掉落表修正（草方塊掉土／樹葉玻璃雪不掉落／鐵礦掉生鐵）、
+  本機存檔 payload 升至 v3。詳見 `docs/releases/v0.4.0.md`。
 - **B2 操控手感（0.5.0）**：疾跑狀態機（雙擊 W 鎖存／Ctrl 輔助、撞牆 >8° 與飢餓 ≤6
   取消）、疾跑 FOV +10% 與平滑、右鍵放置連放（0.2 秒）、潛行防摔邊、F5 三態視角＋
   方塊人玩家模型、Q 丟棄（單個／Ctrl+Q 整疊／長按連丟，玩家丟出 2 秒不可拾）、
   暫停選單操作提示；並修正面後相機原本放在玩家前方的既有 bug、互動射線改以相機
   姿態為準。**本批不動存檔形狀**（本機 payload 維持 v3、雲端維持格式 1）。
-  驗證：919 tests / 57 files、typecheck／lint／build 全綠、pinned 工具 pack＋validate
-  通過；批末 Playwright 真實瀏覽器驗收（頂層頁面 13 PASS＋1 PASS(部分)＋0 FAIL＋
-  1 未驗證；跨來源 sandbox iframe＋子目錄 20 PASS＋2 項因佈景／放置幾何未成立）——
+  驗證：924 tests / 57 files、typecheck／lint／build 全綠、pinned 工具 pack＋validate
+  通過；批末 Playwright 真實瀏覽器驗收（頂層頁面 14 PASS＋1 PASS(部分)＋0 FAIL＋
+  1 未驗證；跨來源 sandbox iframe＋子目錄 19 PASS＋1 項因佈景／放置幾何未成立）——
   **未驗證項目（`Ctrl+W`、平台原生全螢幕與頂層 Keyboard Lock）見
   `docs/releases/v0.5.0.md` 的〈已知問題〉**。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`

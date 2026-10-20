@@ -8,9 +8,14 @@ import {
   GRAVITY,
   SPAWN_PICKUP_DELAY,
   PLAYER_DROP_PICKUP_DELAY,
+  PLAYER_DROP_THROW_SPEED,
+  PLAYER_DROP_LIFT_SPEED,
+  PLAYER_DROP_FORWARD_OFFSET,
+  PLAYER_DROP_HEIGHT_OFFSET,
   DESPAWN_AGE,
   SETTLE_OFFSET,
   type DropEntity,
+  type SpawnDropOptions,
 } from './drops';
 import { createInventoryModel } from '../core/inventory';
 import { BLOCK } from './blocks';
@@ -111,6 +116,102 @@ describe('spawnDrop options (B2.5)', () => {
 
   it('pins the player-drop pickup delay at 2 s (40 tick)', () => {
     expect(PLAYER_DROP_PICKUP_DELAY).toBe(2);
+  });
+});
+
+// M-4：Q 拋出幾何的四個常數（`src/world/drops.ts`）原本**沒有任何測試覆蓋**，
+// 卻有「落在腳前約 1.5 格內」的量化宣稱（README〈與原版的差異〉／
+// `docs/releases/v0.5.0.md`〈已知問題〉）→ 這裡把「初始速度」與「位置偏移」
+// 釘死，常數一改測試就會報警。
+
+/** 玩家丟出的掉落物幾何（鏡射 `dropSelected` in `src/main.ts`）：出生點在玩家
+ *  **前方** `PLAYER_DROP_FORWARD_OFFSET` 格、**腳高 +** `PLAYER_DROP_HEIGHT_OFFSET`
+ *  格；初速度＝沿視線水平分量的 `PLAYER_DROP_THROW_SPEED` ＋ 上拋
+ *  `PLAYER_DROP_LIFT_SPEED`；拾取延遲 `PLAYER_DROP_PICKUP_DELAY`。 */
+function playerDropSpawn(
+  yaw: number,
+  playerPos: { x: number; y: number; z: number },
+): { pos: { x: number; y: number; z: number }; opts: SpawnDropOptions } {
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  return {
+    pos: {
+      x: playerPos.x + fx * PLAYER_DROP_FORWARD_OFFSET,
+      y: playerPos.y + PLAYER_DROP_HEIGHT_OFFSET,
+      z: playerPos.z + fz * PLAYER_DROP_FORWARD_OFFSET,
+    },
+    opts: {
+      pickupDelay: PLAYER_DROP_PICKUP_DELAY,
+      vel: {
+        x: fx * PLAYER_DROP_THROW_SPEED,
+        y: PLAYER_DROP_LIFT_SPEED,
+        z: fz * PLAYER_DROP_THROW_SPEED,
+      },
+    },
+  };
+}
+
+describe('玩家丟出的拋出幾何（M-4）', () => {
+  it('pins the four tuning constants themselves', () => {
+    expect(PLAYER_DROP_THROW_SPEED).toBe(2.5); // 水平初速（格/秒）
+    expect(PLAYER_DROP_LIFT_SPEED).toBe(1.5); // 上拋初速（格/秒）
+    expect(PLAYER_DROP_FORWARD_OFFSET).toBe(0.5); // 出生點在玩家前方多遠（格）
+    expect(PLAYER_DROP_HEIGHT_OFFSET).toBe(1); // 出生點比腳高多少（格）
+  });
+
+  it('spawns the drop 0.5 blocks in front of the player, 1.0 above the feet', () => {
+    const playerPos = { x: 10, y: 64, z: 20 };
+    const yaw = 0; // yaw = 0 面向 -z（本作的 yaw 慣例）
+    const { pos, opts } = playerDropSpawn(yaw, playerPos);
+    const [d] = spawnDrop([], 'dirt', 1, pos, opts);
+    // 位置偏移＝常數值（正對前方 → x 不動、z 往前）
+    expect(d.pos.x - playerPos.x).toBeCloseTo(0, 10);
+    expect(d.pos.y - playerPos.y).toBeCloseTo(PLAYER_DROP_HEIGHT_OFFSET, 10);
+    expect(playerPos.z - d.pos.z).toBeCloseTo(PLAYER_DROP_FORWARD_OFFSET, 10);
+    expect(d.pos.y).toBe(65);
+    expect(d.pos.z).toBe(19.5);
+  });
+
+  it('gives the drop the throw velocity (2.5 forward, 1.5 up) and the 2 s pickup delay', () => {
+    const playerPos = { x: 10, y: 64, z: 20 };
+    const { pos, opts } = playerDropSpawn(0, playerPos);
+    const [d] = spawnDrop([], 'dirt', 1, pos, opts);
+    expect(d.vel.x).toBeCloseTo(0, 10); // 正對前方 → 沒有側向初速
+    expect(d.vel.y).toBeCloseTo(PLAYER_DROP_LIFT_SPEED, 10);
+    expect(d.vel.z).toBeCloseTo(-PLAYER_DROP_THROW_SPEED, 10);
+    expect(d.vel.y).toBe(1.5);
+    expect(d.vel.z).toBe(-2.5);
+    expect(d.pickupDelay).toBe(PLAYER_DROP_PICKUP_DELAY);
+  });
+
+  it('offsets along the facing direction (not the world axes)', () => {
+    const playerPos = { x: 0, y: 64, z: 0 };
+    const { pos, opts } = playerDropSpawn(Math.PI / 2, playerPos); // 面向 -x
+    const [d] = spawnDrop([], 'dirt', 1, pos, opts);
+    expect(playerPos.x - d.pos.x).toBeCloseTo(PLAYER_DROP_FORWARD_OFFSET, 10);
+    expect(d.pos.z - playerPos.z).toBeCloseTo(0, 10);
+    expect(d.vel.x).toBeCloseTo(-PLAYER_DROP_THROW_SPEED, 10);
+    expect(d.vel.z).toBeCloseTo(0, 10);
+  });
+
+  it('lands about 1.5 blocks in front of the feet (the published claim)', () => {
+    // 文件宣稱：「落在腳前約 1.5 格內」（原版約 2–3 格）。解析式：
+    //   水平總位移 = 初速 / ln(1/阻力) = PLAYER_DROP_THROW_SPEED / ln(10) ≈ 1.086
+    //   落點距腳   = 前方偏移 + 水平總位移 ≈ 1.586
+    // 離散步進（阻力在位移**之後**才套用）會略微高估 → 用區間釘住，不寫死單一數字。
+    const playerPos = { x: 0, y: 64, z: 0 };
+    const { pos, opts } = playerDropSpawn(0, playerPos);
+    let drops = spawnDrop([], 'dirt', 1, pos, opts);
+    const groundTop = playerPos.y; // 腳下的地面頂面
+    const isSolid = (_x: number, y: number, _z: number): boolean => y < groundTop;
+    for (let i = 0; i < 600; i++) drops = stepDrops(drops, 0.02, isSolid); // 12 秒
+    const d = drops[0];
+    expect(d.pos.y).toBeCloseTo(groundTop + SETTLE_OFFSET, 2); // 落在腳下的地面上
+    const dist = Math.hypot(d.pos.x - playerPos.x, d.pos.z - playerPos.z);
+    const analytic = PLAYER_DROP_FORWARD_OFFSET + PLAYER_DROP_THROW_SPEED / Math.log(10);
+    expect(dist).toBeGreaterThan(1.4);
+    expect(dist).toBeLessThan(1.8);
+    expect(Math.abs(dist - analytic)).toBeLessThan(0.1); // ≈1.586（實測 ≈1.61）
   });
 });
 

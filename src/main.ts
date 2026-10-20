@@ -329,9 +329,14 @@ function resetCameraFov(): void {
  *
  *  - 疾跑狀態歸零 → 不會有跨局／跨模式的「雙擊 W 鎖存」殘留。
  *  - FOV 硬回到 `BASE_FOV`（70）→ 不帶著上一個情境的疾跑視野進新局／讀檔，
- *    也不讓模式切換（只能從暫停選單觸發）時的凍結世界停在 ≈77°。 */
+ *    也不讓模式切換（只能從暫停選單觸發）時的凍結世界停在 ≈77°。
+ *  - 一併清掉上一幀的撞牆角度（`lastWallAngleDeg = null`）→ 避免新局／切模式
+ *    的**第一幀**誤判：狀態機吃的是「上一幀的撞牆夾角」，若上一局最後一幀是
+ *    正面撞牆（> 8°），新局第一幀會讀到那個殘留值而誤判成「撞牆取消」→
+ *    該幀不疾跑（即使同時按住 Ctrl）。 */
 function resetSprintAndFov(): void {
   sprintState = createSprintState();
+  lastWallAngleDeg = null;
   resetCameraFov();
 }
 
