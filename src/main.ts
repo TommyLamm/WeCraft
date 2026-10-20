@@ -19,8 +19,14 @@ import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
-import { createPlayer, stepPlayer, EYE_HEIGHT, type PlayerState } from './player/physics';
+import { createPlayer, stepPlayer, EYE_HEIGHT, type MoveInput, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
+// B2.1 疾跑狀態機：規則本體（取消條件／飢餓門檻／鎖存）在 player/sprint.ts，
+// main 只餵每幀上下文並取用 `sprintState.active`。
+import { createSprintState, updateSprint, type SprintState } from './player/sprint';
+// B2.1 疾跑 FOV：core/fov.ts 只算數值（目標值＋指數平滑），相機的套用與
+// `updateProjectionMatrix()` 由 main 負責（見主迴圈相機區）。
+import { BASE_FOV, sprintFov, stepFov } from './core/fov';
 import {
   createVitals,
   damage,
@@ -111,6 +117,35 @@ import {
   ADVANCEMENTS,
   type AdvancementEvent,
 } from './core/advancements';
+
+// ---- B2.1 唯讀 debug hook（Task 9 接線）----
+// 用途：Task 13 的 Playwright 驗收需要在真實瀏覽器裡讀取「即時狀態」
+// （疾跑／FOV／飢餓／座標／熱鍵欄／掉落物／已改動方塊數）。
+// **唯讀**：每個欄位都是 getter，只回傳快照，不改變任何遊戲行為；內容全部是
+// 本機遊戲資料，沒有敏感資訊。Task 11 會再補 `viewMode` 欄位。
+interface WecraftDebug {
+  /** 本幀是否處於疾跑（= `sprintState.active`，也就是真正餵給物理層的旗標）。 */
+  sprint: () => boolean;
+  /** 相機目前的垂直 FOV（度）。 */
+  fov: () => number;
+  /** 當前飢餓值；創造模式為 `null`（沒有飢餓條）。 */
+  hunger: () => number | null;
+  /** 玩家腳底中心的座標。 */
+  pos: () => { x: number; y: number; z: number };
+  /** 熱鍵欄九格的（物品、數量）快照；空格為 `null`。 */
+  hotbar: () => Array<{ item: ItemId; count: number } | null>;
+  /** 地面上尚未被拾取的掉落物數量。 */
+  drops: () => number;
+  /** 世界中被玩家改動過的方塊數。 */
+  modified: () => number;
+}
+
+declare global {
+  interface Window {
+    /** B2.1 驗收用唯讀 hook（見上方 `WecraftDebug`）；尚未掛載時為 undefined。 */
+    __wecraft?: WecraftDebug;
+  }
+}
 
 // 'dead' (Task 9): frozen world; Task 10 mounts the death screen + respawn flow
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
@@ -208,6 +243,34 @@ let showDebug = false;
 let thirdPerson = false;
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- B2.1 疾跑狀態（Task 9 接線）----
+// 規則本體在 player/sprint.ts（純邏輯，不碰 DOM／Three）；這裡只持有「本幀的
+// 狀態」並在每幀餵上下文。
+// **有效疾跑一律看 `sprintState.active`**：`input.state.sprint` 的語意是
+// 「Ctrl 是否按住」（Task 2 未改它，Q keydown 的整疊丟棄也取樣自它）——兩者
+// 不可混用，**絕不**把 `state.sprint` 改寫成疾跑結果（否則普通 Q 會變成
+// 整疊丟棄）。
+let sprintState: SprintState = createSprintState();
+// 上一幀 `stepPlayer` 回報的撞牆夾角（度）→ 下一幀餵給狀態機（8° 門檻）。
+let lastWallAngleDeg: number | null = null;
+// 「上一幀攻擊命中」的一次性旗標：攻擊分支設 true，狀態機讀取後立即清掉
+// （攻擊命中取消疾跑，且取消後不會自己恢復）。
+let attackedThisFrame = false;
+// 相機 FOV 的平滑值（core/fov.ts 的 `stepFov` 產出）→ 相機實際套用的值。
+let fovCurrent = BASE_FOV;
+
+/** B2.1：疾跑狀態與 FOV 歸零（開新局／讀檔進入時呼叫）。
+ *
+ *  - 疾跑狀態歸零 → 不會有跨局的「雙擊 W 鎖存」殘留。
+ *  - FOV 硬回到 `BASE_FOV`（70）→ 新局／讀檔不帶著上一局的疾跑視野。
+ *  （模式切換只重置疾跑狀態：FOV 由下一幀的平滑自然回到 70。） */
+function resetSprintState(): void {
+  sprintState = createSprintState();
+  fovCurrent = BASE_FOV;
+  gs.camera.fov = BASE_FOV;
+  gs.camera.updateProjectionMatrix();
+}
 
 // ---- Crafting state (Task 11) ----
 // The grid is owned here (not by the UI) so items staged in it survive between
@@ -630,6 +693,9 @@ bus.on('mode-changed', ({ mode }) => {
   modeStash = saveModeState(modeStash, currentMode, [...hotbar], vitals);
   currentMode = mode;
   input.setFlyEnabled(currentMode === 'creative'); // survival: force a landing
+  // B2.1：疾跑狀態歸零 → 跨模式不殘留「雙擊 W 鎖存」（創造模式切回生存時
+  // 不會莫名其妙地處於疾跑）。FOV 不在此硬重置：下一幀的平滑會自然回到 70。
+  sprintState = createSprintState();
   settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
@@ -1421,6 +1487,9 @@ function quitToTitle(): void {
   audio.stopAmbience(); // Phase 3 Task 10: kill the wind bed + chirp/cricket timer
   sessionStarted = false;
   resetPlayerToSpawn();
+  // B2.1：標題畫面的環繞相機也用同一台相機 → 疾跑 FOV 必須在離開遊戲時
+  // 歸零（否則標題畫面會停在 77° 的疾跑視野）。
+  resetSprintState();
   setState('title');
 }
 
@@ -1494,6 +1563,7 @@ function startGame(): void {
   craftExcess = [];
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
+  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
   cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
   sessionStarted = true;
   resetPlayerToSpawn();
@@ -1587,6 +1657,7 @@ function continueGame(payload: SavePayload): void {
   advancements = payload.advancements;
 
   clock.t = payload.time.t; // 4. time-of-day
+  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
   // Phase 3 Task 10: arm + start audio for the restored session (the Continue
   // click IS the gesture); ambience follows the restored time-of-day.
   audio.ensureStarted();
@@ -1606,6 +1677,7 @@ function continueGame(payload: SavePayload): void {
  *  cloud never carries voxel edits). Body = continueGame's entry tail only. */
 function continueFromCloud(): void {
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
+  resetSprintState(); // B2.1: fresh sprint latch + FOV back to 70
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
@@ -1743,6 +1815,19 @@ if (typeof ResizeObserver !== 'undefined') {
 window.visualViewport?.addEventListener('resize', syncViewportSize);
 
 hud.setHotbar(hotbar, selected);
+// B2.1 唯讀 debug hook（Task 9）：**僅供 Playwright 驗收讀取**（Task 13）——
+// 全部是 getter，唯讀、不改變任何遊戲行為，內容只有本機遊戲資料。
+// getter 讀的是模組層級的 live binding（`sprintState`／`vitals`／`player`／
+// `hotbar`／`drops`），所以每次取值都是當下的狀態。
+window.__wecraft = {
+  sprint: () => sprintState.active,
+  fov: () => gs.camera.fov,
+  hunger: () => (vitals ? vitals.hunger : null), // 創造模式 → null（無飢餓條）
+  pos: () => ({ x: player.position.x, y: player.position.y, z: player.position.z }),
+  hotbar: () => hotbar.map((s) => (s ? { item: s.item, count: s.count } : null)),
+  drops: () => drops.length,
+  modified: () => world.modified.size,
+};
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,
 // async → title with the conditional button). loadGame never rejects (null on
@@ -1844,6 +1929,28 @@ gs.renderer.setAnimationLoop(() => {
       audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
     }
 
+    // ---- B2.1 疾跑狀態機（Task 9 接線）----
+    // **每幀順序**：狀態機 → 物理 → 消耗 → 攻擊 → FOV。
+    // 狀態機吃的是「本幀的輸入 ＋ 上一幀的物理/攻擊結果」：
+    //  - `sprintRequested`＝本幀的雙擊 W 脈衝（輸入層已判過時間窗）；
+    //  - `wallAngleDeg`＝**上一幀** `stepPlayer` 回報的撞牆夾角（本幀的碰撞
+    //    還沒發生，只能用上一幀的結果）；
+    //  - `attacked`＝**上一幀**的攻擊命中（攻擊分支在本幀的狀態機之後才跑）。
+    // 因此這段必須排在 `stepPlayer` 與 `jumpStarted` 之前——疾跑的結果要餵給
+    // 本幀的物理（速度）與消耗（0.1/公尺、0.2 的疾跑跳）。
+    sprintState = updateSprint(sprintState, {
+      forward: input.state.fwd > 0, // 只往前才算疾跑（倒退＝取消）
+      sneak: input.state.sneak, // 潛行與疾跑互斥
+      ctrlHeld: input.state.sprint, // Ctrl 是否按住（**語意不變**）
+      sprintRequested: input.consumeSprintToggle(), // 雙擊 W 的一次性脈衝
+      hunger: vitals ? vitals.hunger : null, // 創造模式 vitals 為 null → 無飢餓門檻
+      flying: player.flying,
+      inWater: player.inWater,
+      wallAngleDeg: lastWallAngleDeg, // 上一幀的撞牆夾角（8° 門檻）
+      attacked: attackedThisFrame, // 上一幀的攻擊命中
+    });
+    attackedThisFrame = false; // 一次性旗標：狀態機讀完即清（下一幀才會再被設）
+
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
     // onGround; water swim-strikes and active flight aren't discrete jumps,
     // so neither launches the 0.05-exhaust jump charge (0.2 when sprinting).
@@ -1859,7 +1966,23 @@ gs.renderer.setAnimationLoop(() => {
     // pre-physics position too.
     const preStepX = player.position.x;
     const preStepZ = player.position.z;
-    stepPlayer(player, input.state, world, dt);
+    // B2.1：物理層拿到的 `sprint` 是「**有效疾跑**」（`sprintState.active`），
+    // 不是 `input.state.sprint`（那只是「Ctrl 是否按住」）。`MoveInput` 改為
+    // 明確組裝 → 物理層不可能誤拿到別的語意。
+    const moveInput: MoveInput = {
+      fwd: input.state.fwd,
+      strafe: input.state.strafe,
+      jump: input.state.jump,
+      sneak: input.state.sneak,
+      sprint: sprintState.active,
+      fly: input.state.fly,
+      flyUp: input.state.flyUp,
+      flyDown: input.state.flyDown,
+    };
+    const step = stepPlayer(player, moveInput, world, dt);
+    // 撞牆夾角立刻更新：下一幀的狀態機要拿它判定 8° 門檻（延遲一幀是刻意的
+    // ——本幀的碰撞結果不可能回頭改變本幀的疾跑）。
+    lastWallAngleDeg = step.wallAngleDeg;
 
     // ---- Fall damage (plan 9.1) — apex lifecycle in player/fallstate.ts ----
     // Contract: airborne → track the peak; grounded landing → distance = peak −
@@ -1974,13 +2097,13 @@ gs.renderer.setAnimationLoop(() => {
       let v = vitals;
       const hpBeforeTick = v.hp;
       const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
-      if (input.state.sprint && moving && !player.flying && !player.inWater) {
+      if (sprintState.active && moving && !player.flying && !player.inWater) {
         // Vanilla bills each metre actually sprinted; the bank (and the
         // > 4-point drain) lives in survival.ts `exhaust`.
         const moved = Math.hypot(player.position.x - preStepX, player.position.z - preStepZ);
         v = exhaust(v, moved * EXHAUST_SPRINT_PER_METER);
       }
-      if (jumpStarted) v = exhaust(v, input.state.sprint && moving ? EXHAUST_SPRINT_JUMP : EXHAUST_JUMP);
+      if (jumpStarted) v = exhaust(v, sprintState.active && moving ? EXHAUST_SPRINT_JUMP : EXHAUST_JUMP);
       v = tickVitals(v, dt); // regen (fast 0.5 s / slow 4 s) + starve: 1 hp per 4 s
       // Task 13: the only hp drop possible here is the starvation tick
       // (exhaust never touches hp, regen only heals) — an hp loss at ~0 hunger
@@ -1988,6 +2111,9 @@ gs.renderer.setAnimationLoop(() => {
       if (v.hp < hpBeforeTick && v.hunger <= 0) deathCause = 'starve';
       setVitals(v); // repaint + emit only on an integer change (see setVitals)
       if (isPlayerDead(v) && state === 'playing') {
+        // B2.1：死亡＝這條命的疾跑狀態結束 → 鎖存清掉（重生不會莫名疾跑），
+        // FOV 回到 70（死亡畫面不會停在 77° 的疾跑視野）。
+        resetSprintState();
         setState('dead'); // death screen + player-died emit + freeze (Task 10)
       }
     }
@@ -2039,6 +2165,24 @@ gs.renderer.setAnimationLoop(() => {
         gs.camera.position.y += 0.5;
       }
 
+      // ---- B2.1 疾跑 FOV（Task 9 接線）----
+      // core/fov.ts 只算數值：目標值（疾跑 70 → 77）＋指數平滑。這裡負責套用
+      // 到相機。**相機層的守衛**：只接受「有限且為正」的值——`sprintFov` 只擋
+      // 非有限的 base，不擋負數；壞值一律退回 `BASE_FOV`，且不污染
+      // `fovCurrent`（下一幀重新平滑，不會卡在壞值上）。
+      const fovTarget = sprintState.active ? sprintFov(BASE_FOV) : BASE_FOV;
+      const fovNext = stepFov(fovCurrent, fovTarget, dt);
+      if (Number.isFinite(fovNext) && fovNext > 0) {
+        fovCurrent = fovNext;
+        // 差異小於 0.01° 時不動相機 → 不必每幀重算投影矩陣。
+        if (Math.abs(gs.camera.fov - fovCurrent) > 0.01) {
+          gs.camera.fov = fovCurrent;
+          gs.camera.updateProjectionMatrix();
+        }
+      } else {
+        fovCurrent = BASE_FOV;
+      }
+
       // 挖掘/放置：crosshair tracks the camera ray — in third person origin must be
       // camera.position (not the eye) with reach extended by the back-offset
       const dir = { x: 0, y: 0, z: 0 };
@@ -2085,6 +2229,9 @@ gs.renderer.setAnimationLoop(() => {
             mobs = atk.mobs;
             attackCd = ATTACK_COOLDOWN_SEC;
             mobRenderer.flashMob(atk.hitId); // 0.1 s white hit flash
+            // B2.1：攻擊命中取消疾跑——設一次性旗標，由**下一幀**的狀態機讀取
+            // （攻擊分支在本幀的狀態機之後才跑，本幀無法回頭取消）。
+            attackedThisFrame = true;
             // Task 9: a landed hit (not a swing) banks vanilla's 0.1
             // exhaustion — hidden until the bank drains saturation/hunger,
             // same path as sprint/jump. Creative (vitals null) never banks.
