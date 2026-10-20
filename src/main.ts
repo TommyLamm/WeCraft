@@ -6,6 +6,9 @@ import { createParticleRenderer } from './render/particles';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
+// B2.4 方塊人玩家模型（第三身顯示）：模型本身無動畫、不參與碰撞，只負責
+// 外觀；位置（腳底）與可見性由 main 每幀餵入。
+import { createPlayerModel } from './render/player-model';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { TerrainWorkerClient } from './world/worker-client';
@@ -27,6 +30,10 @@ import { createSprintState, updateSprint, type SprintState } from './player/spri
 // B2.1 疾跑 FOV：core/fov.ts 只算數值（目標值＋指數平滑），相機的套用與
 // `updateProjectionMatrix()` 由 main 負責（見主迴圈相機區）。
 import { BASE_FOV, sprintFov, stepFov } from './core/fov';
+// B2.4 F5 三態視角與相機姿態：規則本體（視角循環、相機位置與 yaw／pitch）在
+// core/view-mode.ts，是純邏輯、不碰 Three／DOM；main 只把回傳的姿態套到相機，
+// 並讓互動射線一律以相機姿態為準（畫面看到的方向 == 實際互動的方向）。
+import { nextViewMode, viewPose, THIRD_PERSON_DISTANCE, type ViewMode } from './core/view-mode';
 import {
   createVitals,
   damage,
@@ -162,6 +169,8 @@ interface WecraftDebug {
   drops: () => number;
   /** 世界中被玩家改動過的方塊數。 */
   modified: () => number;
+  /** 目前的視角模式（`first`／`back`／`front`）。 */
+  viewMode: () => ViewMode;
 }
 
 declare global {
@@ -201,6 +210,10 @@ const clouds = createClouds(gs.scene, settings.seed);
 // Phase 3 Task 8: first-person held item — camera-attached block cube / icon
 // plane; the icon factory is injected (render/ never imports ui/)
 const viewmodel = createViewmodel(gs.scene, gs.camera, itemIcon);
+// B2.4: the blocky player model for the two third-person views (面後／面前).
+// It is added to the scene once here; every frame main feeds it the player's
+// FEET position + yaw and toggles its visibility (first person hides it).
+const playerModel = createPlayerModel(gs.scene);
 let terrain = new TerrainWorkerClient(settings.seed);
 /** Generation epoch for the async chunk fill (Phase 4 Task 4): a cloud-seed
  *  switch rebuilds `terrain` + the world while fills from the old client may
@@ -264,7 +277,17 @@ const inventory = createInventoryModel(starterSlots(settings.mode), settings.mod
 const hotbar = inventory.slots;
 let selected = 0;
 let showDebug = false;
-let thirdPerson = false;
+// B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
+// 這是**工作階段層級**的狀態：不進存檔，切換模式／新局／讀檔時一律回到
+// `first`（見 `resetViewMode()`），避免玩家一進場就停在第三身。
+let viewMode: ViewMode = 'first';
+/** B2.4：視角回到第一人稱。
+ *
+ *  視角是**工作階段層級**的狀態（不進存檔）：新局、讀檔、切換遊戲模式時一律
+ *  重置 → 玩家不會在下一局突然看到自己的背面（也不會留著上一局的第三身姿態）。 */
+function resetViewMode(): void {
+  viewMode = 'first';
+}
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
 
@@ -823,6 +846,8 @@ bus.on('mode-changed', ({ mode }) => {
   // 模式切換只能從暫停選單觸發（此時 state !== 'playing' → 主迴圈的 FOV
   // 平滑分支不跑），不重置的話暫停選單背後的凍結世界會停在 ≈77°。
   resetSprintAndFov();
+  // B2.4：切換模式 → 視角回到第一人稱（視角不進存檔、不跨模式殘留）。
+  resetViewMode();
   settings.mode = mode; // keep in-memory settings fresh (title/new-game read it)
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
@@ -1703,6 +1728,7 @@ function startGame(): void {
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
+  resetViewMode(); // B2.4: 新局 → 視角回到第一人稱（不帶上一局的第三身姿態）
   cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
   sessionStarted = true;
   resetPlayerToSpawn();
@@ -1797,6 +1823,7 @@ function continueGame(payload: SavePayload): void {
 
   clock.t = payload.time.t; // 4. time-of-day
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
+  resetViewMode(); // B2.4: 讀檔 → 視角回到第一人稱（視角不進存檔）
   // Phase 3 Task 10: arm + start audio for the restored session (the Continue
   // click IS the gesture); ambience follows the restored time-of-day.
   audio.ensureStarted();
@@ -1817,6 +1844,7 @@ function continueGame(payload: SavePayload): void {
 function continueFromCloud(): void {
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
+  resetViewMode(); // B2.4: 進場 → 視角回到第一人稱
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
@@ -1966,6 +1994,7 @@ window.__wecraft = {
   hotbar: () => hotbar.map((s) => (s ? { item: s.item, count: s.count } : null)),
   drops: () => drops.length,
   modified: () => world.modified.size,
+  viewMode: () => viewMode,
 };
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,
@@ -2291,19 +2320,23 @@ gs.renderer.setAnimationLoop(() => {
         void saveCloudNow('interval');
       }
 
-      // 相機（first-person eye；F5 加 third-person offset）
+      // ---- B2.4 相機姿態（三態視角）----
+      // 姿態本體在 core/view-mode.ts（純邏輯、無狀態）；這裡只把回傳值套到 Three
+      // 相機上：
+      //  - `first`：相機＝眼睛位置，yaw／pitch＝玩家值（第一人稱）。
+      //  - `back` ：相機在玩家**後方** 4 格（高度 +0.5），yaw／pitch＝玩家值
+      //            → 視線方向與玩家一致，畫面裡看得到玩家背面。
+      //  - `front`：相機在玩家**前方** 4 格（高度 +0.5），yaw **反轉 180°**
+      //            （yaw + π）→ 相機面向玩家，看得到玩家正面與臉部貼片。
+      // （修正既有 bug：舊的第三身相機放在玩家的**前方**卻沿用玩家 yaw，
+      //   畫面看到的與實際互動的方向相反。）
       const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
-      gs.camera.position.set(eye.x, eye.y, eye.z);
+      const pose = viewPose(viewMode, eye, player.yaw, player.pitch);
+      gs.camera.position.set(pose.pos.x, pose.pos.y, pose.pos.z);
       gs.camera.rotation.order = 'YXZ';
-      gs.camera.rotation.y = player.yaw;
-      gs.camera.rotation.x = player.pitch;
+      gs.camera.rotation.y = pose.yaw;
+      gs.camera.rotation.x = pose.pitch;
       gs.camera.rotation.z = 0; // defensive: never let residue become roll
-      const back = 4;
-      if (thirdPerson) {
-        gs.camera.position.x -= Math.sin(player.yaw) * back;
-        gs.camera.position.z -= Math.cos(player.yaw) * back;
-        gs.camera.position.y += 0.5;
-      }
 
       // ---- B2.1 疾跑 FOV（Task 9 接線）----
       // core/fov.ts 只算數值：目標值（疾跑 70 → 77）＋指數平滑。這裡負責套用
@@ -2323,23 +2356,29 @@ gs.renderer.setAnimationLoop(() => {
         fovCurrent = BASE_FOV;
       }
 
-      // 挖掘/放置：crosshair tracks the camera ray — in third person origin must be
-      // camera.position (not the eye) with reach extended by the back-offset
-      const dir = { x: 0, y: 0, z: 0 };
-      dir.x = -Math.sin(player.yaw) * Math.cos(player.pitch);
-      dir.y = Math.sin(player.pitch);
-      dir.z = -Math.cos(player.yaw) * Math.cos(player.pitch);
-      const rayOrigin = thirdPerson
-        ? { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z }
-        : eye;
+      // ---- 互動射線：一律以「相機姿態」為準（B2.4）----
+      // 原點＝相機位置、方向＝相機的 yaw／pitch → 準心指向的方塊就是被挖／被放
+      // 的方塊（第一人稱時相機＝眼睛位置，與既有行為等價）。
+      // 面前視角的 `pose.yaw`＝玩家 yaw + π → 射線因此朝**玩家背後**方向，
+      // 與畫面上看到的方向一致（不是「玩家面向的方向」）。
+      const dir = {
+        x: -Math.sin(pose.yaw) * Math.cos(pose.pitch),
+        y: Math.sin(pose.pitch),
+        z: -Math.cos(pose.yaw) * Math.cos(pose.pitch),
+      };
+      const rayOrigin = { x: gs.camera.position.x, y: gs.camera.position.y, z: gs.camera.position.z };
+      // reach 依視角補回「相機 ↔ 玩家」的 4 格距離：第三身時射線是從相機出發的，
+      // 必須多走 4 格才等於「從玩家眼睛出發的 reach」→ 補回後兩種視角的實際
+      // 可互動距離相同（第一人稱補 0 格）。
+      const back = viewMode === 'first' ? 0 : THIRD_PERSON_DISTANCE;
       // reach depends on mode (Task 5): creative 5, survival 4.5 (+ camera back-offset)
-      const reach = reachFor(currentMode) + (thirdPerson ? back : 0);
+      const reach = reachFor(currentMode) + back;
       const hit = raycast(world, rayOrigin, dir, reach);
       // Melee reach (plan: "ray hits mob within 3.5 blocks") is its own constant —
       // the block reach above still governs dig/place. The third-person camera
       // back-offset is added with the same offset logic as block reach, so the
       // effective reach from the eye stays 3.5 in both views.
-      const meleeReach = MELEE_REACH + (thirdPerson ? back : 0);
+      const meleeReach = MELEE_REACH + back;
 
       // ---- 攻擊優先於挖掘（Task 9）：LMB 按住先測 mob，命中則本幀不挖 ----
       // Same origin/dir as the block raycast above, but the 3.5-block melee
@@ -2598,7 +2637,10 @@ gs.renderer.setAnimationLoop(() => {
 
       // UI 脈衝
       if (input.consumeToggleDebug()) showDebug = !showDebug;
-      if (input.consumeToggleView()) thirdPerson = !thirdPerson;
+      // B2.4：F5 循環切換三態視角（first → back → front → first）。
+      // **只切視角**：不碰 pointer lock、不碰 Esc／iframe 的既有路由。
+      // 切換在下一幀生效（姿態是每幀從 viewMode 重算的）。
+      if (input.consumeToggleView()) viewMode = nextViewMode(viewMode);
       if (input.consumeToggleInventory()) {
         setState('inventory');
         document.exitPointerLock?.();
@@ -2682,8 +2724,8 @@ gs.renderer.setAnimationLoop(() => {
   // Phase 3 Task 8: held-item viewmodel — a cheap cached compare tracks the
   // selected slot (this tail runs after spendFromSlot/slot switches, so the
   // model swaps the same frame), then the swing/bob pose is applied. Swing and
-  // bob advance only while playing; third person and every non-playing state
-  // hide the group.
+  // bob advance only while playing; the third-person views and every
+  // non-playing state hide the group.
   const heldItem = hotbar[selected]?.item ?? null;
   if (heldItem !== heldViewmodelItem) {
     heldViewmodelItem = heldItem;
@@ -2691,9 +2733,16 @@ gs.renderer.setAnimationLoop(() => {
   }
   viewmodel.update(
     state === 'playing' ? dt : 0,
-    state === 'playing' && !thirdPerson,
+    state === 'playing' && viewMode === 'first',
     Math.hypot(player.velocity.x, player.velocity.z),
   );
+
+  // B2.4 玩家模型（方塊人）：只在第三身（面後／面前）顯示，第一人稱隱藏；
+  // 非 playing 狀態（標題／暫停／背包／死亡）一律隱藏。
+  // **位置傳玩家腳底**（`player.position`，不是眼睛高度 +1.62）→ 模型底面貼地。
+  // 姿態每幀同步（模型無動畫，只需要位置與朝向）。
+  playerModel.setPose(player.position, player.yaw);
+  playerModel.setVisible(state === 'playing' && viewMode !== 'first');
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
