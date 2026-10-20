@@ -4,15 +4,17 @@ import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 import { Noise } from '../core/noise';
 
-// Known desert chunk for seed 1337 (scanned cx,cz in [-8,8): (3,-2) has 256 sand columns).
-const SAND_SEED = 1337;
-const SAND_CX = 3;
-const SAND_CZ = -2;
+// 生成器無關的掃描範圍：種子 1337 底下，世界座標 (0,0)–(63,63) 共 4×4 個區塊。
+// 舊測試把「哪一塊是沙地／哪一塊是水」寫死成座標，新生成器的地形本來就不同
+// → 這些斷言會釘死在舊生成器上。改以「掃描範圍內所有符合條件的柱」來驗證，
+// 斷言的實質（沙地不長樹／海面以下填滿水）不變。
+const SCAN_SEED = 1337;
+const SCAN_CHUNKS = 4; // 每軸 4 個區塊 = 64×64 格
 
-// Known chunk with columns below sea level for seed 1337 (scan found water at (-7,3)).
+// 種子 1337 底下仍有水柱的區塊（陸海交界，掃描後選定）。
 const WATER_SEED = 1337;
-const WATER_CX = -7;
-const WATER_CZ = 3;
+const WATER_CX = 2;
+const WATER_CZ = -2;
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
@@ -82,23 +84,28 @@ describe('generateChunk', () => {
     expect(h1).toBeLessThan(CHUNK_HEIGHT);
   });
 
-  it('no trees on sand columns', () => {
-    const c = generateChunk(SAND_CX, SAND_CZ, SAND_SEED);
-    let sandCount = 0;
+  it('no tree grows on a sand column', () => {
+    let sandColumns = 0;
     let logsAboveSand = 0;
-    for (let z = 0; z < CHUNK_SIZE; z++) {
-      for (let x = 0; x < CHUNK_SIZE; x++) {
-        const groundY = topTerrainY(c, x, z);
-        if (groundY < 0) continue;
-        if (c[chunkIndex(x, groundY, z)] === BLOCK.SAND) {
-          sandCount++;
-          for (let y = groundY + 1; y < CHUNK_HEIGHT; y++) {
-            if (c[chunkIndex(x, y, z)] === BLOCK.LOG) logsAboveSand++;
+    for (let cz = 0; cz < SCAN_CHUNKS; cz++) {
+      for (let cx = 0; cx < SCAN_CHUNKS; cx++) {
+        const c = generateChunk(cx, cz, SCAN_SEED);
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            const groundY = topTerrainY(c, x, z);
+            if (groundY < 0) continue;
+            if (c[chunkIndex(x, groundY, z)] !== BLOCK.SAND) continue;
+            sandColumns++;
+            for (let y = groundY + 1; y < CHUNK_HEIGHT; y++) {
+              if (c[chunkIndex(x, y, z)] === BLOCK.LOG) logsAboveSand++;
+            }
           }
         }
       }
     }
-    expect(sandCount).toBeGreaterThan(0);
+    // 掃描範圍內必須真的有沙柱，否則這個案例等於沒有驗證到東西
+    expect(sandColumns).toBeGreaterThan(0);
+    if (sandColumns === 0) return;
     expect(logsAboveSand).toBe(0);
   });
 
@@ -155,21 +162,23 @@ describe('generateChunk', () => {
     }
   });
 
-  it('columns below sea level are filled with water', () => {
+  it('every column below sea level is filled with water up to sea level', () => {
     const c = generateChunk(WATER_CX, WATER_CZ, WATER_SEED);
     const baseX = WATER_CX * CHUNK_SIZE;
     const baseZ = WATER_CZ * CHUNK_SIZE;
-    let submerged = 0;
+    let waterColumns = 0;
     for (let z = 0; z < CHUNK_SIZE; z++) {
       for (let x = 0; x < CHUNK_SIZE; x++) {
         const h = surfaceHeight(baseX + x, baseZ + z, WATER_SEED);
-        if (h < SEA_LEVEL) {
-          expect(c[chunkIndex(x, h + 1, z)]).toBe(BLOCK.WATER);
-          submerged++;
+        if (h >= SEA_LEVEL) continue;
+        waterColumns++;
+        for (let y = h + 1; y <= SEA_LEVEL; y++) {
+          expect(c[chunkIndex(x, y, z)]).toBe(BLOCK.WATER);
         }
       }
     }
-    expect(submerged).toBeGreaterThan(0);
+    // 這個區塊必須真的有水柱，否則上面那圈斷言永遠不會執行（＝弱化）
+    expect(waterColumns).toBeGreaterThan(0);
   });
 
   it('has caves below the surface', () => {

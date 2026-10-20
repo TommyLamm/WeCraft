@@ -1,8 +1,11 @@
 import { Noise, hash2 } from '../core/noise';
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
+import { SEA_LEVEL, surfaceHeight } from './terrain-noise';
 
-export const SEA_LEVEL = 62;
+// 高度與海平面改由 terrain-noise 提供（多層噪音：海陸／侵蝕／山脊），
+// 這裡只做轉出，既有 import 路徑（`./world/terrain`）不變。
+export { SEA_LEVEL, surfaceHeight };
 
 export type Biome = 'plains' | 'desert' | 'forest' | 'snow';
 
@@ -16,22 +19,11 @@ export function pickBiome(temp: number, moist: number): Biome {
   return 'plains';
 }
 
-const noiseCache = new Map<number, Noise>();
-
-function heightNoise(seed: number): Noise {
-  let n = noiseCache.get(seed);
-  if (!n) {
-    n = new Noise(seed);
-    noiseCache.set(seed, n);
-  }
-  return n;
-}
-
 const biomeNoiseCache = new Map<number, Noise>();
 
 /** Biome noise for `seed` — `new Noise(seed ^ 0x9e3779b9)`, memoized by the
- *  ORIGINAL seed like `heightNoise` (the constructor shuffles 256 entries, so
- *  the 0.5 s F3/ fog sampling must not rebuild it). */
+ *  ORIGINAL seed (the constructor shuffles 256 entries, so the 0.5 s F3/ fog
+ *  sampling must not rebuild it). */
 function biomeNoise(seed: number): Noise {
   let n = biomeNoiseCache.get(seed);
   if (!n) {
@@ -39,15 +31,6 @@ function biomeNoise(seed: number): Noise {
     biomeNoiseCache.set(seed, n);
   }
   return n;
-}
-
-export function surfaceHeight(x: number, z: number, seed: number): number {
-  const heightN = heightNoise(seed);
-  const cont = heightN.fbm2(x * 0.0035, z * 0.0035, 4);
-  const ridgeRaw = heightN.noise2(x * 0.008 + 100, z * 0.008 + 100);
-  const ridge = 1 - Math.abs(ridgeRaw);
-  const h = 66 + cont * 28 + ridge * ridge * 22;
-  return Math.max(4, Math.min(CHUNK_HEIGHT - 10, Math.floor(h)));
 }
 
 /** Biome at a world column — the exact same noise + sampling as
