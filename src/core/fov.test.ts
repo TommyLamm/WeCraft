@@ -46,6 +46,40 @@ describe('stepFov', () => {
     expect(v).toBeCloseTo(70, 3);
   });
 
+  it('stepFov converges to the target in one step for a huge finite dt', () => {
+    // 極大（但**有限**）的 dt 走指數分支：e^{−dt/τ} 在數值上溢位為 0 → 係數 1
+    // → 一步直接收斂到目標（不 NaN、不超調）。
+    expect(stepFov(70, 77, 1e6)).toBe(77);
+    expect(stepFov(70, 77, 1e9)).toBe(77);
+    expect(stepFov(70, 77, Number.MAX_VALUE)).toBe(77);
+    expect(stepFov(73.5, 77, 1e6)).toBe(77);
+    // 反向（77 → 70）同理
+    expect(stepFov(77, 70, 1e9)).toBe(70);
+    expect(stepFov(70, 77, 1e9)).toBeLessThanOrEqual(77);
+    expect(Number.isFinite(stepFov(70, 77, 1e9))).toBe(true);
+    // 與「dt = Infinity」**刻意不同**：Infinity 屬非有限 → 視為「本幀沒有時間
+    // 流逝」，凍結在 current，不會跳到目標（見 stepFov 的 JSDoc）。
+    expect(stepFov(70, 77, Infinity)).toBe(70);
+  });
+
+  it('repeated sprint toggling stays finite, stays in range, and converges to the target', () => {
+    let v = 70;
+    // 30 輪「疾跑開（77）→ 疾跑關（70）」；每段 60 步（1 秒 ≈ 10 個時間常數 τ）
+    for (let cycle = 0; cycle < 30; cycle++) {
+      for (const target of [77, 70]) {
+        for (let i = 0; i < 60; i++) {
+          const next = stepFov(v, target, 1 / 60);
+          expect(Number.isFinite(next)).toBe(true); // 不得產生 NaN
+          expect(next).toBeGreaterThanOrEqual(70); // 不低於基準 FOV
+          expect(next).toBeLessThanOrEqual(77); // 不超調
+          expect(Math.abs(next - v)).toBeLessThan(2); // 每步不跳變（全量來回 7 度）
+          v = next;
+        }
+      }
+    }
+    expect(v).toBeCloseTo(70, 3); // 收斂回最後一個目標（70）
+  });
+
   it('repairs a non-finite current or target with the base FOV', () => {
     expect(stepFov(NaN, 77, 0.1)).toBe(BASE_FOV);
     expect(stepFov(70, NaN, 0.1)).toBe(BASE_FOV);
