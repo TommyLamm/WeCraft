@@ -6,7 +6,15 @@ describe('BIOME_FOG_TINT', () => {
     expect(BIOME_FOG_TINT.plains).toBe(0xffffff);
     expect(BIOME_FOG_TINT.desert).toBe(0xffd9a0);
     expect(BIOME_FOG_TINT.forest).toBe(0xc2e0b2);
-    expect(BIOME_FOG_TINT.snow).toBe(0xe8f4ff);
+    // 舊的 `snow` 生態在 B3.2 改名為 `snowy_plains`（色值沿用 0xe8f4ff）
+    expect(BIOME_FOG_TINT.snowy_plains).toBe(0xe8f4ff);
+  });
+
+  it('pins the tint colors of the four new biomes', () => {
+    expect(BIOME_FOG_TINT.birch_forest).toBe(0xd2e8bc);
+    expect(BIOME_FOG_TINT.taiga).toBe(0xb8d4c8);
+    expect(BIOME_FOG_TINT.mountains).toBe(0xdce6f2);
+    expect(BIOME_FOG_TINT.ocean).toBe(0xa8c8e8);
   });
 });
 
@@ -36,11 +44,20 @@ describe('applyBiomeTint', () => {
 
   it('strength = 1 reaches the tint exactly', () => {
     expect(applyBiomeTint(0x000000, 'forest', 1)).toBe(0xc2e0b2);
-    expect(applyBiomeTint(0x000000, 'snow', 1)).toBe(0xe8f4ff);
+    expect(applyBiomeTint(0x000000, 'snowy_plains', 1)).toBe(0xe8f4ff);
   });
 
   it('every tinted biome moves the color toward its tint', () => {
-    for (const biome of ['desert', 'forest', 'snow'] as const) {
+    // plains 是中性色（白色）→ 會被短路跳過，這裡只驗其餘 7 種生態
+    for (const biome of [
+      'desert',
+      'forest',
+      'snowy_plains',
+      'birch_forest',
+      'taiga',
+      'mountains',
+      'ocean',
+    ] as const) {
       expect(applyBiomeTint(0x808080, biome)).not.toBe(0x808080);
     }
   });

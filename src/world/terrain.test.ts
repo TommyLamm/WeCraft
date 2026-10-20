@@ -1,8 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { generateChunk, surfaceHeight, pickBiome, biomeAt, SEA_LEVEL } from './terrain';
+import {
+  generateChunk,
+  surfaceHeight,
+  pickBiome,
+  biomeAt,
+  surfaceBlockOf,
+  subsurfaceBlockOf,
+  SEA_LEVEL,
+  type Biome,
+} from './terrain';
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
-import { Noise } from '../core/noise';
+import { temperature, moisture } from './terrain-noise';
 
 // 生成器無關的掃描範圍：種子 1337 底下，世界座標 (0,0)–(63,63) 共 4×4 個區塊。
 // 舊測試把「哪一塊是沙地／哪一塊是水」寫死成座標，新生成器的地形本來就不同
@@ -220,29 +229,51 @@ describe('generateChunk', () => {
 });
 
 describe('pickBiome', () => {
-  it('classifies the four biomes', () => {
-    expect(pickBiome(0.4, -0.2)).toBe('desert');
-    expect(pickBiome(-0.4, 0)).toBe('snow');
-    expect(pickBiome(0, 0.2)).toBe('forest');
-    expect(pickBiome(0, 0)).toBe('plains');
+  // 判定順序（順序即優先級）：海洋 → 高山 → 雪原 → 針葉林 → 沙漠 → 白樺林 → 森林 → 平原。
+  // 舊的 `pickBiome(temp, moist)` 舊簽名／舊門檻（4 種生態）在 B3.2 改成
+  // `pickBiome({ height, temp, moist })`（8 種生態），門檻等號落點的覆蓋在
+  // 下一個案例（the biome thresholds are strict at the boundary）補齊。
+  it('classifies the eight biomes', () => {
+    expect(pickBiome({ height: 50, temp: 0, moist: 0 })).toBe('ocean');
+    expect(pickBiome({ height: 100, temp: 0, moist: 0 })).toBe('mountains');
+    expect(pickBiome({ height: 70, temp: -0.30, moist: 0.2 })).toBe('snowy_plains');
+    expect(pickBiome({ height: 70, temp: -0.16, moist: -0.10 })).toBe('taiga');
+    expect(pickBiome({ height: 70, temp: 0.20, moist: -0.20 })).toBe('desert');
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.26 })).toBe('birch_forest');
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.09 })).toBe('forest');
+    expect(pickBiome({ height: 70, temp: 0, moist: -0.12 })).toBe('plains');
   });
 
-  it('uses strict thresholds — boundary values fall through', () => {
-    expect(pickBiome(0.35, -0.2)).toBe('plains'); // desert needs temp > 0.35
-    expect(pickBiome(0.4, -0.1)).toBe('plains'); // desert needs moist < −0.1
-    expect(pickBiome(-0.35, 0.5)).toBe('forest'); // snow needs temp < −0.35
-    expect(pickBiome(0, 0.15)).toBe('plains'); // forest needs moist > 0.15
+  it('the biome thresholds are strict at the boundary', () => {
+    // 高度門檻（規則 1／2）
+    expect(pickBiome({ height: 63, temp: 0, moist: 0 })).toBe('ocean'); // h ≤ 63 → ocean
+    expect(pickBiome({ height: 64, temp: 0, moist: 0 })).not.toBe('ocean'); // h = 64 不再是 ocean
+    expect(pickBiome({ height: 92, temp: 0, moist: 0 })).toBe('mountains'); // h ≥ 92 → mountains
+    expect(pickBiome({ height: 91, temp: 0, moist: 0 })).not.toBe('mountains');
+    // 氣溫門檻（規則 3／4）
+    expect(pickBiome({ height: 70, temp: -0.24, moist: 0.2 })).toBe('taiga'); // temp = −0.24 不再是 snowy_plains
+    expect(pickBiome({ height: 70, temp: -0.25, moist: 0.2 })).toBe('snowy_plains');
+    expect(pickBiome({ height: 70, temp: -0.12, moist: -0.10 })).toBe('plains'); // temp = −0.12 不再是 taiga
+    // 濕度門檻（規則 6／7）
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.20 })).toBe('forest'); // moist = 0.20 不是 birch_forest
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.21 })).toBe('birch_forest');
+    expect(pickBiome({ height: 70, temp: 0, moist: 0.00 })).toBe('plains'); // moist = 0.00 不是 forest
+    // 沙漠門檻（規則 5）
+    expect(pickBiome({ height: 70, temp: 0.08, moist: -0.08 })).not.toBe('desert'); // 兩個門檻都是嚴格不等於
+    expect(pickBiome({ height: 70, temp: 0.09, moist: -0.09 })).toBe('desert');
   });
 
-  it('checks snow before forest (priority)', () => {
-    expect(pickBiome(-0.4, 0.5)).toBe('snow');
+  it('the biome order gives the earlier rule priority', () => {
+    // 高度優先於氣候：山頂就算很冷也是高山
+    expect(pickBiome({ height: 100, temp: -0.30, moist: 0 })).toBe('mountains');
+    // 海洋優先於沙漠：海裡就算又熱又乾也是海洋
+    expect(pickBiome({ height: 50, temp: 0.3, moist: -0.3 })).toBe('ocean');
   });
 });
 
 describe('biomeAt', () => {
-  it("matches generateChunk's noise construction exactly (deterministic)", () => {
+  it('matches the climate field sampling exactly (deterministic)', () => {
     const seed = 1337;
-    const n = new Noise(seed ^ 0x9e3779b9);
     const points: Array<[number, number]> = [
       [0, 0],
       [8, 8],
@@ -251,16 +282,34 @@ describe('biomeAt', () => {
       [1e4, -1e4],
     ];
     for (const [x, z] of points) {
-      const expected = pickBiome(
-        n.fbm2(x * 0.004, z * 0.004, 2),
-        n.fbm2(x * 0.004 + 50, z * 0.004 + 50, 2),
-      );
+      // 氣候場改由 terrain-noise 提供（CLIM_FREQ = 0.002／3 層 fbm），
+      // 這裡用同一組欄位重算 → `biomeAt` 與 `generateChunk` 必須一致。
+      const expected = pickBiome({
+        height: surfaceHeight(x, z, seed),
+        temp: temperature(x, z, seed),
+        moist: moisture(x, z, seed),
+      });
       expect(biomeAt(x, z, seed)).toBe(expected);
-      expect(biomeAt(x, z, seed)).toBe(expected); // memoized Noise stays stable
+      expect(biomeAt(x, z, seed)).toBe(expected); // memoized fields stay stable
     }
   });
 
-  it('agrees with the generated surface material at sampled columns', () => {
+  it('biomeAt matches the pinned reference columns', () => {
+    // 種子 1337 的釘死參考點（每種生態各一個）：改判定門檻或氣候取樣形式都會紅。
+    const cases: Array<[number, number, Biome]> = [
+      [90, 30, 'desert'],
+      [597, -393, 'snowy_plains'],
+      [-492, -600, 'forest'],
+      [576, -600, 'birch_forest'],
+      [-192, -501, 'taiga'],
+      [3, -468, 'mountains'],
+      [183, -600, 'ocean'],
+      [-159, -564, 'plains'],
+    ];
+    for (const [x, z, b] of cases) expect(biomeAt(x, z, 1337)).toBe(b);
+  });
+
+  it('the surface material matches the biome table', () => {
     const seed = 1337;
     const c = generateChunk(0, 0, seed);
     let checked = 0;
@@ -268,13 +317,43 @@ describe('biomeAt', () => {
       for (let lx = 0; lx < CHUNK_SIZE; lx += 5) {
         const y = topTerrainY(c, lx, lz);
         const id = c[chunkIndex(lx, y, lz)];
-        const biome = biomeAt(lx, lz, seed);
-        if (biome === 'desert') expect(id).toBe(BLOCK.SAND);
-        else if (biome === 'snow') expect(id).toBe(BLOCK.SNOW);
-        else expect(id).toBe(BLOCK.GRASS);
+        const h = surfaceHeight(lx, lz, seed);
+        expect(id).toBe(surfaceBlockOf(biomeAt(lx, lz, seed), h));
         checked++;
       }
     }
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+describe('surface blocks', () => {
+  it('the surface table follows the biome rules', () => {
+    expect(surfaceBlockOf('ocean', 60)).toBe(BLOCK.SAND);
+    expect(surfaceBlockOf('desert', 70)).toBe(BLOCK.SAND);
+    expect(surfaceBlockOf('snowy_plains', 70)).toBe(BLOCK.SNOW);
+    expect(surfaceBlockOf('mountains', 120)).toBe(BLOCK.SNOW);
+    expect(surfaceBlockOf('mountains', 106)).toBe(BLOCK.STONE);
+    expect(surfaceBlockOf('mountains', 95)).toBe(BLOCK.GRASS);
+    expect(surfaceBlockOf('plains', 70)).toBe(BLOCK.GRASS);
+    expect(subsurfaceBlockOf('desert')).toBe(BLOCK.SAND);
+    expect(subsurfaceBlockOf('plains')).toBe(BLOCK.DIRT);
+  });
+
+  it('the mountain surface switches at the pinned heights', () => {
+    // 高山：92 ≤ h < 104 草、104 ≤ h < 112 裸岩、h ≥ 112 雪頂（等號落點）
+    expect(surfaceBlockOf('mountains', 92)).toBe(BLOCK.GRASS);
+    expect(surfaceBlockOf('mountains', 103)).toBe(BLOCK.GRASS);
+    expect(surfaceBlockOf('mountains', 104)).toBe(BLOCK.STONE);
+    expect(surfaceBlockOf('mountains', 111)).toBe(BLOCK.STONE);
+    expect(surfaceBlockOf('mountains', 112)).toBe(BLOCK.SNOW);
+  });
+
+  it('the subsurface is sand under ocean and desert, dirt elsewhere', () => {
+    expect(subsurfaceBlockOf('ocean')).toBe(BLOCK.SAND);
+    expect(subsurfaceBlockOf('forest')).toBe(BLOCK.DIRT);
+    expect(subsurfaceBlockOf('birch_forest')).toBe(BLOCK.DIRT);
+    expect(subsurfaceBlockOf('taiga')).toBe(BLOCK.DIRT);
+    expect(subsurfaceBlockOf('snowy_plains')).toBe(BLOCK.DIRT);
+    expect(subsurfaceBlockOf('mountains')).toBe(BLOCK.DIRT);
   });
 });

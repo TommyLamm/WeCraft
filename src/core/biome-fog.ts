@@ -1,19 +1,27 @@
 /** Biome fog tinting (pure — no Three/DOM).
  *  Phase 3 Task 6: the day/night fog color is nudged toward a per-biome tint
- *  so walking from plains into desert/forest/snow subtly recolors the haze
- *  and the horizon. `main.ts` samples the biome every 0.5 s and passes the
- *  tinted colors to `scene.setDayNight` (fog + background). */
+ *  so walking from plains into desert/forest/snowy_plains subtly recolors the
+ *  haze and the horizon. `main.ts` samples the biome every 0.5 s and passes
+ *  the tinted colors to `scene.setDayNight` (fog + background).
+ *  B3 Task 2: the table grew from 4 to 8 biomes (the new ids are the ones
+ *  `biomeAt` reports: ocean / birch_forest / taiga / snowy_plains / mountains). */
 
 import { lerpColor } from './daynight';
 import type { Biome } from '../world/terrain';
 
 /** Per-biome tint target. plains is WHITE because it is the neutral biome —
- *  see `applyBiomeTint`, which deliberately short-circuits it. */
+ *  see `applyBiomeTint`, which deliberately short-circuits it.
+ *  `Record<Biome, number>` is exhaustive: adding a biome without a color
+ *  here is a compile error. */
 export const BIOME_FOG_TINT: Record<Biome, number> = {
+  ocean: 0xa8c8e8,
   plains: 0xffffff,
-  desert: 0xffd9a0,
   forest: 0xc2e0b2,
-  snow: 0xe8f4ff,
+  birch_forest: 0xd2e8bc,
+  taiga: 0xb8d4c8,
+  snowy_plains: 0xe8f4ff,
+  desert: 0xffd9a0,
+  mountains: 0xdce6f2,
 };
 
 const NEUTRAL_TINT = 0xffffff;
