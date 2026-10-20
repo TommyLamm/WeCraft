@@ -71,13 +71,14 @@
 | 開始疾跑的門檻 | 生存模式 `hunger > 6`（即 ≥ 7）才允許開始；創造模式（無飢餓）不受限 | Sprinting §Activating「at 6 or below」＋ 歷史條目「requires **more than 6** points of food」 |
 | 疾跑中的取消門檻 | 疾跑中 `hunger ≤ 6` → **立即**取消疾跑 | Sprinting §Usage「ends if the hunger bar reduces to 6 or less」 |
 | 恢復 | 回到 `hunger ≥ 7` 即可再次開始疾跑，**不設額外鎖定** | 同上（見下方說明） |
+| 水中／飛行 | 本批**取消**疾跑（`in-water`／`flying`）——**刻意簡化**：原版允許在水中游泳時疾跑、創造模式飛行中也可疾跑 | 計畫已定案的簡化；README〈與原版的差異〉必須列出 |
 
 Food 頁「until the hunger value exceeds 7」被解讀為「失去能力後要恢復」的敘述用詞，**不採用其字面的 ≥8 解讀**：Sprinting 頁兩處都寫 6，原版歷史條目明說「more than 6 points of food」，兩頁的樞紐數值是同一個 6。本批只認「6」這一個門檻值，程式裡只有 `SPRINT_MIN_HUNGER = 6` 這一個常數，開始與取消都用它（`>6` 可開始／`≤6` 取消）。
 
 其他已查證的疾跑行為（minecraft.wiki/Sprinting，2026-10-20）：
 
 - 「Sprinting allows the player to move at around **5.612 meters/second**」→ 本作沿用既有 `SPRINT_SPEED = 5.6`（`src/player/physics.ts:10`），不動。
-- 「Sprinting ends when the player collides with a solid block at an angle of **greater than 8 degrees**」；§History 1.21.4 (24w44a)：「Increased the angle at which colliding with blocks does not prevent sprinting from 5.5 to 8 degrees.」→ 本批門檻 **> 8°**（剛好 8° 不取消）。
+- 「Sprinting ends when the player collides with a solid block at an angle of **greater than 8 degrees**」；§History 1.18 (21w41a)：「Increased the angle at which colliding with blocks does not prevent sprinting from 5.5 to 8 degrees.」→ 本批門檻 **> 8°**（剛好 8° 不取消）。**注意**：1.21.4 (24w44a) 是「使玩家減速的動作現在會取消疾跑」，本批**未實作**該規則，程式註解不得暗示已實作。
 - 「Players who attack while sprinting deal a sprint-knockback attack, inflicting additional knockback and **canceling the sprint**.」→ 攻擊命中取消疾跑（清鎖存）。
 - 「Sprinting **pauses** when the player eats food or drinks potions, but pressing sprint while eating food or potions does not start sprinting.」→ 本批沒有「進食持續」機制（進食是一按即吃，見 `src/player/eat.ts`），此條**不適用**，列入實作時複核清單。
 - Sprinting §Activating：「To sprint, the player can press sprint while moving, or **double tap forward**.」
