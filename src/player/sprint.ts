@@ -24,9 +24,12 @@
  *    `hunger === null` 代表創造模式（無飢餓條）→ 不受此門檻限制。
  *  - `wall`：撞牆角度。minecraft.wiki/Sprinting §Usage：「Sprinting
  *    ends when the player collides with a solid block at an angle of greater
- *    than 8 degrees」，§History 1.21.4 (24w44a)：「Increased the angle at
+ *    than 8 degrees」，§History **21w41a（1.18）**：「Increased the angle at
  *    which colliding with blocks does not prevent sprinting from 5.5 to 8
  *    degrees」→ 門檻是**嚴格大於** 8°（剛好 8° 不取消）。
+ *    （出處是 21w41a／1.18，不是 24w44a。另：24w44a（1.21.4）另有「使玩家
+ *    減速的動作會取消疾跑」的規則，本模組**未實作**該規則——本模組沒有
+ *    「減速即取消」這個取消原因，勿以為已涵蓋。）
  *  - `attacked`：攻擊命中取消疾跑。Sprinting §Usage：「Players who attack
  *    while sprinting deal a sprint-knockback attack … and canceling the
  *    sprint」。
@@ -36,6 +39,11 @@
  *  本批固定 0.35 秒（原版可在選項調整）。**計時判定在輸入層**（Task 2 用
  *  keydown 當下的時間戳比對），本模組只吃 `sprintRequested` 這個脈衝，
  *  因此不受影格率影響。
+ *
+ *  **與原版的刻意差異（計畫 §1 已定案，勿誤讀為原版行為）**：`in-water`、
+ *  `flying` 這兩條取消原因是**刻意簡化**——原版允許在水中疾跑（游泳時照樣
+ *  可疾跑），創造模式飛行中按住疾跑鍵也可讓飛行加速；本批刻意收斂成
+ *  「水中／飛行中即取消疾跑」，屬本批的取捨，**不是**原版行為。
  *
  *  純度：本模組每個函式都回傳**全新物件**，入參一律不被修改（與
  *  survival.ts／fallstate.ts／invuln.ts 同一慣例）。 */
@@ -59,10 +67,11 @@ export interface SprintState {
   active: boolean;
   /** 是否處於「雙擊 W 鎖存」狀態（一次性：被取消即清掉）。 */
   latched: boolean;
-  /** 上一幀 Ctrl 是否按住——只供除錯／後續擴充用。
-   *  **所有判定一律以 `ctx.ctrlHeld` 為準**，本批不依賴此欄位。 */
+  /** 記錄**當前幀**的 `ctx.ctrlHeld`（Ctrl 是否按住）——僅供除錯／後續擴充
+   *  用的紀錄欄位。**所有判定一律以 `ctx.ctrlHeld` 為準**，本批不依賴此欄位。 */
   ctrlHeld: boolean;
-  /** 最近一次取消的原因；沒有取消過則為 `null`。 */
+  /** **本幀**的取消原因；下一幀若沒有新的取消條件就會被清成 `null`
+   *  （不是歷程記錄，只反映當下這一幀的結果）。 */
   lastCancel: SprintCancelReason | null;
 }
 
@@ -122,7 +131,7 @@ export function cancelReason(ctx: SprintContext): SprintCancelReason | null {
  *  - 有取消條件 → 疾跑停止，且**鎖存一併清掉**（一次性語意：撞牆／受攻擊
  *    之後不會自己恢復疾跑）；`lastCancel` 記錄原因。
  *  - 沒有取消條件 → 疾跑成立於「已鎖存」或「Ctrl 按住」任一者；
- *    `lastCancel` 歸 `null`（上一幀的取消原因不再延續）。 */
+ *    `lastCancel` 歸 `null`（取消原因只反映當下這一幀，不會延續到下一幀）。 */
 export function updateSprint(state: SprintState, ctx: SprintContext): SprintState {
   const latched = state.latched || ctx.sprintRequested;
   const reason = cancelReason(ctx);

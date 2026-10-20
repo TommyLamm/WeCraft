@@ -3,6 +3,7 @@ import {
   SPRINT_DOUBLE_TAP_WINDOW_SEC,
   SPRINT_MIN_HUNGER,
   SPRINT_WALL_ANGLE_DEG,
+  cancelReason,
   createSprintState,
   isWallBlock,
   updateSprint,
@@ -79,6 +80,23 @@ describe('sprint — 疾跑狀態機', () => {
     expect(s.active).toBe(true);
   });
 
+  it('hunger recovers to 7 with no extra lockout', () => {
+    // 飢餓 6 → 取消；回到 7 即可再次開始（不設「>7」的額外鎖定）
+    const at6 = updateSprint(createSprintState(), ctx({ ctrlHeld: true, hunger: 6 }));
+    expect(at6.active).toBe(false);
+    expect(at6.lastCancel).toBe('hunger');
+    const at7 = updateSprint(at6, ctx({ ctrlHeld: true, hunger: 7 }));
+    expect(at7.active).toBe(true);
+    expect(at7.lastCancel).toBe(null);
+    // 鎖存路徑一樣：飢餓取消會清掉鎖存，但飢餓回到 7 後雙擊即可重新開始
+    const latched = updateSprint(createSprintState(), ctx({ sprintRequested: true }));
+    const blocked = updateSprint(latched, ctx({ hunger: 6 }));
+    expect(blocked.latched).toBe(false);
+    const again = updateSprint(blocked, ctx({ sprintRequested: true, hunger: 7 }));
+    expect(again.active).toBe(true);
+    expect(again.latched).toBe(true);
+  });
+
   it('a wall hit steeper than 8 degrees cancels sprinting', () => {
     const steep = updateSprint(createSprintState(), ctx({ ctrlHeld: true, wallAngleDeg: 8.1 }));
     expect(steep.lastCancel).toBe('wall');
@@ -120,11 +138,35 @@ describe('sprint — 疾跑狀態機', () => {
 
   it('updateSprint never mutates the previous state', () => {
     const state = createSprintState();
-    const snapshot = { ...state };
     const result = updateSprint(state, ctx({ ctrlHeld: true }));
     expect(state).toEqual({ active: false, latched: false, ctrlHeld: false, lastCancel: null });
-    expect(state).toEqual(snapshot);
     expect(result).not.toBe(state); // 回傳全新物件
+  });
+
+  it('cancelReason reports each cancel reason directly', () => {
+    expect(cancelReason(ctx())).toBe(null);
+    expect(cancelReason(ctx({ forward: false }))).toBe('no-forward');
+    expect(cancelReason(ctx({ sneak: true }))).toBe('sneaking');
+    expect(cancelReason(ctx({ flying: true }))).toBe('flying');
+    expect(cancelReason(ctx({ inWater: true }))).toBe('in-water');
+    expect(cancelReason(ctx({ hunger: 6 }))).toBe('hunger');
+    expect(cancelReason(ctx({ wallAngleDeg: 45 }))).toBe('wall');
+    expect(cancelReason(ctx({ attacked: true }))).toBe('attacked');
+  });
+
+  it('cancel reasons are resolved in a fixed priority order', () => {
+    // 同時成立多個條件時，取檔頭註解寫死的順序中最前者：
+    // no-forward → sneaking → flying → in-water → hunger → wall → attacked
+    expect(cancelReason(ctx({ forward: false, sneak: true }))).toBe('no-forward');
+    expect(cancelReason(ctx({ sneak: true, hunger: 6 }))).toBe('sneaking');
+    expect(cancelReason(ctx({ flying: true, inWater: true }))).toBe('flying');
+    expect(cancelReason(ctx({ inWater: true, hunger: 6 }))).toBe('in-water');
+    expect(cancelReason(ctx({ hunger: 6, wallAngleDeg: 45 }))).toBe('hunger');
+    expect(cancelReason(ctx({ wallAngleDeg: 45, attacked: true }))).toBe('wall');
+    // 同一組條件經由 updateSprint 也必須得到同一個原因
+    const s = updateSprint(createSprintState(), ctx({ forward: false, sneak: true }));
+    expect(s.lastCancel).toBe('no-forward');
+    expect(s.active).toBe(false);
   });
 
   it('isWallBlock uses a strict 8 degree threshold', () => {
