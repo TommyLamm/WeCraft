@@ -1,14 +1,29 @@
+/** 輸入層：把鍵盤／滑鼠事件翻譯成旗標與一次性脈衝（不決定遊戲規則）。
+ *
+ *  雙擊 W 的時間窗取自**輸入事件當下的時間戳**（keydown 裡呼叫
+ *  `performance.now()`），不是幀累加 → 不受影格率影響；視窗失焦／指標解鎖
+ *  即失效（`clearActive()` 清掉「上次按鍵時間」）。
+ *
+ *  疾跑本身能不能成立（飢餓門檻、撞牆、潛行……）由 `src/player/sprint.ts` 的
+ *  狀態機決定；本層只負責送出「請求疾跑」的脈衝。 */
+
 import type { MoveInput } from './physics';
 import type { Settings } from '../core/settings';
+import { SPRINT_DOUBLE_TAP_WINDOW_SEC } from './sprint';
 
 export interface InputState extends MoveInput {
   dig: boolean; // 左鍵按住
   place: boolean; // 右鍵（單擊脈衝，消費後清除）
+  placeHeld: boolean; // 右鍵按住（連放放置用；B2 擁有此欄位）
   slot: number; // 0..8 熱鍵欄（滾輪/數字鍵更新）
   toggleInventory: boolean; // E 脈衝
   toggleDebug: boolean; // F3 脈衝
   toggleView: boolean; // F5 脈衝
   requestPause: boolean; // Esc（pointer lock 釋放時觸發）
+  dropRequest: boolean; // Q 脈衝（丟棄請求）
+  dropWholeStack: boolean; // 該次 Q 是否為 Ctrl+Q（整疊丟棄）
+  dropHeld: boolean; // Q 按住（長按連丟用）
+  sprintToggle: boolean; // 雙擊 W 脈衝（疾跑請求）
 }
 
 export interface InputController {
@@ -21,6 +36,10 @@ export interface InputController {
   consumeToggleDebug(): boolean;
   consumeToggleView(): boolean;
   consumeRequestPause(): boolean;
+  /** 雙擊 W 的疾跑請求脈衝（一次性：讀取後即清掉）。 */
+  consumeSprintToggle(): boolean;
+  /** Q 的丟棄請求；沒有請求時回 `null`，`wholeStack` 表示是否為 Ctrl+Q。 */
+  consumeDrop(): { wholeStack: boolean } | null;
   /** Gate double-tap Space flight (creative-only). Disabling forces an
    *  immediate landing: fly/flyUp/flyDown clear, held keys re-derived. */
   setFlyEnabled(enabled: boolean): void;
@@ -32,8 +51,9 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   const state: InputState = {
     fwd: 0, strafe: 0, jump: false, sneak: false, sprint: false,
     fly: false, flyUp: false, flyDown: false,
-    dig: false, place: false, slot: 0,
+    dig: false, place: false, placeHeld: false, slot: 0,
     toggleInventory: false, toggleDebug: false, toggleView: false, requestPause: false,
+    dropRequest: false, dropWholeStack: false, dropHeld: false, sprintToggle: false,
   };
 
   // Double-tap Space flight is CREATIVE-ONLY (spec §95) — main.ts syncs this
@@ -43,6 +63,8 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   let flyEnabled = false;
   let locked = false;
   let lastSpaceTime = Number.NEGATIVE_INFINITY;
+  // 雙擊 W 的「上次按下時間」（毫秒）；null 代表尚無紀錄（視窗剛清空過）。
+  let lastForwardDownMs: number | null = null;
   let flyToggle = false;
   let mouseMoveHandler: ((dx: number, dy: number) => void) | null = null;
   let lockListeners: Array<(locked: boolean) => void> | null = [];
@@ -80,6 +102,29 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
       const n = Number(e.code.slice(5));
       if (n >= 1 && n <= 9) state.slot = n - 1;
     }
+    if (e.code === 'KeyW') {
+      // 雙擊 W → 疾跑請求（時間窗取自 keydown 當下的時間戳，非幀累加）。
+      // 時間窗「每次 keydown 都刷新」（含 e.repeat 的自動重複）：否則「按住 W
+      // 一秒 → 放開 → 立刻再按一次」會以「最初那一次按」計時（>350 ms）→
+      // 永遠不疾跑。但只有「非重複」的按下才可能觸發疾跑（repeat 不得觸發）——
+      // 兩件事分開處理。
+      const now = performance.now();
+      if (
+        !e.repeat &&
+        lastForwardDownMs !== null &&
+        (now - lastForwardDownMs) / 1000 <= SPRINT_DOUBLE_TAP_WINDOW_SEC
+      ) {
+        state.sprintToggle = true;
+      }
+      lastForwardDownMs = now;
+    }
+    if (e.code === 'KeyQ' && !e.repeat) {
+      // Q → 丟棄請求。`state.sprint` 此時即「Ctrl 是否按住」（每次 keydown 都
+      // 由 updateMove() 重算）→ Ctrl+Q ＝ 整疊丟棄。
+      state.dropRequest = true;
+      state.dropWholeStack = state.sprint;
+      state.dropHeld = true;
+    }
     if (e.code === 'KeyE' && !e.repeat) state.toggleInventory = true;
     if (e.code === 'F3' && !e.repeat) state.toggleDebug = true;
     if (e.code === 'F5' && !e.repeat) state.toggleView = true;
@@ -90,6 +135,7 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   const onKeyUp = (e: KeyboardEvent) => {
     keys.delete(e.code);
     updateMove();
+    if (e.code === 'KeyQ') state.dropHeld = false; // Q 放開 → 停止連丟
   };
 
   const onMouseMove = (e: MouseEvent) => {
@@ -102,10 +148,14 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
   const onMouseDown = (e: MouseEvent) => {
     if (!locked) return;
     if (e.button === 0) state.dig = true;
-    if (e.button === 2) state.place = true;
+    if (e.button === 2) {
+      state.place = true; // 單擊脈衝（消費後清除）
+      state.placeHeld = true; // 按住旗標（連放放置用）
+    }
   };
   const onMouseUp = (e: MouseEvent) => {
     if (e.button === 0) state.dig = false;
+    if (e.button === 2) state.placeHeld = false; // 右鍵放開 → 停止連放
   };
   const onWheel = (e: WheelEvent) => {
     if (!locked) return;
@@ -117,10 +167,16 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
     keys.clear();
     state.dig = false;
     state.place = false;
+    state.placeHeld = false;
     state.toggleInventory = false;
     state.toggleDebug = false;
     state.toggleView = false;
     state.requestPause = false;
+    state.dropRequest = false;
+    state.dropWholeStack = false;
+    state.dropHeld = false;
+    state.sprintToggle = false;
+    lastForwardDownMs = null; // 失焦／解鎖 → 雙擊 W 的時間窗歸零
     updateMove();
   };
 
@@ -164,6 +220,18 @@ export function createInput(canvas: HTMLCanvasElement, settings: Settings): Inpu
     consumePlace() {
       const v = state.place;
       state.place = false;
+      return v;
+    },
+    consumeSprintToggle() {
+      const v = state.sprintToggle;
+      state.sprintToggle = false;
+      return v;
+    },
+    consumeDrop() {
+      if (!state.dropRequest) return null;
+      const v = { wholeStack: state.dropWholeStack };
+      state.dropRequest = false;
+      state.dropWholeStack = false;
       return v;
     },
     consumeToggleInventory() {
