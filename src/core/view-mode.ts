@@ -21,6 +21,10 @@
  *  **面前視角（front）**：相機放在玩家的**前方**（yaw=0 時是 −z 方向），且
  *  **yaw 反轉 180°**（`yaw + π`）→ 相機面向玩家、看得見玩家正面，與原版
  *  「third person from the front」一致。
+ *  **保留（與原版的差異）：pitch 不鏡像**——本模組的 pitch 一律維持玩家的原值
+ *  （面前視角**不**把「看上」翻成「看下」）；因此上面那句「與原版一致」**只涵蓋
+ *  yaw 與相機位置**，pitch 的鏡像處理**未實作**（屬簡化，勿宣稱 pitch 也與原版
+ *  一致）。
  *
  *  **互動射線一律以本模組回傳的姿態為準**（相機位置＋yaw／pitch）：Task 11 的
  *  挖掘／放置／攻擊射線都從 `viewPose()` 的結果推導，不再另外算一份方向，
@@ -35,8 +39,13 @@
 /** 視角模式：`first`＝第一人稱、`back`＝面後第三身、`front`＝面前第三身。 */
 export type ViewMode = 'first' | 'back' | 'front';
 
-/** 視角循環順序（`nextViewMode` 依此前進，到尾端繞回第一個）。 */
-export const VIEW_MODE_ORDER: readonly ViewMode[] = ['first', 'back', 'front'];
+/** 視角循環順序（`nextViewMode` 依此前進，到尾端繞回第一個）。
+ *
+ *  **約定：不可變更**（順序本身就是契約 → 改動＝改變 F5 的循環語意）。
+ *  型別層已凍結（`as const` → `readonly ['first', 'back', 'front']`，改元素或
+ *  push 都編譯不過）；**執行期仍可被強轉改寫**（`Object.freeze` 會改變執行期
+ *  行為 → 本批不做）→ 呼叫端不得依賴它的執行期不可變性。 */
+export const VIEW_MODE_ORDER = ['first', 'back', 'front'] as const;
 
 /** 第三身相機與玩家的水平距離（格）。 */
 export const THIRD_PERSON_DISTANCE = 4;

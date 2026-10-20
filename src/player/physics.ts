@@ -12,13 +12,23 @@
  *  §Effects：「Players are prevented from walking off edges … as long as they are
  *  up to 0.6 blocks above the ground」，以及 spec §B2.3。
  *
- *  本批**兩處刻意簡化**（與原版的差異，勿誤讀為原版行為）：
+ *  本批**四處刻意簡化／已知後果**（與原版的差異，勿誤讀為原版行為）：
  *  ① 支撐判定只看「腳下正下方（玩家中心點）一格」（`supportedAt`）；原版以
  *     **整個 hitbox 是否仍被支撐**判定 → 本批中心點不越過方塊邊界，原版可讓身體
  *     探出邊緣約半個身位。
  *  ② **不做** step_height 0.6 的高度差判斷，也**不做**「離地 0.6 格內仍受保護」。
  *  起跳後（離地）保護即解除 → 可跳離邊緣（對應 wiki「can still dismount blocks
- *  while sneaking by jumping over the block's edge」）。 */
+ *  while sneaking by jumping over the block's edge」）。
+ *  ③ **腳下是水時會被擋在岸邊**（屬簡化）：水**不是實心方塊** → 若**候選位置
+ *     腳下那一格是水**，`supportedAt` 回 false → 防摔邊取消該軸位移 → 玩家**在岸邊
+ *     被擋住**（潛行時進不了水）。原版可直接走入水中。
+ *  ④ **未載入的 chunk 讀成 AIR**（`World.getBlock` 的既有行為）→ 若腳下那一格
+ *     在未載入的區塊，`supportedAt` 回 false → 在**世界邊緣**（該區塊尚未生成／
+ *     載入）潛行會**暫時被擋住**，直到區塊載入為止。
+ *
+ *  **時序（已知的一幀延遲）**：落地**那一幀**的水平位移**不受**防摔邊保護——
+ *  `guardSneakEdge` 讀的是上一幀的 `p.onGround`，而 y 軸（落地）是在本幀的水平
+ *  位移**之後**才執行 → 保護要等落地後的**下一幀**才生效。 */
 
 import type { World } from '../world/world';
 import { BLOCK } from '../world/blocks';
@@ -69,9 +79,14 @@ export interface StepResult {
  *  軸」：被擋的是 `z` 軸 → 牆面法線沿 z → 夾角由移動方向的 z 分量決定（z 分量
  *  越大＝越正面撞上 z 方向的牆）；`x` 軸同理。
  *
- *  `dir` 應為**單位長度**的方向向量（`stepOnce` 內的 `dirX/dirZ` 即是）→ 該軸
- *  分量的絕對值就是夾角的正弦值；非有限輸入回 0（不讓 NaN 滲出）、分量上限
- *  截到 1（避免 `asin` 的定義域問題）。 */
+ *  **前提：`dir` 應為單位長度的方向向量。** 夾角的正弦值就是「該軸分量的絕對
+ *  值」→ 只有 `dir` 長度為 1 時這個等式才成立。`stepOnce` 只在 `len > 1` 時才
+ *  正規化（輸入層的 fwd/strafe 只會是 −1/0/1 → 非零方向的長度恆為 1）→
+ *  **本函式不自行正規化**：傳入長度 < 1 的向量會**低估**夾角。
+ *
+ *  **非有限值的防護只涵蓋「被取用的那個分量」**：被取用的分量非有限 → 回 0
+ *  （不讓 NaN 滲出）；**另一個軸**的分量即使非有限也**不影響**本軸的結果
+ *  （本函式只讀被指定的那個軸）。分量上限截到 1（避免 `asin` 的定義域問題）。 */
 export function wallContactAngleDeg(dir: { x: number; z: number }, axis: 'x' | 'z'): number {
   const component = axis === 'x' ? dir.x : dir.z;
   if (!Number.isFinite(component)) return 0;
@@ -213,8 +228,8 @@ function stepOnce(
 
   // 撞牆夾角：只算水平兩軸（y 軸被擋＝站在地上／撞到天花板，不是牆）。
   // 兩軸都被擋＝撞到角落 → 取較大的那一個角度。
-  // dirX/dirZ 是移動方向（輸入層的 fwd/strafe 只會是 -1/0/1 → 非零方向正規化後
-  // 長度為 1）→ 分量的絕對值就是夾角的正弦值；角度與速度無關。
+  // dirX/dirZ 是移動方向 → 夾角語意與「單位長度」前提見 `wallContactAngleDeg`
+  // 的 JSDoc（此處不重複）；角度與速度無關。
   let wallAngleDeg: number | null = null;
   if (blockedX) wallAngleDeg = wallContactAngleDeg({ x: dirX, z: dirZ }, 'x');
   if (blockedZ) {
@@ -224,7 +239,12 @@ function stepOnce(
   return wallAngleDeg;
 }
 
-/** 沿單軸移動並解碰撞；回傳「是否被方塊擋下」。
+/** 沿單軸移動並解碰撞；回傳「這一步位移後**是否曾與方塊重疊**」。
+ *
+ *  **回傳值的語意（別當成「成功被擋住」）**：`true` 只表示「位移後的 AABB 與
+ *  實心方塊重疊 → 走過推回路徑（位置被推回、該軸速度被清零）」；推回是 0.01
+ *  粒度、最多 500 步 → **極端情況下可能仍有殘餘重疊**（`true` **不保證**「完全
+ *  不重疊」）。`false`＝這一步沒碰到方塊（也包含位移為 0、與潛行取消位移）。
  *
  *  `guardSneakEdge`（潛行防摔邊，B2.3）只作用於水平軸：位移前先算候選位置，若
  *  候選位置「腳下正下方」沒有支撐（`supportedAt`）就**取消該軸位移**——位置與
@@ -277,5 +297,5 @@ function moveAxis(
   } else {
     p.velocity[axis] = 0;
   }
-  return true; // 被方塊擋下
+  return true; // 這一步位移後與方塊重疊（走過推回路徑）
 }

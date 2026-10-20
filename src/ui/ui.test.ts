@@ -617,6 +617,39 @@ describe('pause menu', () => {
     expect(hint!.textContent).toContain('瀏覽器保留鍵');
     menus.hideAll();
   });
+
+  it('the hint text is locked to the brief copy, word for word', () => {
+    // 整句等於 brief 文案（逐字鎖定；文案本身是玩家會看到的內容，不可更動）
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
+    const hint = root.querySelector('.ui-hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toBe(
+      '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角',
+    );
+    menus.hideAll();
+  });
+
+  it('the hint sits after the buttons and before the cloud row', () => {
+    // DOM 位置契約：操作提示在**按鈕群之後、雲端狀態列之前**
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'ready', cloudRetryable: false, onRetryCloud: () => {} });
+    const overlay = root.querySelector('.ui-overlay')!;
+    const children = [...overlay.children];
+    const hintIndex = children.findIndex((c) => c.classList.contains('ui-hint'));
+    const cloudIndex = children.findIndex((c) => c.classList.contains('ui-cloud-row'));
+    const lastButtonIndex = children.reduce(
+      (acc, child, i) => (child instanceof HTMLButtonElement ? i : acc),
+      -1,
+    );
+    expect(hintIndex).toBeGreaterThan(-1);
+    expect(cloudIndex).toBeGreaterThan(-1);
+    expect(hintIndex).toBeGreaterThan(lastButtonIndex); // 在按鈕群之後
+    expect(hintIndex).toBeLessThan(cloudIndex); // 在雲端列之前
+    menus.hideAll();
+  });
 });
 
 describe('pause cloud row (Phase 4 Task 4)', () => {

@@ -238,6 +238,44 @@ describe('wall contact angle — 撞牆夾角回報 (B2.1)', () => {
     }
     expect(res.wallAngleDeg).toBeCloseTo(45, 0);
   });
+
+  it('both axes blocked at once reports the larger of the two angles', () => {
+    // 兩軸都被擋（撞到角落）→ stepOnce 取**較大的**那一個角度（不是後一個蓋掉前一個）
+    //
+    // 場景：地板 y=64；+x 方向有牆（方塊 x=3）、−z 方向有牆（方塊 z=−1）。
+    // 玩家起步在 (0.5, 65, 0.5)：−z 牆較近（先撞到 → 只有 z 軸被擋），
+    // 之後 +x 牆也撞上 → 兩軸同時被擋。
+    //
+    // yaw=−0.3、fwd=1、strafe=1 → dir = (0.8845, −0.4666)（正規化後長度 1）
+    //   → x 軸夾角 asin(0.8845) ≈ 62.2°、z 軸夾角 asin(0.4666) ≈ 27.8°
+    //   （兩者互補：asin(0.8845) + asin(0.4666) = 90°）
+    const w = new World();
+    for (let x = 0; x <= 4; x++)
+      for (let z = -3; z <= 1; z++) w.setBlock(x, 64, z, BLOCK.STONE); // 地板
+    for (let y = 65; y <= 67; y++) {
+      for (let z = -3; z <= 1; z++) w.setBlock(3, y, z, BLOCK.STONE); // +x 牆
+      for (let x = 0; x <= 4; x++) w.setBlock(x, y, -1, BLOCK.STONE); // −z 牆
+    }
+    const p = createPlayer(0.5, 65, 0.5);
+    p.yaw = -0.3;
+    const angles: number[] = [];
+    for (let i = 0; i < 90; i++) {
+      const res = stepPlayer(p, { ...groundInput, fwd: 1, strafe: 1 }, w, 1 / 60);
+      if (res.wallAngleDeg !== null) angles.push(res.wallAngleDeg);
+    }
+    // 先撞到 −z 牆（只有 z 軸被擋）→ 27.8°
+    expect(angles[0]).toBeCloseTo(27.8, 1);
+    // 之後兩軸同時被擋 → 回報**較大**的 62.2°（若被後一個角度蓋掉會是 27.8°）
+    expect(angles[angles.length - 1]).toBeCloseTo(62.2, 1);
+  });
+
+  it('wallContactAngleDeg only guards the component it actually uses', () => {
+    // 非有限值的防護只涵蓋「被取用的那個分量」→ 另一個軸的壞值不影響本軸
+    expect(wallContactAngleDeg({ x: NaN, z: -1 }, 'z')).toBeCloseTo(90, 5);
+    expect(wallContactAngleDeg({ x: NaN, z: -1 }, 'x')).toBe(0);
+    expect(wallContactAngleDeg({ x: 1, z: Infinity }, 'x')).toBeCloseTo(90, 5);
+    expect(wallContactAngleDeg({ x: 1, z: Infinity }, 'z')).toBe(0);
+  });
 });
 
 /** 小平台：y=64 上的 3×3 石頭板（方塊 x,z ∈ [0,2] → 邊界在 x=3／z=3） */
@@ -285,5 +323,69 @@ describe('sneak edge protection — 潛行防摔邊 (B2.3)', () => {
     let res = { wallAngleDeg: null as number | null };
     for (let i = 0; i < 60; i++) res = stepPlayer(p, { ...groundInput, sneak: true, strafe: 1 }, w, 1 / 60);
     expect(res.wallAngleDeg).toBeNull();
+  });
+
+  it('guards the two horizontal axes independently', () => {
+    // x／z 各自獨立判斷：x 軸被擋（中心點不越過 x=3.0 的方塊邊界）時，
+    // z 軸**仍然照常位移**（z 方向腳下有支撐）→ z 的位移量必須「不因 x 被擋而中斷」。
+    const w = new World();
+    for (let x = 0; x <= 2; x++)
+      for (let z = -40; z <= 4; z++) w.setBlock(x, 64, z, BLOCK.STONE);
+    const p = createPlayer(2.5, 65, 1.5);
+    p.yaw = 0; // fwd → −z、strafe → +x
+    const input = { ...groundInput, sneak: true, fwd: 1, strafe: 1 };
+    let res = { wallAngleDeg: null as number | null };
+    for (let i = 0; i < 60; i++) res = stepPlayer(p, input, w, 1 / 60);
+    expect(p.position.x).toBeLessThan(3.0); // x 軸被防摔邊擋住
+    // z 軸獨立判定 → 60 幀 × 0.0153 格 ≈ 0.92 格（若 z 也被連帶取消則會停在 ≈1.0）
+    expect(p.position.z).toBeLessThan(0.7);
+    expect(res.wallAngleDeg).toBeNull(); // 潛行取消位移不是撞牆
+  });
+
+  it('the guard does not apply while flying', () => {
+    // 啟用條件是「潛行 ＋ 著地 ＋ 非飛行 ＋ 非水中」→ 飛行中不啟用
+    const w = platformWorld();
+    const p = createPlayer(2.5, 65, 1.5);
+    for (let i = 0; i < 10; i++) stepPlayer(p, groundInput, w, 1 / 60);
+    expect(p.onGround).toBe(true); // 已著地（否則這個對照沒意義）
+    const flySneak = { ...groundInput, fly: true, sneak: true, strafe: 1 };
+    for (let i = 0; i < 30; i++) stepPlayer(p, flySneak, w, 1 / 60);
+    expect(p.position.x).toBeGreaterThan(3.0); // 飛行中 → 防摔邊不啟用，可走出邊界
+  });
+
+  it('the guard does not apply while in water', () => {
+    // 同上：在水裡（`inWater`）也不啟用 → 玩家可以走出岸邊
+    const w = new World();
+    for (let x = 0; x <= 2; x++)
+      for (let z = 0; z <= 2; z++) {
+        w.setBlock(x, 64, z, BLOCK.STONE); // 池底
+        w.setBlock(x, 65, z, BLOCK.WATER); // 水（水非實心 → supportedAt 回 false）
+        w.setBlock(x, 66, z, BLOCK.WATER);
+      }
+    const p = createPlayer(2.5, 65, 1.5); // 站在水裡、靠岸邊
+    const sneak = { ...groundInput, sneak: true, strafe: 1 };
+    for (let i = 0; i < 60; i++) stepPlayer(p, sneak, w, 1 / 60);
+    expect(p.position.x).toBeGreaterThan(3.0); // 水中 → 防摔邊不啟用，可走出岸邊
+  });
+
+  it('supportedAt rejects non-finite coordinates', () => {
+    // 非有限座標一律回 false（不讓 NaN 滲出成「有支撐」）
+    const w = platformWorld();
+    expect(supportedAt(w, NaN, 65, 1.5)).toBe(false);
+    expect(supportedAt(w, 1.5, NaN, 1.5)).toBe(false);
+    expect(supportedAt(w, 1.5, 65, NaN)).toBe(false);
+    expect(supportedAt(w, Infinity, 65, 1.5)).toBe(false);
+    expect(supportedAt(w, 1.5, -Infinity, 1.5)).toBe(false);
+    expect(supportedAt(w, 1.5, 65, Infinity)).toBe(false);
+  });
+
+  it('a non-finite dt leaves the player untouched', () => {
+    const w = platformWorld();
+    const p = createPlayer(0.5, 65, 0.5);
+    const res = stepPlayer(p, { ...groundInput, fwd: 1 }, w, NaN);
+    expect(res.wallAngleDeg).toBeNull();
+    expect(p.position.x).toBe(0.5);
+    expect(p.position.z).toBe(0.5);
+    expect(p.position.y).toBe(65);
   });
 });

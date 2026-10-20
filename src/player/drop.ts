@@ -18,7 +18,12 @@ import type { GameMode } from '../core/inventory';
  *
  *  **本模組只決定「丟幾個」**；扣物品與生成掉落物由組裝根（`src/main.ts` 的
  *  `dropSelected()`）負責——那邊的順序是「先算出數量 → 先扣後生成」，保證熱鍵欄
- *  減少的數量與地上出現的數量必然相等（不複製、不吞物品）。 */
+ *  減少的數量與地上出現的數量必然相等（不複製、不吞物品）。
+ *
+ *  **與 `src/world/drops.ts` 的分工（兩檔名相近，勿看錯）**：本檔
+ *  （`player/drop.ts`）只決定「**丟幾個**」（玩家操作層的決策、純函式、不碰
+ *  世界）；`world/drops.ts` 才是「**地上的掉落物實體**」（世界層：生成、移動、
+ *  拾取）。兩者層級不同，勿互相引用。 */
 
 /** 這一次「丟棄」要丟幾個（`0` ＝ 不丟）。
  *
@@ -38,8 +43,13 @@ export function dropCount(
 ): number {
   if (mode === 'creative') return 0; // 創造模式不丟、不消耗
   if (!stack) return 0; // 空格
-  // 整數化：spendFromSlot 只接受整數（Number.isInteger），非整數／非有限一律
-  // 視為「沒有可丟的東西」→ 不丟、不消耗。
+  // 整數化：`spendFromSlot` 只接受整數（Number.isInteger）→ 回傳值必須是整數。
+  // **非整數持有數的取捨（實務不可達）**：這裡用 `Math.floor` **向下取整**
+  // （3.9 → 3），**不是**「視為沒有可丟的東西」（→ 0）。這與**舊行為不同**：
+  // 舊的 `dropSelected` 直接把 `stack.count`（3.9）交給 `spendFromSlot` → 因為
+  // 不是整數而被拒 → **整個不丟**；現在則丟 3 個。**實務不可達**：背包的數量
+  // 本來就是整數（`setSlot` 取 `Math.floor`；`addItem` 的呼叫端——挖方塊、拾取
+  // 掉落物——也只餵整數）→ 這個分支只是把邊界行為釘死，不改變任何可達行為。
   const held = Math.floor(stack.count);
   if (!Number.isFinite(held) || held < 1) return 0;
   if (wholeStack) return held; // Ctrl+Q → 整疊（不超過持有數量）

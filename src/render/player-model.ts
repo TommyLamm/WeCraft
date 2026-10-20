@@ -38,7 +38,11 @@ export interface PlayerModel {
   /** 切換整個模型的可見性（第一人稱隱藏、第三身顯示）。初始值沿用 Three 預設
    *  （可見），由呼叫端每幀同步當前視角。 */
   setVisible(visible: boolean): void;
-  /** 從場景移除模型並釋放幾何與材質。 */
+  /** 從場景移除模型並釋放幾何與材質。
+   *
+   *  **非冪等**：每次呼叫都會再對 **4 個幾何**與 **4 個材質**各送一次 `dispose()`
+   *  事件（呼叫兩次＝送兩次；Three 的 dispose 事件可重複送出，但會多派一次）→
+   *  **呼叫端只應在釋放時呼叫一次**。 */
   dispose(): void;
 }
 
@@ -84,6 +88,10 @@ export function createPlayerModel(scene: THREE.Scene): PlayerModel {
   body.position.y = 1.125;
 
   // 手臂：x = ±0.375、y 0.75–1.5（與生物模型同樣的左右手位置）
+  // **左右命名慣例**：`armL`／`legL` 放在 **+x** 側（與 `src/render/scene.ts` 的
+  // 生物模型一致）。以 yaw=0（面向 −z）的解剖學方向來看，玩家自己的左手其實在
+  // **−x** 側 → 這裡的「L」是**模型／螢幕左側**的慣例命名，**不是**玩家的解剖學
+  // 左手；只影響節點名稱，不影響位置契約（位置由數值與測試釘住）。
   const armL = new THREE.Mesh(limbGeo, skinMat);
   armL.name = 'armL';
   armL.position.set(0.375, 1.125, 0);

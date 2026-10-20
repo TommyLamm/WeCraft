@@ -21,7 +21,7 @@ describe('hold-repeat — 按住連放／連丟節拍', () => {
     // 剩下的留給後續幀，避免單幀爆放。
     const step = stepRepeat(createRepeatState(), true, 5, 0.2);
     expect(step.fired).toBe(true);
-    expect(step.state.acc).toBeCloseTo(5 - 0.2, 10);
+    expect(step.state.acc).toBeCloseTo(4.8, 10); // 明確常數（不是自指的 5 − 0.2）
   });
 
   it('releasing the button resets the accumulator', () => {
@@ -39,6 +39,21 @@ describe('hold-repeat — 按住連放／連丟節拍', () => {
     const step = stepRepeat(createRepeatState(), true, NaN, 0.2);
     expect(step.fired).toBe(false);
     expect(step.state.acc).toBe(0);
+  });
+
+  it('an infinite dt is treated like NaN (no fire, no accumulator growth)', () => {
+    // ±∞ 都屬「非有限」→ 一律視為 0（時間沒有流逝）：不觸發、累積器不動。
+    const plus = stepRepeat(createRepeatState(), true, Infinity, 0.2);
+    expect(plus.fired).toBe(false);
+    expect(plus.state.acc).toBe(0);
+    const minus = stepRepeat(createRepeatState(), true, -Infinity, 0.2);
+    expect(minus.fired).toBe(false);
+    expect(minus.state.acc).toBe(0);
+    // 累積器已有進度時也不會被壞值污染
+    const primed = stepRepeat(createRepeatState(), true, 0.1, 0.2);
+    const after = stepRepeat(primed.state, true, Infinity, 0.2);
+    expect(after.fired).toBe(false);
+    expect(after.state.acc).toBeCloseTo(0.1, 10);
   });
 
   it('the constants are 0.2 seconds', () => {

@@ -143,6 +143,16 @@ describe('sprint — 疾跑狀態機', () => {
     expect(result).not.toBe(state); // 回傳全新物件
   });
 
+  it('the cancel branch also returns a brand new object', () => {
+    // 取消分支與「無取消」分支是同一份契約（純度：回傳全新物件、入參不被修改）
+    const latched = updateSprint(createSprintState(), ctx({ sprintRequested: true }));
+    const cancelled = updateSprint(latched, ctx({ sneak: true }));
+    expect(cancelled.active).toBe(false);
+    expect(cancelled.lastCancel).toBe('sneaking');
+    expect(cancelled).not.toBe(latched); // 取消分支也回傳全新物件
+    expect(latched.latched).toBe(true); // 入參不被修改（鎖存仍在原物件上）
+  });
+
   it('cancelReason reports each cancel reason directly', () => {
     expect(cancelReason(ctx())).toBe(null);
     expect(cancelReason(ctx({ forward: false }))).toBe('no-forward');

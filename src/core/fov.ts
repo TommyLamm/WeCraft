@@ -17,7 +17,10 @@
  *  **平滑**：以時間常數 `FOV_SMOOTH_SEC`（0.1 s）的指數逼近
  *  `current + (target − current)·(1 − e^{−dt/τ})`，避免疾跑啟停瞬間的視野跳動。
  *  該式恆等於「以 τ 為時間常數的一階低通」，與幀率無關（dt 越大一步跨得越多，
- *  但收斂路徑不變），且**永不超過目標值**（不回彈、不超調）。
+ *  但收斂路徑不變），且**不回彈、不超調**。**注意「永不超過目標值」只在
+ *  `current ≤ target` 時成立**：`current > target`（例如疾跑剛結束、current 77
+ *  → target 70）時，值是從**上方**單調下降逼近目標，收斂完成前仍**大於**目標值
+ *  （例：`stepFov(77, 70, 0.1)` ≈ 72.58 > 70）。
  *
  *  **防 NaN 汙染相機**：**輸入**非有限時一律自癒——`current`／`target` 非有限
  *  → 回 `BASE_FOV`（70）；`dt` 非有限或 ≤ 0 → 視為「這一步不動」，回傳
@@ -41,8 +44,14 @@ export const FOV_SMOOTH_SEC = 0.1;
 
 /** 疾跑時的目標 FOV：基準值乘上 `1 + SPRINT_FOV_RATIO`（70 → 77）。
  *
- *  `base` 非有限（NaN／±∞）→ 回 `BASE_FOV`（70），避免把壞值帶進相機。
- *  （基準 FOV 來自相機，正常情況必為正數；本函式**不額外擋負值**。） */
+ *  **分工（兩層各自守衛自己那一段）**：
+ *  - 本模組只擋**非有限**的 `base`（NaN／±∞ → 回 `BASE_FOV`（70），避免把壞值
+ *    帶進相機）；
+ *  - **負數／其他不合理值由相機層擋**（`src/main.ts` 套用 FOV 時只接受「有限且
+ *    為正」的值 → 壞值退回 `BASE_FOV`，且不污染平滑用的 `fovCurrent`）。
+ *
+ *  本模組刻意**不額外擋負數**（避免兩處各擋一半、規則分散）；基準 FOV 來自相機，
+ *  正常情況必為正數。 */
 export function sprintFov(base: number = BASE_FOV): number {
   if (!Number.isFinite(base)) return BASE_FOV;
   return base * (1 + SPRINT_FOV_RATIO);

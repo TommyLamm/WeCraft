@@ -74,6 +74,12 @@ describe('createPlayerModel', () => {
     // src/core/Object3D.js:117）→ 任何 THREE.Group 的 `animations` 都不可能是
     // undefined，該斷言無法成立。此處改驗其**意圖**「模型沒有任何動畫資料」：
     // clip 陣列為空、且沒有 skeleton（bone 綁定）屬性。
+    //
+    // **邊界（這組斷言攔不到什麼）**：`THREE.SkinnedMesh` 是 `Mesh` 的子類別 →
+    // 一個「帶骨骼的子節點」仍會通過「子節點都是 Mesh」與「**根 group** 的
+    // `skeleton` 為 undefined」兩項檢查（`skeleton` 屬性掛在子節點上，不掛在
+    // group 上）。現行模型**沒有任何骨骼**（無實害）→ 若日後引入骨骼，這組斷言
+    // 不足以攔下，須另加「子節點不得是 SkinnedMesh」的檢查。
     const asRecord = g as unknown as Record<string, unknown>;
     expect(asRecord.animations).toEqual([]);
     expect(asRecord.skeleton).toBeUndefined();
@@ -236,6 +242,10 @@ describe('createPlayerModel', () => {
     const geoSpies = [...geometries].map((geo) => vi.spyOn(geo, 'dispose'));
     const matSpies = [...materials].map((mat) => vi.spyOn(mat, 'dispose'));
     model.dispose();
+    // **只斷言「被呼叫過」**（不鎖定次數）：`dispose()` **非冪等** → 呼叫一次會
+    // 對 **4 個幾何**與 **4 個材質**各送一次 dispose 事件；呼叫兩次就送兩次
+    // （Three 的 dispose 事件可重複送出）。**加冪等＝改行為**，故不釘死次數；
+    // 呼叫端只應在釋放時呼叫一次（見 `PlayerModel.dispose` 的 JSDoc）。
     for (const spy of [...geoSpies, ...matSpies]) expect(spy).toHaveBeenCalled();
   });
 });

@@ -46,6 +46,22 @@ describe('stepFov', () => {
     expect(v).toBeCloseTo(70, 3);
   });
 
+  it('approaches from above without undershooting when the current value is above the target', () => {
+    // 「永不超過目標值」只在 current ≤ target 時成立：current 77 → target 70
+    // （疾跑剛結束）時是**從上方**逼近 → 收斂完成前仍大於目標值，但不會低於它。
+    const next = stepFov(77, 70, 0.1);
+    expect(next).toBeLessThan(77); // 往目標前進
+    expect(next).toBeGreaterThan(70); // 尚未收斂 → 仍高於目標值
+    let v = 77;
+    for (let i = 0; i < 200; i++) {
+      const step = stepFov(v, 70, 1 / 60);
+      expect(step).toBeLessThanOrEqual(v); // 單調遞減
+      expect(step).toBeGreaterThanOrEqual(70); // 不低於目標值（不超調到另一側）
+      v = step;
+    }
+    expect(v).toBeCloseTo(70, 3);
+  });
+
   it('stepFov converges to the target in one step for a huge finite dt', () => {
     // 極大（但**有限**）的 dt 走指數分支：e^{−dt/τ} 在數值上溢位為 0 → 係數 1
     // → 一步直接收斂到目標（不 NaN、不超調）。
