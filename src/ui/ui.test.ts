@@ -593,6 +593,30 @@ describe('pause menu', () => {
     expect(root.textContent).toContain('遊戲已暫停');
     menus.hideAll();
   });
+
+  it('the pause menu lists the new control hints', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
+    const hint = root.querySelector('.ui-hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain('雙擊 W');
+    expect(hint!.textContent).toContain('Ctrl+Q');
+    expect(hint!.textContent).toContain('F5');
+    expect(hint!.textContent).toContain('右鍵');
+    menus.hideAll();
+  });
+
+  it('the hint mentions that ctrl may be swallowed by the browser', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    menus.showPause({ onResume: () => {}, onQuit: () => {}, onToggleMode: () => {}, onToggleShadows: () => {}, onToggleClouds: () => {}, onSaveQuit: () => {}, cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: () => {} });
+    const hint = root.querySelector('.ui-hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toContain('Ctrl+W');
+    expect(hint!.textContent).toContain('瀏覽器保留鍵');
+    menus.hideAll();
+  });
 });
 
 describe('pause cloud row (Phase 4 Task 4)', () => {

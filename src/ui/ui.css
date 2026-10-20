@@ -146,6 +146,20 @@
   color: rgba(255, 255, 255, 0.75);
   text-shadow: 1px 1px 0 #000;
 }
+/* B2 Task 12：暫停選單的操作提示行——把本批新增的操作（雙擊 W 疾跑／
+   Q 丟棄／右鍵連放／F5 三態視角）寫給玩家看。純文字、被動顯示：
+   pointer-events: none 讓它不會攔到按鈕的點擊。 */
+.ui-hint {
+  max-width: 34rem;
+  margin: 6px auto 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #fff;
+  opacity: 0.75;
+  text-align: center;
+  text-shadow: 1px 1px 0 #000;
+  pointer-events: none;
+}
 /* Cloud sync status row (Phase 4 Task 4): bottom line of the pause menu —
    status text plus an optional small 重試 button (retryable states only). */
 .ui-cloud-row {

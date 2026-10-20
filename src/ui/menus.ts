@@ -271,6 +271,13 @@ export function createMenus(uiRoot: HTMLElement): Menus {
         title.className = 'ui-logo';
         title.style.fontSize = '36px';
         title.textContent = '遊戲已暫停';
+        // B2 Task 12：操作提示行（純文字，被動顯示；無回呼、不攔截點擊）。
+        // 把本批新增的操作（疾跑／丟棄／連放／三態視角）寫在暫停選單裡，
+        // 否則玩家不會知道雙擊 W 可以疾跑。文字是玩家會看到的文案，不可更動。
+        const hint = document.createElement('div');
+        hint.className = 'ui-hint';
+        hint.textContent =
+          '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角';
         el.append(
           title,
           btn('繼續遊戲', () => {
@@ -301,6 +308,8 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           // Task 14: both buttons — one saves, one doesn't (settle: split)
           btn('儲存並離開', onSaveQuit),
           btn('回到標題', onQuit),
+          // B2 Task 12: 操作提示（放在按鈕群之後、雲端狀態列之前）
+          hint,
           // Phase 4 Task 4: cloud sync status row — always the last line; the
           // 重試 button mounts ONLY in retryable states (Ruling D).
           cloudRow(),
