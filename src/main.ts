@@ -59,7 +59,7 @@ import { createHazardState, stepHazards, touchesCactus } from './world/hazards';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
-  placeTarget,
+  resolvePlacementTarget,
   canPlaceAt,
   spawnBlockDrop,
   digStep,
@@ -125,7 +125,7 @@ import { pushWorldgenNotice } from './ui/worldgen-notice';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { applyBiomeTint } from './core/biome-fog';
-import { generateChunk, surfaceHeight, biomeAt } from './world/terrain';
+import { generateChunk, surfaceHeight, biomeAt, SEA_LEVEL } from './world/terrain';
 // Phase 3 Task 10: audio facade + pure helpers — all wiring lives here in main
 // (composition root); the engine is gesture-gated and inert until ensureStarted.
 import { createGameAudio, footstepInterval, materialGroup } from './audio';
@@ -597,9 +597,27 @@ let drops: DropEntity[] = [];
  *
  *  **沒有回傳值**：呼叫端（首次使用路徑與連放路徑）都不消費「是否成功」——
  *  結果本來就看得見（熱鍵欄計數、世界裡的方塊），留一個沒人用的回傳值只會
- *  誤導後人（審查 Minor 1）。放不成時什麼都不做即可。 */
+ *  誤導後人（審查 Minor 1）。放不成時什麼都不做即可。
+ *
+ *  **放置目標是 world-aware 的（B3 Task 9 Step 4；承接 Task 5 審查 Important
+ *  I-1）**：目標格的判定要讀「被點擊那一格」是什麼方塊 → 這是**組裝根**的
+ *  活（規則本體在 `player/interact.ts` 的 `resolvePlacementTarget`，可單元測試）。
+ *  - 被點擊的格**可被取代**（空氣／水／cross 植被）→ 放進**同一格**：
+ *    瞄準花右鍵＝**花被方塊取代、位置不變**（原版語意：可被取代 → 取代同一格）。
+ *    這是 Task 5 只做語意層（`canPlaceAt` 放行）而沒有接線的那一段 —— 沒有它，
+ *    瞄準花右鍵會在**鄰格**多放一塊、**原花還在**。
+ *  - 不可取代（實心方塊）→ 維持既有的「命中格 ＋ 命中面法線」（面鄰格）。
+ *
+ *  **覆蓋植被時植被不掉落**：原版是被取代、不掉。`world.setBlock()` 是直接覆寫
+ *  → 已符合；**這裡刻意不放任何掉落流程**（放了就是「蓋掉花還撿到花」）。
+ *
+ *  **AABB 規則不放寬**：`canPlaceAt` 的玩家重疊檢查原樣保留 → 站在花格裡放方塊
+ *  仍然被擋下（與原版一致）。 */
 function tryPlaceBlock(target: RayHit): void {
-  const t = placeTarget(target);
+  const t = resolvePlacementTarget(
+    target,
+    world.getBlock(target.x, target.y, target.z),
+  );
   const held = hotbar[selected];
   const placeId = held ? blockFromItem(held.item) : null;
   if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return;
@@ -942,6 +960,45 @@ const generated = new Set<string>();
 const genInFlight = new Set<string>();
 
 // ---- 出生點：同步生成 (0,0)，spawn on surfaceHeight(0.5,0.5)+1 ----
+
+/**
+ * 出生點的候選柱順序：以 (0,0) 為中心**螺旋外掃**（B3 Task 9 Step 3 的
+ * 「出生點不可在水裡」保護用）。
+ *
+ * **分圈方式**：以「切比雪夫距離」（Chebyshev distance ＝ max(|x|,|z|)）分圈，
+ * 每圈先走 z = r 的上邊（x 由 0 到 r）、再走 x = r 的右邊（z 由 0 到 r−1）。
+ * 區塊 (0,0) 的柱座標只有非負（0..15）→ 每一圈是 L 形的兩條邊；這個順序把
+ * 區塊裡的 256 根柱**恰好各拜訪一次**，而且**離 (0,0) 越近的柱越早被拜訪**
+ * （先找到離出生點最近的陸地，而不是隨便找一個天涯海角）。
+ */
+function* spawnColumnOrder(): Generator<[number, number]> {
+  const max = CHUNK_SIZE - 1; // 區塊 (0,0) 的柱座標是 0..15
+  for (let r = 0; r <= max; r++) {
+    for (let x = 0; x <= r; x++) yield [x, r]; // 上邊（z = r）
+    for (let z = 0; z < r; z++) yield [r, z]; // 右邊（x = r）
+  }
+}
+
+/**
+ * 在**已同步生成的 (0,0) 區塊內**找第一根「地表高於海平面」的柱；整塊都在水裡
+ * 時回傳 null。
+ *
+ * **為什麼只搜 (0,0) 區塊**：`spawnPoint()` 只**同步生成**了 (0,0) 這一塊，
+ * 其它區塊要等 worker 回應 → 把出生點移到尚未生成的區塊＝**玩家掉進虛空**
+ * （腳下沒有方塊、碰撞判定找不到地面）。所以搜尋範圍硬性限制在 (0,0) 區塊內。
+ *
+ * **為什麼用整數座標取高度**：`generateChunk` 的每柱高度用的是**整數**格點
+ * （`surfaceHeight(wx, wz, seed)`，wx/wz 為整數）→ 搜尋也用整數座標 → 判定與
+ * 實際生成的區塊**逐格一致**（差半格會讓「判定為陸地」的柱其實頂端還泡在水裡）。
+ */
+function findDrySpawnColumn(seed: number): { x: number; z: number; h: number } | null {
+  for (const [x, z] of spawnColumnOrder()) {
+    const h = surfaceHeight(x, z, seed);
+    if (h > SEA_LEVEL) return { x, z, h };
+  }
+  return null;
+}
+
 function spawnPoint(): { x: number; y: number; z: number } {
   // key off generated (not hasChunk): setBlock auto-creates empty chunks (Task 6 deviation)
   if (world.getChunk(0, 0)?.generated !== true) {
@@ -956,14 +1013,35 @@ function spawnPoint(): { x: number; y: number; z: number } {
     world.reapplyModifiedInChunk(0, 0);
   }
   generated.add(chunkKey(0, 0));
-  let y = surfaceHeight(0.5, 0.5, settings.seed) + 1;
+  const h0 = surfaceHeight(0.5, 0.5, settings.seed);
+  let x = 0.5;
+  let z = 0.5;
+  let y = h0 + 1;
+  // B3 Task 9 Step 3：**出生點不可在水裡**。B3 的新高度公式讓海陸分佈大改
+  // （海洋約 33% 的面積）→ (0,0) 有可能落在水裡 → 玩家一出生就在水裡。
+  // 解法：在**已同步生成的 (0,0) 區塊內**螺旋找第一根陸地柱（不移動到未生成
+  // 的區塊，否則玩家會掉進虛空）；整塊都在水裡 → 退回原公式並留下警告。
+  if (h0 <= SEA_LEVEL) {
+    const dry = findDrySpawnColumn(settings.seed);
+    if (dry) {
+      x = dry.x + 0.5;
+      z = dry.z + 0.5;
+      y = dry.h + 1; // 站在該柱的地表之上（h > SEA_LEVEL → 那一格不是水）
+    } else {
+      console.warn(
+        '[WeCraft] 出生點：區塊 (0,0) 整塊都在水裡 → 退回原本的高度公式（玩家可能出生在水裡）',
+      );
+    }
+  }
   // walk up out of trees/leaves so the player AABB never starts inside solid blocks
+  const cx = Math.floor(x);
+  const cz = Math.floor(z);
   const blocked = (yy: number): boolean =>
-    world.isSolid(0, Math.floor(yy), 0) ||
-    world.isSolid(0, Math.floor(yy + 0.9), 0) ||
-    world.isSolid(0, Math.floor(yy + 1.7), 0);
+    world.isSolid(cx, Math.floor(yy), cz) ||
+    world.isSolid(cx, Math.floor(yy + 0.9), cz) ||
+    world.isSolid(cx, Math.floor(yy + 1.7), cz);
   while (y < CHUNK_HEIGHT - 3 && blocked(y)) y++;
-  return { x: 0.5, y, z: 0.5 };
+  return { x, y, z };
 }
 
 // ---- Task 8: mob spawning + event application ----

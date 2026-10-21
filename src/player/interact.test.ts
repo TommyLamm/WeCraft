@@ -5,6 +5,8 @@ import {
   DigProgress,
   canPlaceAt,
   placeTarget,
+  isReplaceableForPlacement,
+  resolvePlacementTarget,
   spawnBlockDrop,
   toolSpeed,
   digStep,
@@ -282,6 +284,105 @@ describe('placeTarget', () => {
     expect(placeTarget(hit)).toEqual({ x: 5, y: 65, z: 5 });
     const hit2: RayHit = { x: 5, y: 64, z: 5, nx: -1, ny: 0, nz: 0, t: 0 };
     expect(placeTarget(hit2)).toEqual({ x: 4, y: 64, z: 5 });
+  });
+});
+
+/**
+ * B3 Task 9（承接 Task 5 審查 Important I-1 的**接線層**）：放置目標的新語意。
+ *
+ * 原版（minecraft.wiki/Block#canBeReplaced）：「點到的方塊若可被取代，新方塊就
+ * **取代同一格**；不可取代才放在命中面外側」→ 植被（花／草）可被取代 → 瞄準花
+ * 右鍵放方塊＝**花被方塊取代、位置不變**（不是「花旁邊多一塊」）。
+ *
+ * 這裡的兩支新匯出把**規則**（純函式）與**世界讀取**（組裝根 `main.ts`）分開：
+ * 規則住在 `interact.ts`（可單元測試），`main.ts` 只負責把 `world.getBlock()`
+ * 的結果餵進來。
+ */
+describe('isReplaceableForPlacement（可被取代的方塊：與 canPlaceAt 共用同一份規則）', () => {
+  it('air, water and cross vegetation are replaceable', () => {
+    expect(isReplaceableForPlacement(BLOCK.AIR)).toBe(true);
+    expect(isReplaceableForPlacement(BLOCK.WATER)).toBe(true);
+    expect(isReplaceableForPlacement(BLOCK.DANDELION)).toBe(true);
+    expect(isReplaceableForPlacement(BLOCK.POPPY)).toBe(true);
+    expect(isReplaceableForPlacement(BLOCK.SHORT_GRASS)).toBe(true);
+  });
+
+  it('every solid block is NOT replaceable (including cactus and ice)', () => {
+    for (const id of [
+      BLOCK.STONE,
+      BLOCK.DIRT,
+      BLOCK.GRASS,
+      BLOCK.SAND,
+      BLOCK.LOG,
+      BLOCK.LEAVES,
+      BLOCK.PLANKS,
+      BLOCK.COBBLE,
+      BLOCK.BEDROCK,
+      BLOCK.SNOW,
+      BLOCK.GLASS,
+      BLOCK.COAL_ORE,
+      BLOCK.IRON_ORE,
+      BLOCK.CRAFTING_TABLE,
+      BLOCK.FURNACE,
+      BLOCK.SPRUCE_LOG,
+      BLOCK.SPRUCE_LEAVES,
+      BLOCK.BIRCH_LOG,
+      BLOCK.BIRCH_LEAVES,
+      BLOCK.CACTUS,
+      BLOCK.ICE,
+    ]) {
+      expect(isReplaceableForPlacement(id), `block ${id}`).toBe(false);
+    }
+  });
+
+  it('the predicate is exactly what canPlaceAt allows (one rule, two call sites)', () => {
+    // **逐格比對**：把每一種方塊放進目標格，再問 canPlaceAt 放不放手。
+    // 玩家站得遠遠的 → 只剩「那一格可不可被取代」這條規則在作用。
+    // 這條斷言就是「目標格的判定與 canPlaceAt 的放行條件必須一致」的守門員。
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    const far = { x: 100.5, y: 100, z: 100.5 };
+    for (const id of Object.values(BLOCK)) {
+      world.setBlock(5, 70, 5, id);
+      expect(canPlaceAt(world, 5, 70, 5, far), `block ${id}`).toBe(
+        isReplaceableForPlacement(id),
+      );
+    }
+  });
+});
+
+describe('resolvePlacementTarget（B3 Task 9：可被取代的目標格 → 放進同一格）', () => {
+  const hit: RayHit = { x: 5, y: 64, z: 5, nx: 0, ny: 1, nz: 0, t: 0 };
+
+  it('a cross plant takes the new block into that very cell (the plant is replaced)', () => {
+    expect(resolvePlacementTarget(hit, BLOCK.DANDELION)).toEqual({ x: 5, y: 64, z: 5 });
+    expect(resolvePlacementTarget(hit, BLOCK.POPPY)).toEqual({ x: 5, y: 64, z: 5 });
+    expect(resolvePlacementTarget(hit, BLOCK.SHORT_GRASS)).toEqual({ x: 5, y: 64, z: 5 });
+  });
+
+  it('air and water hit cells also take the new block into that very cell', () => {
+    expect(resolvePlacementTarget(hit, BLOCK.AIR)).toEqual({ x: 5, y: 64, z: 5 });
+    expect(resolvePlacementTarget(hit, BLOCK.WATER)).toEqual({ x: 5, y: 64, z: 5 });
+  });
+
+  it('a solid hit cell keeps the face-adjacent neighbour (existing behaviour unchanged)', () => {
+    expect(resolvePlacementTarget(hit, BLOCK.STONE)).toEqual({ x: 5, y: 65, z: 5 });
+    const side: RayHit = { x: 5, y: 64, z: 5, nx: -1, ny: 0, nz: 0, t: 0 };
+    expect(resolvePlacementTarget(side, BLOCK.STONE)).toEqual({ x: 4, y: 64, z: 5 });
+  });
+
+  it('the replaced cell still goes through the player AABB rule (standing in a flower blocks it)', () => {
+    // 站在花格裡放方塊 → 目標格就是腳下那一格 → 玩家 AABB 與它重疊 → 放不下。
+    // **AABB 規則不放寬**（與原版一致：原版也拒絕把方塊放進與玩家 AABB 相交的格子）。
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    world.setBlock(5, 64, 5, BLOCK.DANDELION);
+    const flowerHit: RayHit = { x: 5, y: 64, z: 5, nx: 0, ny: -1, nz: 0, t: 0 };
+    const target = resolvePlacementTarget(flowerHit, world.getBlock(flowerHit.x, flowerHit.y, flowerHit.z));
+    expect(target).toEqual({ x: 5, y: 64, z: 5 });
+    expect(canPlaceAt(world, target.x, target.y, target.z, { x: 5.5, y: 64, z: 5.5 })).toBe(false);
+    // 站遠一點就放得下（目標格本身沒有別的阻擋）
+    expect(canPlaceAt(world, target.x, target.y, target.z, { x: 9.5, y: 64, z: 9.5 })).toBe(true);
   });
 });
 

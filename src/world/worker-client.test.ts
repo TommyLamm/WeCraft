@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerrainWorkerClient } from './worker-client';
+import { generateChunk } from './terrain';
 import type { GenRequest, GenResponse } from './worker';
 
 class MockWorker {
@@ -132,5 +133,35 @@ describe('TerrainWorkerClient', () => {
     expect(fallback.buffer.byteLength).toBeGreaterThan(0);
     expect(fallback.id).toBeGreaterThan(drained.id);
     expect(w.posted.length).toBe(before);
+  });
+
+  /**
+   * B3 Task 9（Step 2）：**同步退路**回傳的位元組必須與主執行緒的 `generateChunk`
+   * 完全相同。
+   *
+   * 為什麼要這條：worker 失效後（`degrade()`）所有請求改由主執行緒同步生成 →
+   * 兩條路徑**必須產生同一片地形**，否則「worker 掛掉的那一刻」世界會整片變形
+   * （玩家看到自己腳下的地形突然換掉）。
+   *
+   * **範圍說明（誠實）**：`MockWorker` 只會回 16 bytes 的假 buffer → 這條案例
+   * 驗的是「**同步退路 vs 主執行緒**」，**不是**「worker 路徑 vs 主執行緒」
+   * （後者需要真的 worker，見回報的〈已知未測面〉）。
+   */
+  it('the sync fallback returns exactly the terrain generateChunk produces', async () => {
+    const client = new TerrainWorkerClient(1337, 1);
+    const w = lastWorker();
+    const pending = client.request(2, -3);
+    w.fail(); // 模擬 worker 失效 → 走同步退路
+    const resp = await pending;
+    expect(new Uint8Array(resp.buffer)).toEqual(generateChunk(2, -3, 1337));
+  });
+
+  /** 同步退路的**後續**請求也必須與主執行緒一致（不是只有失效當下的那一筆）。 */
+  it('requests made after the degradation still match generateChunk byte for byte', async () => {
+    const client = new TerrainWorkerClient(1337, 1);
+    const w = lastWorker();
+    w.fail();
+    const resp = await client.request(-5, 4);
+    expect(new Uint8Array(resp.buffer)).toEqual(generateChunk(-5, 4, 1337));
   });
 });

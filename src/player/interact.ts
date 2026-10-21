@@ -319,6 +319,46 @@ export function placeTarget(hit: RayHit): { x: number; y: number; z: number } {
   return { x: hit.x + hit.nx, y: hit.y + hit.ny, z: hit.z + hit.nz };
 }
 
+/**
+ * 「可被放置取代」的方塊（**與 `canPlaceAt` 的放行條件是同一份規則**）。
+ *
+ * 空氣／水／cross 植被（花／草）都可被取代 → 放置時直接蓋掉那一格。這是原版
+ * `Block#canBeReplaced` 的對應物（minecraft.wiki/Block#canBeReplaced，2026-10-21）：
+ * 「點到的方塊若可被取代，新方塊就**取代同一格**」→ 瞄準花右鍵放方塊＝**花被
+ * 方塊取代、位置不變**（不是「花旁邊多一塊」）。
+ *
+ * **為什麼抽成共用函式**：放置**目標**的計算（`resolvePlacementTarget`）與放置
+ * **放行**的判定（`canPlaceAt`）必須是同一套規則；兩處各寫一份的話，改了一邊
+ * 就會打架（目標算到某格、放行卻不認那格 → 放不下；更糟的是放進實心方塊裡）。
+ */
+export function isReplaceableForPlacement(blockId: number): boolean {
+  return blockId === BLOCK.AIR || blockId === BLOCK.WATER || isCross(blockId);
+}
+
+/**
+ * 放置**目標**的規則（B3 Task 9 Step 4；承接 Task 5 審查 Important I-1 的
+ * **接線層** —— Task 5 只做了語意層的 `canPlaceAt` 放行，目標格一直停在
+ * 「命中格 ＋ 法線」，導致 cross 的放行實際不可達）。
+ *
+ * `hitBlockId` ＝**被點擊那一格**的方塊 id。這個 id 要從世界讀 → 由組裝根
+ * `main.ts` 用 `world.getBlock()` 取得再餵進來（本函式保持純函式、可單元測試）。
+ *
+ * - 被點擊的格**可被取代**（空氣／水／cross 植被）→ 放進**同一格**（原版語意：
+ *   可被取代 → 取代同一格）。
+ * - 否則（實心方塊）→ 維持既有的「命中格 ＋ 命中面法線」（面鄰格）。
+ *
+ * **AABB 規則不放寬**：回傳的目標格照樣要過 `canPlaceAt` 的玩家重疊檢查 → 站在
+ * 花格裡放方塊仍然被擋下（與原版一致：原版也拒絕把方塊放進與玩家 AABB 相交的
+ * 格子；原版是「點到哪棵草就蓋掉哪棵草」，不是「站在草上蓋草」）。
+ */
+export function resolvePlacementTarget(
+  hit: RayHit,
+  hitBlockId: number,
+): { x: number; y: number; z: number } {
+  if (isReplaceableForPlacement(hitBlockId)) return { x: hit.x, y: hit.y, z: hit.z };
+  return placeTarget(hit);
+}
+
 export function canPlaceAt(
   world: World,
   x: number,
@@ -331,7 +371,9 @@ export function canPlaceAt(
   // 只能放進空氣／水／cross 植被（B3 Task 5）。
   // **植被是被「覆蓋」而不是卡住**：花／草不碰撞，本來就長在方塊上，
   // 放新方塊上去時直接取代它（像原版蓋掉雜草）——不放寬玩家 AABB 的規則。
-  if (id !== BLOCK.AIR && id !== BLOCK.WATER && !isCross(id)) return false;
+  // 判斷式是**共用**的 `isReplaceableForPlacement` → 與放置目標的計算
+  // （`resolvePlacementTarget`）永遠是同一套規則。
+  if (!isReplaceableForPlacement(id)) return false;
 
   // 方塊 AABB: [x,x+1]³ vs 玩家 AABB
   const pMinX = playerPos.x - PLAYER_HALF_WIDTH;

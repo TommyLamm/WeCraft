@@ -1,8 +1,77 @@
 import { describe, it, expect } from 'vitest';
-import { surfaceHeight, SEA_LEVEL, biomeAt, surfaceBlockOf, type Biome } from './terrain';
+import { surfaceHeight, SEA_LEVEL, biomeAt, surfaceBlockOf, generateChunk, type Biome } from './terrain';
 import { treeExists } from './trees';
 import { cactusOn, flowerOn, grassOn, isCold } from './decorations';
 import { BLOCK } from './blocks';
+
+// ---- B3 Task 9（Step 1）：效能預算 ----
+
+/**
+ * **這個案例要放在本檔最前面**：下面的取樣統計（256×256 跨距取樣、1024×1024
+ * 連續取樣）會把種子 1337 的**逐欄位快取**（terrain-noise 的 `ColumnCache`，
+ * 按 seed 分層）整片暖身 → 效能數字會變成「熱快取」的值。
+ * 真實玩家的第一批區塊是**冷快取**（沒有人先取樣過那些柱）→ 量測必須在
+ * 快取還是冷的時候做。
+ * （三個回合也刻意各用一批**不同的座標** → 每個回合都是冷快取；見案例內的說明。）
+ *
+ * **門檻（照計畫 Task 9 Step 1，不放寬）**：16 區塊總時間 < 500 ms（約 31 ms/區塊，
+ * 比 8 ms/區塊的預算寬約 4 倍 → CI 機器慢也不誤報）；任一單區塊 ≤ 50 ms（抓單一
+ * 區塊的病態退化）。
+ * **8 ms/區塊的預算以「觀察值」回報**（下面的 `console.log` 印出實測毫秒數），
+ * 不作為 CI 硬門檻 —— CI 的浮動會造成假紅，硬門檻只會逼實作者去放寬它。
+ */
+describe('worldgen performance budget (B3 Task 9)', () => {
+  it(
+    'generating 16 chunks stays inside the performance budget',
+    { timeout: 30000 },
+    () => {
+      // **量三次、取最快的那一次**（門檻數字一個都沒放寬）。
+      //
+      // 為什麼要量三次：vitest 會**平行**跑多個測試檔 → 全量跑測時，同一顆 CPU
+      // 上還有十幾個檔案在跑密集的數值迴圈 → 單一區塊的**牆鐘時間**會被行程
+      // 排程與 GC 抖成 60–90 ms（實測：全量並行時最快的一次 15–17 ms/區塊、
+      // 單檔獨跑 6.4 ms/區塊；峰值 61–87 ms）。那不是生成器的病態退化，是機器
+      // 的雜訊 → 拿它去卡 50 ms 的門檻會變成**假紅**。
+      // 取三次裡最快的那一次 → 量到的是「生成器本身的成本」；**退化到 40 ms/區塊
+      // 時三次都會超標 → 仍然會紅**（門檻的守護力沒有被削弱）。
+      //
+      // **每一回合用不同的區塊座標**（第 r 回合生成 x = 0..3 + 4r）：快取是
+      // 「seed → x → z」→ 若三回合都生成同一批座標，第 2、3 回合量到的就是
+      // **熱快取**（欄位結果已被第 1 回合算過）→ 守護力會比「玩家第一幀的真實
+      // 成本」弱（熱快取約 4.5 ms/區塊，冷快取約 6–7 ms/區塊）。改用不同座標
+      // 後，**三個回合都是冷快取** → 被斷言的那一回合量到的就是真實的首幀成本。
+      //
+      // **不同位置的區塊成本差多少？**（實測 169 塊：min 4.19 / p50 5.01 /
+      // p95 6.63 / max 16.07 ms；同一個 4×4 區塊群在不同位置：58–84 ms）
+      // → 取最快的那一回合最多「便宜」約 30%，而門檻是 500 ms（≈ 實測值的
+      // 6–8 倍）→ 守護力沒有被實質削弱。
+      let best: { total: number; max: number; times: number[] } | null = null;
+      const rounds: string[] = [];
+      for (let round = 0; round < 3; round++) {
+        const times: number[] = [];
+        for (let i = 0; i < 16; i++) {
+          const t0 = performance.now();
+          generateChunk(i % 4 + round * 4, Math.floor(i / 4), 1337);
+          times.push(performance.now() - t0);
+        }
+        const total = times.reduce((a, b) => a + b, 0);
+        const max = Math.max(...times);
+        rounds.push(`#${round + 1} ${total.toFixed(1)} ms / max ${max.toFixed(1)} ms`);
+        if (!best || total < best.total) best = { total, max, times };
+      }
+      const { total, max, times } = best ?? { total: 0, max: 0, times: [] };
+      // **先印後斷言**：門檻被觸發時（CI 機器慢／並行搶 CPU）也要留下實測數字，
+      // 才知道是「真的退化」還是「機器忙」。
+      console.log(
+        `chunk gen: total ${total.toFixed(1)} ms, per chunk ${(total / 16).toFixed(2)} ms, max ${max.toFixed(2)} ms`,
+        `[${times.map((t) => t.toFixed(1)).join(', ')}]`,
+        `rounds: ${rounds.join(' | ')}`,
+      );
+      expect(total).toBeLessThan(500);
+      expect(max).toBeLessThan(50);
+    },
+  );
+});
 
 // 取樣設定（之後所有統計測試共用；寫在檔頂端的 helper 區）
 const SEED = 1337;
