@@ -64,12 +64,12 @@ export type AdvancementEvent =
   | { type: 'ate'; item: ItemId; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
-/** Obtain → advancement map (Task 11 brief): the 15 item triggers across 8
- *  ids. wood/stone/iron tools share one id per tier; `stone_sword` only triggers
+/** Obtain → advancement map (Task 11 brief ＋ B4 Task 1)：20 個 item 觸發、9 個進度 id。
+ *  wood/stone/iron tools share one id per tier; `stone_sword` only triggers
  *  stone_tool here — monster_hunter needs the kill event. Both iron inputs map
  *  to iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
  *  stays for legacy saves/creative.
- *  B4 Task 1：加 5 個觸發 → 20 個 item 觸發、9 個進度 id（pasture 見下）。 */
+ *  B4 Task 1：加 5 個觸發（生肉／羊毛 → pasture，見下）。 */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
   crafting_table: 'crafting_table',

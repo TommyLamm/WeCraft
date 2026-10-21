@@ -96,9 +96,8 @@ function line(
   ctx.stroke();
 }
 
-/** The shared silhouette of the eight raw/cooked meat icons (a rounded, slightly
- *  irregular chunk of meat). `grow` inflates the outline by that many pixels —
- *  the pork chop uses it to draw a white fat rim *under* the meat. */
+/** 八個生／熟肉圖示共用的肉塊輪廓（略不規則的圓角肉塊）。
+ *  `grow` 把輪廓往外撐開 n 像素——豬排用它把白色脂圈畫在肉塊底下。 */
 function meatChunkPath(ctx: CanvasRenderingContext2D, grow: number): void {
   const g = grow;
   ctx.beginPath();

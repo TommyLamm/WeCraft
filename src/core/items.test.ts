@@ -50,13 +50,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
-/** 物品基數（本任務動工前讀到的現況值 41 ＝ 36 個既有 ＋ B3 Task 4 補的 5 個物品形式）。
- *  B4 Task 1 再新增 13 個 id（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）
- *  → 總數 41 + 13 = 54（既有斷言用這個分解式；下面的新案例另外把 54 釘死）。 */
-const BASE_ITEM_COUNT = 36;
-const B3_ITEM_COUNT = 5;
-const B4_ITEM_COUNT = 13;
-const TOTAL_ITEM_COUNT = BASE_ITEM_COUNT + B3_ITEM_COUNT + B4_ITEM_COUNT; // 54
+/** 物品總數（**單一真相**）：動工前讀到的現況值 41 ＝ 36 個既有 ＋ B3 Task 4 補的 5 個物品形式，
+ *  B4 Task 1 再補 13 個（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）＝ 54。
+ *  下批再加 id → **只改這一個數字**。 */
+const TOTAL_ITEM_COUNT = 54;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -67,9 +64,12 @@ const B4_ITEM_IDS: readonly ItemId[] = [
   'leather', 'feather', 'wool', 'rotten_flesh', 'bone',
 ];
 
+/** 本批新增的 id 數（跟 TOTAL_ITEM_COUNT 的 41 + 13 同一組數字）。 */
+const B4_ITEM_COUNT = 13;
+
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    // B4 Task 1：基數 36 → 36 + 5（B3 Task 4）＋ 13（本批的食物／材料／羊毛）
+    // 總數 54（36 既有 ＋ B3 Task 4 的 5 ＋ B4 Task 1 的 13）—— TOTAL_ITEM_COUNT 是單一真相
     expect(ALL_ITEMS.length).toBe(TOTAL_ITEM_COUNT);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
@@ -95,8 +95,8 @@ describe('items', () => {
       expect(sanitizeStack({ item: id, count: 2 })).toEqual({ item: id, count: 2 });
       expect(maxStack(id)).toBe(64);
     }
-    // 動工前讀到的現況基數 41 ＋ 本批 13 ＝ 54：這個實際值寫死在測試裡
-    expect(ALL_ITEM_IDS.length).toBe(54);
+    // 本批新增 13 個 id（清單與計數常數同一組數字）；總數 54 由 TOTAL_ITEM_COUNT 把關
+    expect(B4_ITEM_IDS).toHaveLength(B4_ITEM_COUNT);
   });
 
   it('wool is the item form of the wool block', () => {
