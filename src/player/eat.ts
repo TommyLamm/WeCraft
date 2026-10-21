@@ -23,10 +23,15 @@ export interface FoodDef {
   saturation: number;
 }
 
+/** 蘋果的食物值（**單一真值**）：`FOOD_VALUES.apple` 與 `APPLE_FOOD`／`APPLE_SAT`
+ *  共用這一份 → 不會出現「改了表卻忘了改常數」的漂移。
+ *  `as const` 讓 `APPLE_FOOD`／`APPLE_SAT` 維持原本的常數型別（`4`／`2.4`）。 */
+const APPLE_FOOD_DEF = { food: 4, saturation: 2.4 } as const;
+
 /** 原版的食物值表（10 筆；數值逐字照抄 wiki，2026-10-20 查證）。
  *  鍵順序照表；不是食物的物品不在表內。 */
 export const FOOD_VALUES: Readonly<Partial<Record<ItemId, FoodDef>>> = {
-  apple: { food: 4, saturation: 2.4 },
+  apple: APPLE_FOOD_DEF,
   raw_chicken: { food: 2, saturation: 1.2 },
   cooked_chicken: { food: 6, saturation: 7.2 },
   raw_porkchop: { food: 3, saturation: 1.8 },
@@ -38,13 +43,13 @@ export const FOOD_VALUES: Readonly<Partial<Record<ItemId, FoodDef>>> = {
   rotten_flesh: { food: 4, saturation: 0.8 },
 };
 
-/** 蘋果的食物值 —— **與 `FOOD_VALUES.apple` 相同**（值 4／2.4）。
- *  寫成常數而不是 `FOOD_VALUES.apple.food`：`FOOD_VALUES` 的型別是
+/** 蘋果的食物值 —— **與 `FOOD_VALUES.apple` 相同**（值 4／2.4，同一個來源）。
+ *  這裡不寫 `FOOD_VALUES.apple.food`：`FOOD_VALUES` 的型別是
  *  `Partial<Record<ItemId, FoodDef>>`，取值會是 `FoodDef | undefined`
- *  → 嚴格模式下 `tsc` 報可能未定義。兩者的一致性由測試
- *  `expect(APPLE_FOOD).toBe(FOOD_VALUES.apple?.food)` 釘死。 */
-export const APPLE_FOOD = 4;
-export const APPLE_SAT = 2.4;
+ *  → 嚴格模式下 `tsc` 報可能未定義；改從上面的單一真值 `APPLE_FOOD_DEF` 取。
+ *  兩者的一致性仍由測試 `expect(APPLE_FOOD).toBe(FOOD_VALUES.apple?.food)` 釘死。 */
+export const APPLE_FOOD = APPLE_FOOD_DEF.food;
+export const APPLE_SAT = APPLE_FOOD_DEF.saturation;
 
 /** 按住進食要多久才真的吃下去：原版 32 tick ＝ 1.6 秒。 */
 export const EAT_TIME_SEC = 1.6;

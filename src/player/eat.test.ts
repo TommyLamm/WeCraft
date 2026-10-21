@@ -125,12 +125,17 @@ describe('canEat', () => {
   });
 
   it('canEat refuses a non-food item', () => {
-    expect(canEat(createVitals(), 'stone')).toBe(false);
+    // 守門必須有效：vitals 要「沒吃飽」，否則會被「滿飢餓不可進食」擋下，
+    // 這條案例就算把 canEat 的食物檢查整段刪掉也會通過（空轉）。
+    // 同一組 vitals 加上正向對照 → 食物可吃、非食物不可吃（守門有效）。
+    const hungry = { ...createVitals(), hunger: 10 };
+    expect(canEat(hungry, 'stone')).toBe(false);
+    expect(canEat(hungry, 'apple')).toBe(true);
   });
 });
 
 describe('EatProgress', () => {
-  it('a hold shorter than 1.6 s never completes', () => {
+  it('a hold that has not reached 1.6 s never completes', () => {
     const p = new EatProgress();
     expect(p.update(1.59, 'apple', true)).toBe('eating');
     expect(p.elapsed).toBeCloseTo(1.59, 5);
