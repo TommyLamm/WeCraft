@@ -23,15 +23,19 @@ function burning(overrides: Partial<FurnaceState> = {}): FurnaceState {
 }
 
 describe('furnace tables', () => {
-  it('smelt takes 10 s; raw_iron/iron_ore→iron_ingot and sand→glass; coal_ore excluded', () => {
+  it('smelt takes 10 s; iron ore/raw iron→ingot, sand→glass, four raw meats→cooked; coal_ore excluded', () => {
     expect(SMELT_TIME_SEC).toBe(10);
     expect(SMELT_RECIPES).toEqual({
       iron_ore: 'iron_ingot',
       raw_iron: 'iron_ingot',
       sand: 'glass',
+      raw_chicken: 'cooked_chicken',
+      raw_porkchop: 'cooked_porkchop',
+      raw_mutton: 'cooked_mutton',
+      raw_beef: 'steak',
     });
     expect(SMELT_RECIPES['coal_ore' as keyof typeof SMELT_RECIPES]).toBeUndefined();
-    expect(FUEL_VALUES).toEqual({ coal: 8, oak_log: 2, oak_planks: 2, stick: 1 });
+    expect(FUEL_VALUES).toEqual({ coal: 8, oak_log: 1.5, oak_planks: 1.5, stick: 0.5 });
   });
 
   it('smelts raw_iron into an iron ingot', () => {
@@ -128,5 +132,46 @@ describe('stepFurnace', () => {
     expect(r.state.progressSec).toBe(2);
     expect(r.state.output).toEqual(stack('glass', 5));
     expect(r.state.fuelUnits).toBe(4);
+  });
+
+  it('a log covers one and a half smelts', () => {
+    let s = emptyFurnace();
+    s = { ...s, input: { item: 'raw_beef', count: 3 }, fuel: { item: 'oak_log', count: 1 } };
+    const r = stepFurnace(s, 30);
+    expect(r.completed).toBe(2);           // 1.5 次的燃料覆蓋 2 次冶煉
+    expect(r.state.fuelUnits).toBe(0);     // 用盡（剩下的 0.5 直接捨去）
+    expect(r.state.input?.count).toBe(1);  // 還剩一塊沒熔
+    expect(r.state.output).toEqual(stack('steak', 2));
+    expect(r.state.fuel).toBeNull();       // 那根原木已經點燃掉了
+  });
+
+  it('a stick covers half a smelt, so the next one waits for fuel', () => {
+    let s = emptyFurnace();
+    s = { ...s, input: { item: 'raw_beef', count: 3 }, fuel: { item: 'stick', count: 1 } };
+    const r = stepFurnace(s, 30);
+    expect(r.completed).toBe(1);
+    expect(r.state.fuelUnits).toBe(0);
+    expect(r.state.input?.count).toBe(2);  // 還剩兩塊沒熔
+    expect(r.state.output).toEqual(stack('steak', 1));
+  });
+
+  it('a coal covers eight smelts', () => {
+    let s = emptyFurnace();
+    s = { ...s, input: { item: 'raw_beef', count: 10 }, fuel: { item: 'coal', count: 1 } };
+    const r = stepFurnace(s, 80);
+    expect(r.completed).toBe(8);
+    expect(r.state.fuelUnits).toBe(0);
+    expect(r.state.input?.count).toBe(2);  // 煤燒完了，剩下兩塊等新燃料
+    expect(r.state.output).toEqual(stack('steak', 8));
+  });
+
+  it('smelting raw meat yields the cooked item', () => {
+    const s = emptyFurnace();
+    const r = stepFurnace(
+      { ...s, input: { item: 'raw_chicken', count: 1 }, fuel: { item: 'coal', count: 1 } },
+      10,
+    );
+    expect(r.completed).toBe(1);
+    expect(r.state.output).toEqual({ item: 'cooked_chicken', count: 1 });
   });
 });
