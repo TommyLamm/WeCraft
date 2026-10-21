@@ -778,6 +778,39 @@ function pushCloudToast(title: string): void {
   }
 }
 
+// ---- B3 Task 8：「地形已改變」提示狀態 ----
+/** 一份**舊的**雲端進度已經套用到 live state，但還沒告知玩家 → 等玩家**進場**
+ *  的那一刻才跳提示。為什麼不立刻跳：`applyCloudData` 在**開機時**就跑完了（早於
+ *  標題畫面 render），那時跳的 toast 疊在**標題畫面**上、4 秒後自動消失 → 玩家
+ *  進遊戲後可能永遠看不到。計畫 §8 的語意是「**進遊戲的同時**跳一次 toast」。 */
+let worldgenNoticePending = false;
+/** 這個 play session 已經跳過提示 → **同一個 session 不重複**跳。進場時歸零
+ *  （新的 session 可以再跳一次：那是下一個 session 的事）。 */
+let worldgenNoticeShown = false;
+
+/** 開一個新的 play session —— 「同一個 session 只提示一次」的記號歸零。 */
+function beginNoticeSession(): void {
+  worldgenNoticeShown = false;
+}
+
+/** 記下「這份雲端進度是舊的，進場時要跳提示」。**不直接跳**（見上面的說明）。
+ *  已經在這個 session 提示過 → 不再重新排隊（同一筆進度被套用多次也只跳一次）。 */
+function armWorldgenNotice(saved: number | undefined): void {
+  if (!needsWorldgenNotice(saved)) return;
+  if (worldgenNoticeShown) return; // 這個 session 已經說過了
+  worldgenNoticePending = true;
+}
+
+/** 跳「地形已改變」toast —— 呼叫端必須是「玩家看得到 toast 的那一刻」
+ *  （進場、或場中套用雲端進度）。跳完就清掉旗標 → 同一筆進度不重複跳。 */
+function flushWorldgenNotice(): void {
+  if (!worldgenNoticePending) return;
+  worldgenNoticePending = false;
+  if (worldgenNoticeShown) return; // 這個 session 已經跳過（同一個 session 只一次）
+  worldgenNoticeShown = true;
+  pushWorldgenNotice(toasts);
+}
+
 // ---- 生存 HUD（Task 4）----
 // .vitals 容器：same programmatic markup pattern as hud/menus/inventory
 const vitalsEl = document.createElement('div');
@@ -1426,12 +1459,14 @@ function applyCloudData(data: CloudData): void {
   clock.t = data.clockT;
   audio.setPhase(phaseOf(clock.t));
   // B3 Task 8：雲端進度若是**舊存檔**（`worldgenVersion` 缺漏或 ≠ 當前版本）
-  // → 同樣跳一次「地形已改變」的**非模態 toast**（與 B1.4 的模態確認框無關）。
-  // 這裡**不**急著把新版本寫回雲端：下一次 checkpoint 送出時自然會帶上當前的
+  // → **只記下**「玩家進場時要跳一次『地形已改變』的 toast」，**不在這裡跳**。
+  // 為什麼不跳：這個函式在**開機時**就跑完了（早於標題畫面 render）→ 那時跳的
+  // toast 疊在標題畫面上、4 秒後消失，玩家進遊戲後可能永遠看不到；計畫 §8 的
+  // 語意是「**進遊戲的同時**跳一次 toast」→ 提示改在 `continueFromCloud` 進場
+  // 時跳（見 flushWorldgenNotice）。
+  // 這裡也**不**急著把新版本寫回雲端：下一次 checkpoint 送出時自然會帶上當前的
   // `WORLDGEN_VERSION`（`buildCloudData` 是唯一蓋值的地方）。
-  if (needsWorldgenNotice(data.worldgenVersion)) {
-    pushWorldgenNotice(toasts);
-  }
+  armWorldgenNotice(data.worldgenVersion);
 }
 
 /** Checkpoint: snapshot live progress to the cloud slot (Phase 4 Task 4).
@@ -1559,6 +1594,9 @@ async function resolveCloudConflict(): Promise<void> {
       return;
     }
     applyCloudData(accepted);
+    // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→ 舊的雲端
+    // 進度就地告知一次。`applyCloudData` 本身只排隊不跳（開機時玩家還在標題畫面）。
+    flushWorldgenNotice();
     cloudRevision = fresh.revision;
     pendingCloud = null;
     cloudConflict = true;
@@ -1753,6 +1791,10 @@ function startGame(): void {
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   resetViewMode(); // B2.4: 新局 → 視角回到第一人稱（不帶上一局的第三身姿態）
   cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
+  // B3 Task 8：新遊戲沒有「舊地形」→ 不提示；開機時排隊的雲端提示也一併作廢
+  // （新遊戲丟掉了那份雲端進度，告知它沒有意義）。
+  beginNoticeSession();
+  worldgenNoticePending = false;
   sessionStarted = true;
   resetPlayerToSpawn();
   setState('playing');
@@ -1855,6 +1897,7 @@ function continueGame(payload: SavePayload): void {
   audio.setPhase(phaseOf(clock.t));
 
   cloudAppliedAtBoot = false; // Ruling I: this local payload is the session now
+  beginNoticeSession(); // B3 Task 8: 新的 play session → 「只提示一次」的記號歸零
   sessionStarted = true;
 
   // B3 Task 8：舊存檔（`worldgenVersion` 缺漏或 ≠ 當前版本）→ 進遊戲時跳一次
@@ -1869,7 +1912,13 @@ function continueGame(payload: SavePayload): void {
   //    這件事（Task 7 的讀取端刻意不補值）。
   // 3) 寫入失敗只吞掉：存檔是 best-effort，**不得**阻擋進遊戲（也不記未標記事故）。
   if (needsWorldgenNotice(payload.worldgenVersion)) {
-    pushWorldgenNotice(toasts);
+    // 進場的這一刻跳（玩家看得到 toast）；同一個 session 只跳一次。
+    if (!worldgenNoticeShown) {
+      worldgenNoticeShown = true;
+      pushWorldgenNotice(toasts);
+    }
+    // 寫回**不**受「有沒有跳過提示」影響：舊存檔一定要被蓋上新的版本戳記，
+    // 否則每次進來都會再判一次「要不要提示」。
     const current = sessionSavePayload(); // 現況快照（還原後的 session）
     if (current) {
       const stamped: SavePayload = { ...current, worldgenVersion: WORLDGEN_VERSION };
@@ -1895,12 +1944,16 @@ function continueGame(payload: SavePayload): void {
  *  cloud never carries voxel edits). Body = continueGame's entry tail only. */
 function continueFromCloud(): void {
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
+  beginNoticeSession(); // B3 Task 8: 新的 play session → 「只提示一次」的記號歸零
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   resetViewMode(); // B2.4: 進場 → 視角回到第一人稱
   hazardState = createHazardState(); // B3 Task 6: 進場 → 仙人掌計時歸零（與 continueGame 同一路徑）
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
+  // B3 Task 8：**進場的這一刻**才跳「地形已改變」的**非模態 toast**（舊存檔才跳）。
+  // 開機時的 `applyCloudData` 只排隊不跳（那時玩家還在標題畫面，看不到）。
+  flushWorldgenNotice();
   sessionStarted = true;
   setState('playing');
   relockCanvas(); // the click is a user gesture → controls live
