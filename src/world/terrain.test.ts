@@ -50,10 +50,30 @@ const LOG_BLOCKS: ReadonlySet<number> = new Set([
   BLOCK.BIRCH_LOG,
 ]);
 
+/** B3 Task 6：地表裝飾（花／草叢／仙人掌／冰）。
+ *
+ *  與樹木一樣，裝飾**不是地形**：`topTerrainY` 必須跳過它們才能找到「地表
+ *  那一格」（花／草長在 h+1、仙人掌長在沙面上、冰取代水面頂端）。
+ *  這只是讓 helper 找回它原本要找的東西 → 下面每一條斷言的強度不變。 */
+const DECORATION_BLOCKS: ReadonlySet<number> = new Set([
+  BLOCK.DANDELION,
+  BLOCK.POPPY,
+  BLOCK.SHORT_GRASS,
+  BLOCK.CACTUS,
+  BLOCK.ICE,
+]);
+
 function topTerrainY(c: Uint8Array, lx: number, lz: number): number {
   for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
     const id = c[chunkIndex(lx, y, lz)];
-    if (id !== BLOCK.AIR && id !== BLOCK.WATER && !TREE_BLOCKS.has(id)) return y;
+    if (
+      id !== BLOCK.AIR &&
+      id !== BLOCK.WATER &&
+      !TREE_BLOCKS.has(id) &&
+      !DECORATION_BLOCKS.has(id)
+    ) {
+      return y;
+    }
   }
   return -1;
 }

@@ -22,7 +22,7 @@ import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
-import { createPlayer, stepPlayer, EYE_HEIGHT, type MoveInput, type PlayerState } from './player/physics';
+import { createPlayer, stepPlayer, EYE_HEIGHT, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, type MoveInput, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 // B2.1 疾跑狀態機：規則本體（取消條件／飢餓門檻／鎖存）在 player/sprint.ts，
 // main 只餵每幀上下文並取用 `sprintState.active`。
@@ -52,6 +52,8 @@ import {
 } from './player/survival';
 // Task 9: 0.5 s post-hit invulnerability for MOB damage (pure window state)
 import { createInvuln, canBeHurt, markHurt } from './player/invuln';
+// B3 Task 6: 仙人掌接觸傷害（純邏輯層；規則本體在 world/hazards.ts）
+import { createHazardState, stepHazards, touchesCactus } from './world/hazards';
 import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
@@ -789,6 +791,10 @@ let vitals: Vitals | null = null;
  *  one hit per 0.5 s (a lone zombie's 1 s cooldown is already slower). Only mob
  *  damage is gated by it: fall damage and starvation keep their own cadence. */
 let invuln = createInvuln();
+
+/** 危險狀態（B3 Task 6）：仙人掌的接觸計時（累積到 1 秒 → 1 點傷害）。
+ * 純資料、由 `stepHazards` 每幀更新；`resetWorld()`／`startGame()` 會歸零。 */
+let hazardState = createHazardState();
 
 /** Single vitals mutation path: store `next`, repaint the HUD, hide the bar
  *  when null — and (Task 9) emit `vitals-changed` whenever a HUD-visible value
@@ -1700,6 +1706,7 @@ function resetWorld(): void {
   pendingMesh.length = 0;
   resetSessionEntities();
   clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
+  hazardState = createHazardState(); // B3 Task 6: 仙人掌的接觸計時不跨世界沿用
 }
 
 function startGame(): void {
@@ -1730,6 +1737,7 @@ function startGame(): void {
   craftExcess = [];
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
+  hazardState = createHazardState(); // B3 Task 6: 新局 → 仙人掌計時歸零
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   resetViewMode(); // B2.4: 新局 → 視角回到第一人稱（不帶上一局的第三身姿態）
   cloudAppliedAtBoot = false; // Ruling I: a fresh game replaces any boot-applied cloud state
@@ -2176,6 +2184,26 @@ gs.renderer.setAnimationLoop(() => {
       if (amount > 0) {
         deathCause = 'fall'; // Task 13: fall damage landed (last write wins toward the death line)
         setVitals(damage(vitals, amount)); // emits vitals-changed via setVitals
+      }
+    }
+
+    // ---- 危險（B3 Task 6）：仙人掌接觸傷害（每秒 1 點，累積器式）----
+    // 接觸判定是**整格判定**（`touchesCactus`）：踩在仙人掌上、或跳過仙人掌
+    // 時身體框與仙人掌格重疊才算接觸；站在仙人掌旁邊不會扣血（與原版的差異，
+    // 見 `src/world/hazards.ts` 的檔頭註解）。
+    // 傷害節奏由 `stepHazards` 的累積器決定（與幀率無關）；扣血照樣走
+    // `setVitals` 路徑，並沿用生物傷害的 0.5 s 無敵幀（`invuln`）。
+    const hazard = stepHazards(
+      hazardState,
+      touchesCactus(world, player.position, PLAYER_HALF_WIDTH, PLAYER_HEIGHT),
+      dt,
+    );
+    hazardState = hazard.state;
+    if (hazard.damage > 0 && vitals) {
+      const nowSec = performance.now() / 1000;
+      if (canBeHurt(invuln, nowSec)) {
+        invuln = markHurt(invuln, nowSec);
+        setVitals(damage(vitals, hazard.damage)); // emits vitals-changed via setVitals
       }
     }
 

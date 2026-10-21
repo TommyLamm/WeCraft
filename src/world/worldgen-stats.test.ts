@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { surfaceHeight, SEA_LEVEL, biomeAt, type Biome } from './terrain';
+import { surfaceHeight, SEA_LEVEL, biomeAt, surfaceBlockOf, type Biome } from './terrain';
 import { treeExists } from './trees';
+import { cactusOn, flowerOn, grassOn, isCold } from './decorations';
+import { BLOCK } from './blocks';
 
 // 取樣設定（之後所有統計測試共用；寫在檔頂端的 helper 區）
 const SEED = 1337;
@@ -221,6 +223,214 @@ describe('worldgen tree density statistics', () => {
       ] as const) {
         expect(stats.get(biome)?.columns ?? 0, biome).toBeGreaterThan(0);
       }
+    },
+  );
+});
+
+// ---- B3 Task 6：地表裝飾密度 ----
+
+/**
+ * 裝飾密度的取樣區：**連續 1024×1024 格**（與計畫 §6 的實測值同一區域，
+ * 種子 1337）。不是跨距取樣——裝飾是「每柱一次擲骰」的點狀分佈，跨距取樣
+ * 會把相鄰柱的關聯抽掉（雖然擲骰彼此獨立，但母體的生態分佈需要連續區域）。
+ */
+const DECOR_SAMPLE_SIZE = 1024;
+
+/** 一個生態的裝飾統計（模組層級記憶化 → 下面所有案例共用同一份結果）。 */
+interface DecorationStats {
+  /** 該生態的柱數。 */
+  columns: number;
+  /** 可放置柱（草頂）的數量＝花／草叢密度的母體。 */
+  grassTop: number;
+  dandelion: number;
+  poppy: number;
+  grass: number;
+  /** 仙人掌棵數（只有沙漠會有）。 */
+  cactus: number;
+  /** 全部水柱（冰的母體）。 */
+  waterColumns: number;
+  /** 結冰的水柱。 */
+  iceColumns: number;
+}
+
+let decorStats: Map<Biome, DecorationStats> | null = null;
+function sampledDecorationStats(): Map<Biome, DecorationStats> {
+  if (decorStats) return decorStats;
+  const stats = new Map<Biome, DecorationStats>();
+  for (let z = 0; z < DECOR_SAMPLE_SIZE; z++) {
+    for (let x = 0; x < DECOR_SAMPLE_SIZE; x++) {
+      const biome = biomeAt(x, z, SEED);
+      let s = stats.get(biome);
+      if (!s) {
+        s = {
+          columns: 0,
+          grassTop: 0,
+          dandelion: 0,
+          poppy: 0,
+          grass: 0,
+          cactus: 0,
+          waterColumns: 0,
+          iceColumns: 0,
+        };
+        stats.set(biome, s);
+      }
+      s.columns++;
+      const h = surfaceHeight(x, z, SEED);
+      // 可放置柱＝草頂（陸地 ＋ 表層是草）：花與草叢的母體
+      if (h > SEA_LEVEL && surfaceBlockOf(biome, h) === BLOCK.GRASS) s.grassTop++;
+      const flower = flowerOn(x, z, SEED);
+      if (flower === 'dandelion') s.dandelion++;
+      else if (flower === 'poppy') s.poppy++;
+      else if (grassOn(x, z, SEED)) s.grass++;
+      const cactus = cactusOn(x, z, SEED);
+      if (cactus > 0) s.cactus++;
+      if (h < SEA_LEVEL) {
+        s.waterColumns++;
+        if (h <= SEA_LEVEL - 2 && isCold(x, z, SEED)) s.iceColumns++;
+      }
+    }
+  }
+  decorStats = stats;
+  return stats;
+}
+
+/** 花／草叢的密度：棵數 ÷ 可放置柱數 × 256（256 柱 = 一個 16×16 區塊的面積）。 */
+function flowerDensity(biome: Biome, kind: 'dandelion' | 'poppy'): number {
+  const s = sampledDecorationStats().get(biome);
+  if (!s || s.grassTop === 0) return 0;
+  return (s[kind] / s.grassTop) * 256;
+}
+
+/** 草叢的覆蓋率（可放置柱裡有多少柱長了草叢，百分比）。 */
+function grassCoverage(biome: Biome): number {
+  const s = sampledDecorationStats().get(biome);
+  if (!s || s.grassTop === 0) return 0;
+  return (s.grass / s.grassTop) * 100;
+}
+
+/** 仙人掌的密度：棵數 ÷ 沙漠柱數 × 256。 */
+function cactusDensity(): number {
+  const s = sampledDecorationStats().get('desert');
+  if (!s || s.columns === 0) return 0;
+  return (s.cactus / s.columns) * 256;
+}
+
+/** 冰的覆蓋率：結冰水柱 ÷ 全部水柱（百分比）。 */
+function iceCoverage(): number {
+  let water = 0;
+  let ice = 0;
+  for (const s of sampledDecorationStats().values()) {
+    water += s.waterColumns;
+    ice += s.iceColumns;
+  }
+  if (water === 0) return 0;
+  return (ice / water) * 100;
+}
+
+/**
+ * 花／草叢的密度容差（計畫 §6：實測值 ± 0.6 棵／256 柱、± 3 個百分點）。
+ *
+ * 門檻是「釘死種子 1337 的實測值 ± 容差」，不是「看起來差不多」：
+ * 蒲公英 plains 1.09／forest 1.06／birch 1.54／taiga 0.50／mountains 0.49；
+ * 罌粟 plains 0.96／forest 0.99／birch 1.55／taiga 0.49／mountains 0.41；
+ * 草叢覆蓋率 plains 10.2%／forest 11.9%／birch 12.0%／taiga 8.1%／mountains 5.0%。
+ *
+ * （本批以同一套規則重算的實測值：蒲公英 1.09／1.06／1.53／0.50／0.49、
+ * 罌粟 0.96／0.99／1.55／0.49／0.41、草叢 10.1%／11.8%／11.9%／8.0%／5.0%
+ * ——與計畫的值在 0.1 個單位內吻合。）
+ */
+interface DecorDensityTolerance {
+  biome: Biome;
+  dandelion: readonly [number, number];
+  poppy: readonly [number, number];
+  grass: readonly [number, number];
+}
+
+const DECOR_DENSITY_TOLERANCE: readonly DecorDensityTolerance[] = [
+  { biome: 'plains', dandelion: [0.49, 1.69], poppy: [0.36, 1.56], grass: [7.2, 13.2] },
+  { biome: 'forest', dandelion: [0.46, 1.66], poppy: [0.39, 1.59], grass: [8.9, 14.9] },
+  { biome: 'birch_forest', dandelion: [0.94, 2.14], poppy: [0.95, 2.15], grass: [9.0, 15.0] },
+  { biome: 'taiga', dandelion: [0, 1.1], poppy: [0, 1.09], grass: [5.1, 11.1] },
+  { biome: 'mountains', dandelion: [0, 1.09], poppy: [0, 1.01], grass: [2.0, 8.0] },
+];
+
+describe('worldgen decoration density statistics', () => {
+  for (const t of DECOR_DENSITY_TOLERANCE) {
+    it(
+      `the ${t.biome} dandelion density stays inside ${t.dandelion[0]}–${t.dandelion[1]} per 256 columns`,
+      { timeout: 120000 },
+      () => {
+        const density = flowerDensity(t.biome, 'dandelion');
+        expect(density, `${t.biome} dandelion density`).toBeGreaterThanOrEqual(t.dandelion[0]);
+        expect(density, `${t.biome} dandelion density`).toBeLessThanOrEqual(t.dandelion[1]);
+      },
+    );
+
+    it(
+      `the ${t.biome} poppy density stays inside ${t.poppy[0]}–${t.poppy[1]} per 256 columns`,
+      { timeout: 120000 },
+      () => {
+        const density = flowerDensity(t.biome, 'poppy');
+        expect(density, `${t.biome} poppy density`).toBeGreaterThanOrEqual(t.poppy[0]);
+        expect(density, `${t.biome} poppy density`).toBeLessThanOrEqual(t.poppy[1]);
+      },
+    );
+
+    it(
+      `the ${t.biome} grass coverage stays inside ${t.grass[0]}%–${t.grass[1]}%`,
+      { timeout: 120000 },
+      () => {
+        const coverage = grassCoverage(t.biome);
+        expect(coverage, `${t.biome} grass coverage`).toBeGreaterThanOrEqual(t.grass[0]);
+        expect(coverage, `${t.biome} grass coverage`).toBeLessThanOrEqual(t.grass[1]);
+      },
+    );
+  }
+
+  it(
+    'the cactus density stays inside 0.6–2.4 per 256 desert columns',
+    { timeout: 120000 },
+    () => {
+      // 計畫 §6：實測 1.36 棵／256 沙漠柱（母體＝沙漠柱數，不是草頂柱數）
+      const density = cactusDensity();
+      expect(density, 'cactus density').toBeGreaterThanOrEqual(0.6);
+      expect(density, 'cactus density').toBeLessThanOrEqual(2.4);
+    },
+  );
+
+  it(
+    'the ice covers 1.5%–4% of the water columns',
+    { timeout: 120000 },
+    () => {
+      // 計畫 §6：實測 2.4%（母體＝全部水柱，分子＝結冰的水柱）
+      const coverage = iceCoverage();
+      expect(coverage, 'ice coverage').toBeGreaterThanOrEqual(1.5);
+      expect(coverage, 'ice coverage').toBeLessThanOrEqual(4);
+    },
+  );
+
+  it(
+    'every decorated biome has grass-top columns in the sampled region (the table is not vacuous)',
+    { timeout: 120000 },
+    () => {
+      const stats = sampledDecorationStats();
+      for (const biome of [
+        'plains',
+        'forest',
+        'birch_forest',
+        'taiga',
+        'mountains',
+        'desert',
+        'snowy_plains',
+        'ocean',
+      ] as const) {
+        expect(stats.get(biome)?.columns ?? 0, biome).toBeGreaterThan(0);
+      }
+      for (const t of DECOR_DENSITY_TOLERANCE) {
+        expect(stats.get(t.biome)?.grassTop ?? 0, `${t.biome} grass-top columns`).toBeGreaterThan(0);
+      }
+      // 沙漠是仙人掌的母體 → 必須真的有沙漠柱
+      expect(stats.get('desert')?.columns ?? 0).toBeGreaterThan(0);
     },
   );
 });

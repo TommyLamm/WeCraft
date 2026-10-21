@@ -3,6 +3,7 @@ import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 import { SEA_LEVEL, surfaceHeight, temperature, moisture } from './terrain-noise';
 import { plantTrees } from './trees';
+import { plantDecorations } from './decorations';
 
 // 高度與海平面改由 terrain-noise 提供（多層噪音：海陸／侵蝕／山脊），
 // 這裡只做轉出，既有 import 路徑（`./world/terrain`）不變。
@@ -211,6 +212,10 @@ export function generateChunk(cx: number, cz: number, seed: number): Uint8Array 
   }
 
   plantTrees(data, cx, cz, seed);
+  // B3 Task 6：地表裝飾（花／草叢／仙人掌／冰）。
+  // **順序有意義**：樹木先寫（樹幹會占掉地表格），裝飾只寫進空氣格 →
+  // 樹下的草不會長在樹幹裡。冰是唯一的例外（它取代水面頂端的水）。
+  plantDecorations(data, cx, cz, seed);
   return data;
 }
 
