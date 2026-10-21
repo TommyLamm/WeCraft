@@ -567,8 +567,8 @@ const MELEE_REACH = 3.5;
 let attackCd = 0;
 /** Cause of the current life's death (Task 13): set whenever survival damage
  *  lands (fall → 'fall', melee → the live mob's kind by mobId / 'unknown',
- *  arrows → 'skeleton', starvation ticks → 'starve' — last write wins) and
- *  read once at the `setState('dead')` transition via
+ *  arrows → 'skeleton', starvation ticks → 'starve', cactus contact → 'cactus'
+ *  — last write wins) and read once at the `setState('dead')` transition via
  *  `deathMessageFor(deathCause)`. Reset to null on every fresh spawn
  *  (`resetPlayerToSpawn`, which startGame/respawn/quit flow through) and on
  *  Continue (which builds its own player without that helper). */
@@ -844,8 +844,11 @@ let vitals: Vitals | null = null;
 /** Mob-hit invulnerability window (Task 9): while it is open, mob/arrow damage
  *  events are ignored entirely (no damage, no exhaustion, no flash) — with
  *  several mobs each swiping on their own cooldown that caps incoming damage at
- *  one hit per 0.5 s (a lone zombie's 1 s cooldown is already slower). Only mob
- *  damage is gated by it: fall damage and starvation keep their own cadence. */
+ *  one hit per 0.5 s (a lone zombie's 1 s cooldown is already slower).
+ *  B3 Task 6: the **hazard** damage (cactus contact) goes through the SAME
+ *  0.5 s gate (`canBeHurt`／`markHurt` in the frame loop) → mob damage and
+ *  hazard damage share one window. Fall damage and starvation keep their own
+ *  cadence — they never consult `invuln`. */
 let invuln = createInvuln();
 
 /** 危險狀態（B3 Task 6）：仙人掌的接觸計時（累積到 1 秒 → 1 點傷害）。
@@ -1013,6 +1016,12 @@ function spawnPoint(): { x: number; y: number; z: number } {
     world.reapplyModifiedInChunk(0, 0);
   }
   generated.add(chunkKey(0, 0));
+  // **為什麼用 `(0.5, 0.5)` 而不是整數**：柱（column）是 1×1 的格子，**整數座標
+  // 正好落在格子的邊界上**（四根柱交會的角點）→ 高度取樣與玩家落點都壓在邊界
+  // 上、容易在相鄰柱之間浮動。`(0.5, 0.5)` 是**柱的中心** → 取樣與落點都穩定
+  // 落在同一根柱的中央。
+  // （螺旋搜尋 `findDrySpawnColumn` 取高度時用**整數**座標，是為了與
+  // `generateChunk` 的逐柱取樣點一致；找到的柱再用 `dry.x + 0.5` 落到柱心。）
   const h0 = surfaceHeight(0.5, 0.5, settings.seed);
   let x = 0.5;
   let z = 0.5;

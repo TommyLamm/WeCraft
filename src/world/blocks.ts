@@ -111,11 +111,18 @@ const DEFS: Record<number, BlockDef> = {
   20: { id: 20, name: 'birch_leaves', hardness: 0.2, solid: true, transparent: true, shape: 'cube', top: T.BIRCH_LEAVES, side: T.BIRCH_LEAVES, bottom: T.BIRCH_LEAVES, requiredTool: null, fastTool: null },
   // B3 Task 4：花／草是 cross 型（不碰撞、不遮擋、硬度 0 → 徒手瞬破）；
   // 仙人掌與冰是滿格立方體（硬度 0.4／0.5 為原版數值）。
-  // 冰的 `transparent: true` 副作用（與玻璃同一級）：冰走**不透明 pass**，
-  // 材質沒有 `transparent`／`opacity` → **看不穿冰面**（冰面是不透明的淡藍白），
-  // 而且冰**不遮擋 AO**（鄰面不會因冰而變暗）、冰面**不會**被相鄰的不透明方塊
-  // 遮掉（`faceVisible` 只看鄰居是否透明）。若之後要做「半透明、可看穿」的冰，
-  // 需要獨立的透明 pass 或 `opacity` 材質 → 不在本批。
+  // 冰的 `transparent: true` 副作用（與玻璃同一級）寫在下方 **ICE 條目**旁邊。
+  21: { id: 21, name: 'dandelion', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
+  22: { id: 22, name: 'poppy', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
+  23: { id: 23, name: 'short_grass', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },
+  24: { id: 24, name: 'cactus', hardness: 0.4, solid: true, transparent: false, shape: 'cube', top: T.CACTUS_TOP, side: T.CACTUS_SIDE, bottom: T.CACTUS_TOP, requiredTool: null, fastTool: null },
+  // 冰（B3 Task 4）的 `transparent: true` 副作用（與玻璃同一級）：冰走**不透明
+  // pass**，材質沒有 `transparent`／`opacity` → **看不穿冰面**（冰面是不透明的淡藍
+  // 白），而且冰**不遮擋 AO**（鄰面不會因冰而變暗）。冰面**會**被相鄰的**不透明**
+  // 方塊遮掉：`faceVisible(id, neighbor)` 在鄰居不透明時回 false → 該面被剔除
+  // （冰貼著石頭時，冰朝石頭的那一面不畫；與玻璃同一級）。
+  // 若之後要做「半透明、可看穿」的冰，需要獨立的透明 pass 或 `opacity` 材質
+  // → 不在本批。
   //
   // **已知現象（B3 Task 6 記錄，待批次末驗收）**：冰會**取代水面頂端那一格**
   // （`decorations.ts` 的結冰規則）→ 冰塊（transparent）緊貼著下方的水
@@ -124,10 +131,6 @@ const DEFS: Record<number, BlockDef> = {
   // → 比較可能呈現「水色疊加」而不是閃爍，但**水下視角的外觀尚未驗收**
   // → 列入批次末瀏覽器驗收的待驗項；要根治需要獨立的透明 pass（渲染層改動，
   // 不在本批範圍）。
-  21: { id: 21, name: 'dandelion', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
-  22: { id: 22, name: 'poppy', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
-  23: { id: 23, name: 'short_grass', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },
-  24: { id: 24, name: 'cactus', hardness: 0.4, solid: true, transparent: false, shape: 'cube', top: T.CACTUS_TOP, side: T.CACTUS_SIDE, bottom: T.CACTUS_TOP, requiredTool: null, fastTool: null },
   25: { id: 25, name: 'ice', hardness: 0.5, solid: true, transparent: true, shape: 'cube', top: T.ICE, side: T.ICE, bottom: T.ICE, requiredTool: null, fastTool: 'pickaxe' },
 };
 

@@ -370,9 +370,18 @@ export function canPlaceAt(
   const id = world.getBlock(x, y, z);
   // 只能放進空氣／水／cross 植被（B3 Task 5）。
   // **植被是被「覆蓋」而不是卡住**：花／草不碰撞，本來就長在方塊上，
-  // 放新方塊上去時直接取代它（像原版蓋掉雜草）——不放寬玩家 AABB 的規則。
+  // **語意層**已經放行 cross（像原版蓋掉雜草）——不放寬玩家 AABB 的規則。
   // 判斷式是**共用**的 `isReplaceableForPlacement` → 與放置目標的計算
   // （`resolvePlacementTarget`）永遠是同一套規則。
+  //
+  // **兩層要分清楚**（B3 Task 9）：
+  // - 語意層（**本函式**）：「目標格**可不可以**放」——cross 植被一律放行。
+  // - 接線層（`main.ts` 的 `tryPlaceBlock`）：「目標格**指向哪裡**」——要先從
+  //   世界讀出被點擊格的方塊 id，餵給 `resolvePlacementTarget`，才會得到「放進
+  //   被點擊格本身」而不是「放進面鄰格」。
+  // 兩層必須一致：語意層放行、接線層卻指向別的格 → 放行規則形同虛設（cross 的
+  // 放行不可達）。本函式只管語意層；接線層的接法由 `src/main.wiring.test.ts`
+  // 的釘子把關。
   if (!isReplaceableForPlacement(id)) return false;
 
   // 方塊 AABB: [x,x+1]³ vs 玩家 AABB
