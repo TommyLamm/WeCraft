@@ -16,6 +16,7 @@ export type AdvancementId =
   | 'coal_miner'
   | 'iron_age'
   | 'hot_stuff'
+  | 'pasture'
   | 'tasty'
   | 'monster_hunter'
   | 'first_night';
@@ -39,6 +40,7 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   { id: 'coal_miner', title: '煤炭開採', description: '取得煤炭', icon: 'coal' },
   { id: 'iron_age', title: '鐵礦', description: '取得鐵礦', icon: 'iron_ore' },
   { id: 'hot_stuff', title: '燃燒吧', description: '從熔爐取出冶煉成品', icon: 'furnace' },
+  { id: 'pasture', title: '牧場', description: '取得生肉或羊毛', icon: 'raw_beef' },
   { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
   { id: 'monster_hunter', title: '怪物獵人', description: '擊殺一隻怪物', icon: 'stone_sword' },
   { id: 'first_night', title: '度過第一夜', description: '活著看見黎明', icon: 'grass' },
@@ -66,7 +68,8 @@ export type AdvancementEvent =
  *  ids. wood/stone/iron tools share one id per tier; `stone_sword` only triggers
  *  stone_tool here — monster_hunter needs the kill event. Both iron inputs map
  *  to iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
- *  stays for legacy saves/creative. */
+ *  stays for legacy saves/creative.
+ *  B4 Task 1：加 5 個觸發 → 20 個 item 觸發、9 個進度 id（pasture 見下）。 */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
   crafting_table: 'crafting_table',
@@ -83,6 +86,12 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   coal: 'coal_miner',
   iron_ore: 'iron_age',
   raw_iron: 'iron_age',
+  // B4 Task 1：牧場——取得任一種生肉或羊毛（熟肉不解鎖：牧場是「開始養」的訊號）
+  raw_chicken: 'pasture',
+  raw_porkchop: 'pasture',
+  raw_mutton: 'pasture',
+  raw_beef: 'pasture',
+  wool: 'pasture',
 };
 
 /** Apply one game event to the progress state. PURE: the input state is never

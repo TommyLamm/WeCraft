@@ -19,7 +19,16 @@ export type ItemId =
   | 'spruce_log' | 'spruce_leaves' | 'birch_log' | 'birch_leaves'
   // B3 Task 4: dandelion/poppy/short_grass (cross-shaped plants), cactus and
   // ice — same reason: the block↔item invariant below forces the pairing.
-  | 'dandelion' | 'poppy' | 'short_grass' | 'cactus' | 'ice';
+  | 'dandelion' | 'poppy' | 'short_grass' | 'cactus' | 'ice'
+  // B4 Task 1：羊毛（方塊物品形式，隨 BLOCK.WOOL = 26 一起補上 → 羊掉落的羊毛
+  // 能放回世界裡）。羊毛方塊**不進世界生成**（原版羊毛也不自然生成）。
+  | 'wool'
+  // B4 Task 1：被動生物的食物／材料物品。
+  // 熟牛肉的 id 用原版的 'steak'（不是 'cooked_beef'）→ `stackName` 轉出來是
+  // 「Steak」，與原版一致；其餘八個生／熟肉 id 轉出來剛好也是原版名稱。
+  | 'raw_chicken' | 'cooked_chicken' | 'raw_porkchop' | 'cooked_porkchop'
+  | 'raw_mutton' | 'cooked_mutton' | 'raw_beef' | 'steak'
+  | 'leather' | 'feather' | 'rotten_flesh' | 'bone';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -38,9 +47,17 @@ const ITEM_IDS: Record<ItemId, true> = {
   oak_leaves: true, snow_block: true, bedrock: true,
   spruce_log: true, spruce_leaves: true, birch_log: true, birch_leaves: true,
   dandelion: true, poppy: true, short_grass: true, cactus: true, ice: true,
+  // B4 Task 1：13 個新 id（9 個食物 ＋ 3 個材料 ＋ 羊毛方塊物品）
+  wool: true,
+  raw_chicken: true, cooked_chicken: true,
+  raw_porkchop: true, cooked_porkchop: true,
+  raw_mutton: true, cooked_mutton: true,
+  raw_beef: true, steak: true,
+  leather: true, feather: true, rotten_flesh: true, bone: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 41 個：36 個既有 ＋ Task 4 補的 5 個物品形式）。 */
+/** 全部 ItemId 的正規清單（目前 54 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+ *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }
@@ -74,6 +91,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['short_grass', BLOCK.SHORT_GRASS],
   ['cactus', BLOCK.CACTUS],
   ['ice', BLOCK.ICE],
+  // B4 Task 1：羊毛的方塊物品形式（羊掉羊毛 → 物品必須存在）
+  ['wool', BLOCK.WOOL],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

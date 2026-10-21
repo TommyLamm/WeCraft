@@ -8,8 +8,10 @@ import {
   isTargetable,
   PLACEABLE,
   HOTBAR_DEFAULT,
+  TILE_COUNT,
   type BlockDef,
 } from './blocks';
+import { buildTextureArray, TILE_PX } from '../render/textures';
 
 describe('blocks', () => {
   it('air id is 0 and not solid', () => {
@@ -57,6 +59,8 @@ describe('blocks', () => {
       [BLOCK.SHORT_GRASS, 0],
       [BLOCK.CACTUS, 0.4],
       [BLOCK.ICE, 0.5],
+      // B4 Task 1 新增：羊毛 0.8（原版羊毛硬度）
+      [BLOCK.WOOL, 0.8],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -95,6 +99,8 @@ describe('blocks', () => {
       [BLOCK.SHORT_GRASS, null, null],
       [BLOCK.CACTUS, null, null],
       [BLOCK.ICE, null, 'pickaxe'],
+      // B4 Task 1 新增：羊毛徒手可挖（不要工具）
+      [BLOCK.WOOL, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -262,5 +268,42 @@ describe('blocks', () => {
     expect(isTargetable(BLOCK.DANDELION)).toBe(true);
     expect(isTargetable(BLOCK.WATER)).toBe(false);
     expect(isTargetable(BLOCK.AIR)).toBe(false);
+  });
+
+  // ---- B4 Task 1：羊毛方塊（跨批編號：BLOCK.WOOL = 26 / T.WOOL = 33）----
+
+  it('wool: id 26, solid, opaque, hardness 0.8, placeable', () => {
+    expect(BLOCK.WOOL).toBe(26);
+    const def = getBlockDef(BLOCK.WOOL);
+    expect(def.id).toBe(26);
+    expect(def.name).toBe('wool');
+    expect(def.hardness).toBe(0.8); // 原版羊毛硬度
+    expect(def.solid).toBe(true);
+    expect(def.transparent).toBe(false);
+    expect(def.requiredTool).toBeNull();
+    expect(def.fastTool).toBeNull();
+    expect(PLACEABLE).toContain(BLOCK.WOOL);
+    // 三個面共用同一個羊毛 tile（跨批編號：T.WOOL = 33 → TILE_COUNT = 34）
+    expect(def.top).toBe(33);
+    expect(def.side).toBe(33);
+    expect(def.bottom).toBe(33);
+    expect(TILE_COUNT).toBe(34);
+  });
+
+  it('the wool tile 33 is painted (never the magenta debug layer)', () => {
+    // 既有 'every non-air block has valid tile indices' 只檢查 0 ≤ t < 64 → 抓不到
+    // 「宣告了 tile 33 卻沒畫」（漏畫會得到洋紅除錯色層，卻沒有任何測試紅）。
+    // B3 的通則測試（textures.test.ts 的 'every declared tile is painted'）也涵蓋
+    // 這一層；本批自己再釘一次 → 失敗時能直接看出是羊毛的圖樣沒畫。
+    const data = buildTextureArray().image.data as Uint8Array;
+    let magenta = 0;
+    let painted = 0;
+    for (let p = 0; p < TILE_PX * TILE_PX; p++) {
+      const i = (33 * TILE_PX * TILE_PX + p) * 4;
+      if (data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 255) magenta++;
+      if (data[i + 3] > 0) painted++;
+    }
+    expect(magenta, 'tile 33 magenta').toBeLessThan(TILE_PX * TILE_PX);
+    expect(painted, 'tile 33 painted').toBeGreaterThan(0);
   });
 });

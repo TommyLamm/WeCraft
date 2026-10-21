@@ -23,7 +23,9 @@ export interface SynthParams {
   gain: number;
 }
 
-/** Block id → material group. Everything unmapped (air, modded ids) is dirt. */
+/** Block id → material group. Everything unmapped (air, modded ids) is dirt.
+ *  **未登錄者 fallback `'dirt'`** → 新增方塊 id 必須同步登錄這張表，否則音效錯
+ *  （`sounds.test.ts` 的「表長度 == BLOCK 筆數」斷言就是這條的守門）。 */
 const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.GRASS]: 'grass',
   [BLOCK.DIRT]: 'dirt',
@@ -52,6 +54,9 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.SHORT_GRASS]: 'grass',
   [BLOCK.CACTUS]: 'grass',
   [BLOCK.ICE]: 'glass',
+  // B4 Task 1：羊毛是柔軟質地 → 走既有的 'leaves'（高頻沙沙）音色，
+  // 不新增 MaterialGroup 成員（羊毛原版也是柔軟的布料聲）。
+  [BLOCK.WOOL]: 'leaves',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

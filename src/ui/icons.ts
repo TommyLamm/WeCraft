@@ -96,6 +96,20 @@ function line(
   ctx.stroke();
 }
 
+/** The shared silhouette of the eight raw/cooked meat icons (a rounded, slightly
+ *  irregular chunk of meat). `grow` inflates the outline by that many pixels —
+ *  the pork chop uses it to draw a white fat rim *under* the meat. */
+function meatChunkPath(ctx: CanvasRenderingContext2D, grow: number): void {
+  const g = grow;
+  ctx.beginPath();
+  ctx.moveTo(8 - g, 18 - g);
+  ctx.quadraticCurveTo(6 - g, 10 - g, 14 - g, 7 - g);
+  ctx.quadraticCurveTo(24 - g, 5 - g, 26 - g, 13 - g);
+  ctx.quadraticCurveTo(28 - g, 21 - g, 20 - g, 24 - g);
+  ctx.quadraticCurveTo(11 - g, 26 - g, 8 - g, 18 - g);
+  ctx.closePath();
+}
+
 function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
   switch (item) {
     case 'stick': {
@@ -222,6 +236,115 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       line(ctx, 22, 8, 12, 18, blade, 4);
       line(ctx, 9, 15, 15, 21, WOOD, 3); // guard, perpendicular to blade
       line(ctx, 12, 18, 8, 22, WOOD, 3); // handle
+      break;
+    }
+    case 'raw_chicken':
+    case 'cooked_chicken': {
+      // 雞肉塊：生＝粉紅、熟＝偏褐
+      ctx.fillStyle = item === 'raw_chicken' ? '#e8a0a0' : '#d9a05b';
+      meatChunkPath(ctx, 0);
+      ctx.fill();
+      ctx.fillStyle = item === 'raw_chicken' ? '#f4c4c4' : '#e8bd85';
+      ctx.beginPath();
+      ctx.arc(14, 13, 3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'raw_porkchop':
+    case 'cooked_porkchop': {
+      // 豬肉塊：外面一圈白脂（生＝粉紅、熟＝偏褐）
+      ctx.fillStyle = '#f7f2ec';
+      meatChunkPath(ctx, 2);
+      ctx.fill();
+      ctx.fillStyle = item === 'raw_porkchop' ? '#f0a8b0' : '#c98a5c';
+      meatChunkPath(ctx, 0);
+      ctx.fill();
+      ctx.fillStyle = item === 'raw_porkchop' ? '#f8ccd2' : '#dda57a';
+      ctx.beginPath();
+      ctx.arc(14, 13, 3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'raw_mutton':
+    case 'cooked_mutton': {
+      // 羊肉塊：生＝偏紅、熟＝偏褐
+      ctx.fillStyle = item === 'raw_mutton' ? '#e39a9a' : '#b9793f';
+      meatChunkPath(ctx, 0);
+      ctx.fill();
+      ctx.fillStyle = item === 'raw_mutton' ? '#f0bcbc' : '#cf9463';
+      ctx.beginPath();
+      ctx.arc(14, 13, 3, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'raw_beef':
+    case 'steak': {
+      // 牛肉／牛排：生＝深紅、熟（steak）＝深褐 ＋ 白色油脂條
+      ctx.fillStyle = item === 'raw_beef' ? '#c05a5a' : '#8a4a2c';
+      meatChunkPath(ctx, 0);
+      ctx.fill();
+      ctx.fillStyle = item === 'raw_beef' ? '#d58080' : '#a8683f';
+      ctx.beginPath();
+      ctx.arc(14, 13, 3, 0, Math.PI * 2);
+      ctx.fill();
+      if (item === 'steak') {
+        ctx.fillStyle = '#f0e6d2';
+        ctx.fillRect(9, 17, 12, 2);
+        ctx.fillRect(12, 21, 9, 2);
+      }
+      break;
+    }
+    case 'leather': {
+      // 棕色方片 ＋ 四邊縫線
+      ctx.fillStyle = '#9a6b3f';
+      ctx.fillRect(5, 6, 22, 20);
+      ctx.strokeStyle = '#6b4a2f';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([2, 2]);
+      ctx.strokeRect(7, 8, 18, 16);
+      ctx.setLineDash([]);
+      break;
+    }
+    case 'feather': {
+      // 白色羽毛 ＋ 中軸
+      ctx.fillStyle = '#f2f2f2';
+      ctx.beginPath();
+      ctx.moveTo(9, 24);
+      ctx.quadraticCurveTo(6, 12, 20, 5);
+      ctx.quadraticCurveTo(24, 15, 12, 25);
+      ctx.closePath();
+      ctx.fill();
+      line(ctx, 9, 25, 21, 5, '#c9c9c9', 2);
+      break;
+    }
+    case 'rotten_flesh': {
+      // 暗綠褐團塊 ＋ 幾個斑點
+      ctx.fillStyle = '#6f7a4a';
+      ctx.beginPath();
+      ctx.arc(15, 16, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#4d5a33';
+      ctx.beginPath();
+      ctx.arc(12, 13, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(18, 18, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(15, 21, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'bone': {
+      // 白色骨頭＝兩端圓頭 ＋ 中間細桿
+      ctx.fillStyle = '#efe9d8';
+      ctx.beginPath();
+      ctx.arc(9, 21, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(23, 11, 4, 0, Math.PI * 2);
+      ctx.fill();
+      line(ctx, 9, 21, 23, 11, '#efe9d8', 5);
       break;
     }
     default: {

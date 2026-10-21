@@ -257,6 +257,8 @@ export function drawAtlas(): AtlasImage {
     if (crack) return [240, 248, 255, 220];
     return [168, 205, 235, 190];
   }); // ice
+  // ---- B4 Task 1：羊毛（tile 33）----
+  put(33, (_x, _y, r) => vary([233, 236, 236, 255], r, 18)); // wool
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

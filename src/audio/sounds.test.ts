@@ -39,6 +39,8 @@ describe('materialGroup', () => {
       [BLOCK.SHORT_GRASS]: 'grass',
       [BLOCK.CACTUS]: 'grass',
       [BLOCK.ICE]: 'glass',
+      // B4 Task 1：羊毛是柔軟質地 → 走既有的 'leaves'（沙沙）音色
+      [BLOCK.WOOL]: 'leaves',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {
@@ -50,6 +52,11 @@ describe('materialGroup', () => {
     expect(materialGroup(99)).toBe('dirt');
     expect(materialGroup(-1)).toBe('dirt');
     expect(materialGroup(NaN)).toBe('dirt');
+  });
+
+  it('wool sounds like the soft leaves material', () => {
+    // B4 Task 1：BLOCK.WOOL 沒登錄在 GROUP_BY_BLOCK 就會 fallback 成泥土聲
+    expect(materialGroup(BLOCK.WOOL)).toBe('leaves');
   });
 });
 

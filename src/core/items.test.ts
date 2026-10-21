@@ -22,6 +22,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'spruce_log', 'spruce_leaves', 'birch_log', 'birch_leaves',
   // B3 Task 4：花／草／仙人掌／冰的方塊物品形式（隨 cross 型方塊一起補上）
   'dandelion', 'poppy', 'short_grass', 'cactus', 'ice',
+  // B4 Task 1：羊毛的方塊物品形式（隨 BLOCK.WOOL 一起補上 → 羊掉落的羊毛能放回去）
+  'wool',
 ];
 const TOOL_ITEMS: ItemId[] = [
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
@@ -29,22 +31,46 @@ const TOOL_ITEMS: ItemId[] = [
   'wooden_sword', 'stone_sword', 'iron_sword',
 ];
 const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'raw_iron', 'arrow', 'apple'];
+/** B4 Task 1：生／熟肉與腐肉（食物值表在 Task 2；熟牛肉的 id 是 'steak'）。 */
+const FOOD_ITEMS: ItemId[] = [
+  'raw_chicken', 'cooked_chicken',
+  'raw_porkchop', 'cooked_porkchop',
+  'raw_mutton', 'cooked_mutton',
+  'raw_beef', 'steak',
+  'rotten_flesh',
+];
+/** B4 Task 1：材料（皮革／羽毛／骨頭）——不是食物、也不是工具。 */
+const MATERIAL_ITEMS: ItemId[] = ['leather', 'feather', 'bone'];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
   ...DROP_ITEMS,
+  ...FOOD_ITEMS,
+  ...MATERIAL_ITEMS,
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
-/** 物品基數（本任務動工前讀到的現況值，含 Task 3 已補的 4 個雲杉／白樺物品）。
- *  B3 Task 4 新增 5 個物品 id → 斷言寫成「基數 + 5」，不寫死總數。 */
+/** 物品基數（本任務動工前讀到的現況值 41 ＝ 36 個既有 ＋ B3 Task 4 補的 5 個物品形式）。
+ *  B4 Task 1 再新增 13 個 id（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）
+ *  → 總數 41 + 13 = 54（既有斷言用這個分解式；下面的新案例另外把 54 釘死）。 */
 const BASE_ITEM_COUNT = 36;
-const NEW_ITEM_COUNT = 5;
+const B3_ITEM_COUNT = 5;
+const B4_ITEM_COUNT = 13;
+const TOTAL_ITEM_COUNT = BASE_ITEM_COUNT + B3_ITEM_COUNT + B4_ITEM_COUNT; // 54
+
+/** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
+const B4_ITEM_IDS: readonly ItemId[] = [
+  'raw_chicken', 'cooked_chicken',
+  'raw_porkchop', 'cooked_porkchop',
+  'raw_mutton', 'cooked_mutton',
+  'raw_beef', 'steak',
+  'leather', 'feather', 'wool', 'rotten_flesh', 'bone',
+];
 
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    // B3 Task 4：基數 36 → 36 + 5（新增 5 個花／草／仙人掌／冰的物品形式）
-    expect(ALL_ITEMS.length).toBe(BASE_ITEM_COUNT + NEW_ITEM_COUNT);
+    // B4 Task 1：基數 36 → 36 + 5（B3 Task 4）＋ 13（本批的食物／材料／羊毛）
+    expect(ALL_ITEMS.length).toBe(TOTAL_ITEM_COUNT);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
     for (const id of Object.values(BLOCK)) {
@@ -54,11 +80,36 @@ describe('items', () => {
   });
 
   it('ALL_ITEM_IDS is the canonical list: no dupes, same set as the union', () => {
-    expect(ALL_ITEM_IDS.length).toBe(BASE_ITEM_COUNT + NEW_ITEM_COUNT);
+    expect(ALL_ITEM_IDS.length).toBe(TOTAL_ITEM_COUNT);
     expect(new Set(ALL_ITEM_IDS).size).toBe(ALL_ITEM_IDS.length);
     // Same membership as the test's own hand-maintained union mirror — the
     // Record<ItemId, true> source makes drift a tsc error (Minor 5).
     expect(new Set(ALL_ITEM_IDS)).toEqual(new Set(ALL_ITEMS));
+  });
+
+  // ---- B4 Task 1：13 個新物品 id（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）----
+
+  it('every B4 item id is a known, sanitizable id', () => {
+    for (const id of B4_ITEM_IDS) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(sanitizeStack({ item: id, count: 2 })).toEqual({ item: id, count: 2 });
+      expect(maxStack(id)).toBe(64);
+    }
+    // 動工前讀到的現況基數 41 ＋ 本批 13 ＝ 54：這個實際值寫死在測試裡
+    expect(ALL_ITEM_IDS.length).toBe(54);
+  });
+
+  it('wool is the item form of the wool block', () => {
+    expect(blockFromItem('wool')).toBe(BLOCK.WOOL);
+    expect(itemFromBlock(BLOCK.WOOL)).toBe('wool');
+    expect(stackFromBlock(BLOCK.WOOL)).toEqual({ item: 'wool', count: 64 });
+  });
+
+  it('the cooked beef item id is steak (原版命名)', () => {
+    // 'cooked_beef' 不是物品 id → 熟牛肉的 id 是 'steak'（stackName →「Steak」）
+    expect(ALL_ITEM_IDS).toContain('steak');
+    expect(ALL_ITEM_IDS as readonly string[]).not.toContain('cooked_beef');
+    expect(stackName('steak')).toBe('Steak');
   });
 
   it('every placeable and default hotbar block maps to an item', () => {

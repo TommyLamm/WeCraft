@@ -28,6 +28,9 @@ export const BLOCK = {
   SHORT_GRASS: 23,
   CACTUS: 24,
   ICE: 25,
+  // B4 Task 1：羊毛（跨批編號表：本批 = 26；B5 用 27–31、B6 火把 = 32、B8 箱子 = 33）。
+  // 同樣只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓舊存檔變形。
+  WOOL: 26,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -74,13 +77,15 @@ const T = {
   // B3 Task 4：花／草／仙人掌／冰的六個 tile（跨批編號：B3 用 21–32）
   DANDELION: 27, POPPY: 28, SHORT_GRASS: 29,
   CACTUS_SIDE: 30, CACTUS_TOP: 31, ICE: 32,
+  // B4 Task 1：羊毛（跨批編號：本批 = 33 → TILE_COUNT = 34；B5 用 34–38）
+  WOOL: 33,
 } as const;
 
-/** Tiles `T` defines (0..TILE_COUNT-1) — `ICE` is the highest tile.
+/** Tiles `T` defines (0..TILE_COUNT-1) — `WOOL` is the highest tile.
  *  drawAtlas paints exactly these; the texture array fills every layer past
  *  them with the magenta debug color, so adding a tile to T without drawing it
  *  fails loudly instead of silently sampling magenta in-game. */
-export const TILE_COUNT = T.ICE + 1;
+export const TILE_COUNT = T.WOOL + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -132,6 +137,9 @@ const DEFS: Record<number, BlockDef> = {
   // → 列入批次末瀏覽器驗收的待驗項；要根治需要獨立的透明 pass（渲染層改動，
   // 不在本批範圍）。
   25: { id: 25, name: 'ice', hardness: 0.5, solid: true, transparent: true, shape: 'cube', top: T.ICE, side: T.ICE, bottom: T.ICE, requiredTool: null, fastTool: 'pickaxe' },
+  // B4 Task 1：羊毛（硬度 0.8 = 原版羊毛硬度；徒手可挖 → 不需要工具）。
+  // 羊毛**不進世界生成**（原版羊毛也不自然生成，只來自羊與剪毛）。
+  26: { id: 26, name: 'wool', hardness: 0.8, solid: true, transparent: false, shape: 'cube', top: T.WOOL, side: T.WOOL, bottom: T.WOOL, requiredTool: null, fastTool: null },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -157,6 +165,8 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES, BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES,
   // B3 Task 4：花／草／仙人掌／冰的方塊物品形式在本批補上 → 創造清單自動出現
   BLOCK.DANDELION, BLOCK.POPPY, BLOCK.SHORT_GRASS, BLOCK.CACTUS, BLOCK.ICE,
+  // B4 Task 1：羊毛（方塊物品形式在本批補上 → 創造清單自動出現）
+  BLOCK.WOOL,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

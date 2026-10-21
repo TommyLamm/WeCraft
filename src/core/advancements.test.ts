@@ -52,6 +52,16 @@ const TRIGGERS: ReadonlyArray<
   ],
   ['monster_hunter', [[{ type: 'mob-killed', mode: 'survival' }]]],
   [
+    'pasture',
+    [
+      [{ type: 'obtain', item: 'raw_chicken', mode: 'survival' }],
+      [{ type: 'obtain', item: 'raw_porkchop', mode: 'survival' }],
+      [{ type: 'obtain', item: 'raw_mutton', mode: 'survival' }],
+      [{ type: 'obtain', item: 'raw_beef', mode: 'survival' }],
+      [{ type: 'obtain', item: 'wool', mode: 'survival' }],
+    ],
+  ],
+  [
     'first_night',
     [[{ type: 'phase', phase: 'night' }, { type: 'phase', phase: 'day' }]],
   ],
@@ -87,6 +97,25 @@ describe('checkAdvancements', () => {
       expect(r.state).toBe(state); // unchanged — literally the same state
     }
     expect(state.done).toEqual({});
+  });
+
+  // ---- B4 Task 1：牧場（pasture）進度 ----
+
+  it('obtaining raw meat or wool unlocks pasture', () => {
+    for (const item of ['raw_chicken', 'raw_porkchop', 'raw_mutton', 'raw_beef', 'wool'] as const) {
+      const r = checkAdvancements(emptyAdvancements(), { type: 'obtain', item, mode: 'survival' });
+      expect(r.unlocked).toEqual(['pasture']);
+      expect(r.state.done.pasture).toBe(true);
+    }
+  });
+
+  it('creative obtains unlock nothing (pasture included)', () => {
+    const state = emptyAdvancements();
+    for (const item of ['raw_chicken', 'raw_porkchop', 'raw_mutton', 'raw_beef', 'wool'] as const) {
+      const r = checkAdvancements(state, { type: 'obtain', item, mode: 'creative' });
+      expect(r.unlocked).toEqual([]);
+      expect(r.state).toBe(state); // unchanged — literally the same state
+    }
   });
 
   it('does not unlock an already-done advancement again', () => {
