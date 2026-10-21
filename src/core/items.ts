@@ -40,7 +40,7 @@ const ITEM_IDS: Record<ItemId, true> = {
   dandelion: true, poppy: true, short_grass: true, cactus: true, ice: true,
 };
 
-/** Every ItemId, canonically (36 today). */
+/** 全部 ItemId 的正規清單（目前 41 個：36 個既有 ＋ Task 4 補的 5 個物品形式）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }

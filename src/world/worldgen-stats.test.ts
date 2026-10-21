@@ -150,6 +150,10 @@ const BIOME_AREA_TOLERANCE: ReadonlyArray<readonly [Biome, number, number]> = [
 ];
 
 describe('worldgen height statistics', () => {
+  // **容差口徑說明（避免誤讀）**：本案例的「水域比例」（容差 26%–32%）的母體是
+  // **`h < SEA_LEVEL`**（只算真正的水面）；下方「8 生態面積表」的 ocean（容差
+  // 30%–37%）的母體是 **`h ≤ SEA_LEVEL + 1`**（**含沙灘過渡帶**）→ **兩組數字
+  // 定義不同、不是不一致**。
   it(
     'the ocean covers 26%–32% of the sampled world',
     { timeout: 30000 },
