@@ -2,6 +2,8 @@
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 // B1.3: payload v3 (dual-mode stash) + v1/v2→v3 migration in `loadGame`.
+// B3 Task 7: additive `worldgenVersion` field — the payload VERSION STAYS 3
+// (old builds ignore the unknown field); only the version stamp is added.
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
@@ -11,6 +13,7 @@ import {
   sanitizeAdvancements,
   type AdvancementState,
 } from '../core/advancements';
+import { WORLDGEN_VERSION } from './worldgen';
 
 /** Pre-v2 payload shape (Task 11): kept for the migration path so records
  *  written by earlier builds still validate and load. */
@@ -44,6 +47,13 @@ export interface SavePayloadV2 extends Omit<SavePayloadV1, 'version'> {
 export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	version: 3;
 	stash: StashPayload;
+	/** B3 Task 7 additive field — the payload VERSION STAYS 3, this is only an
+	 *  extra key an old build simply ignores. It records which worldgen
+	 *  produced the terrain this save was played on. ABSENT on records written
+	 *  before B3 → that is the "old save" signal, so `loadGame` must NOT fill
+	 *  it in (filling it in would hide the old save and the one-time
+	 *  "terrain changed" notice would never fire). */
+	worldgenVersion?: number;
 }
 
 /** The shape written to / read from the single local slot. */
@@ -76,7 +86,10 @@ export interface SaveSources {
  *  every player-owned value is copied (fresh pos array, fresh stack/vitals
  *  objects, fresh advancements, fresh stash) so later mutations of the live
  *  state never alias into an already captured payload. `modified` comes from
- *  `world.serializeModified()`, which already returns fresh tuples. */
+ *  `world.serializeModified()`, which already returns fresh tuples.
+ *  B3 Task 7: every newly written payload carries the CURRENT
+ *  `WORLDGEN_VERSION` — writing is the only place that stamps the value (the
+ *  read path never fills it in, so old saves stay recognizable as old). */
 export function collectSavePayload(args: SaveSources): SavePayload {
 	return {
 		version: 3,
@@ -100,6 +113,7 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 			creative: args.stash.creative.map((s) => (s ? { ...s } : null)),
 			survivalVitals: { ...args.stash.survivalVitals },
 		},
+		worldgenVersion: WORLDGEN_VERSION,
 	};
 }
 
@@ -116,6 +130,11 @@ export function collectSavePayload(args: SaveSources): SavePayload {
  *  skip, item ids and counts by the inventory model / sanitizeSlots. Neither
  *  v2 `advancements` nor v3 `stash` is part of this base check: `loadGame`
  *  sanitizes both (sanitizeAdvancements / normalizeModeStash) before returning.
+ *  B3 Task 7: the additive `worldgenVersion` field is NOT part of this check
+ *  either — the base shape stays exactly as it was (neither widened nor
+ *  tightened): old v1/v2/v3 records without the field keep validating, and a
+ *  record carrying a bogus value ('x') is still read (the read path strips the
+ *  key instead of rejecting the whole save).
  *  Pure: exported for tests, called by loadGame. */
 export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayloadV2 | SavePayload {
 	if (typeof x !== 'object' || x === null) return false;
@@ -208,7 +227,13 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *    stash loads as the canonical 9-slot shape.
  *  Vitals written before `exhaustion` existed (or otherwise malformed) run
  *  through survival.ts `normalizeVitals` — for the live player AND for the
- *  stash's survival snapshot — so the live model always sees the full shape. */
+ *  stash's survival snapshot — so the live model always sees the full shape.
+ *  B3 Task 7 — the additive `worldgenVersion` field is carried through
+ *  VERBATIM and is NEVER filled in here: a record without the key stays
+ *  without the key (that is exactly how an old save is recognized), a record
+ *  with a finite number keeps that number, and a record with a bogus value
+ *  (e.g. the string 'x' — the base shape check deliberately does not look at
+ *  this additive field) loses the key instead of handing a bogus version on. */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -224,7 +249,7 @@ export async function loadGame(): Promise<SavePayload | null> {
 				value.version === 1
 					? { ...value, version: 2, advancements: emptyAdvancements() }
 					: { ...value, version: 2, advancements: sanitizeAdvancements(value.advancements) };
-			return {
+			const migrated: SavePayloadV3 = {
 				...v2,
 				version: 3,
 				stash: normalizeModeStash((value as Partial<SavePayload>).stash, {
@@ -238,6 +263,21 @@ export async function loadGame(): Promise<SavePayload | null> {
 						v2.player.vitals === null ? null : normalizeVitals(v2.player.vitals),
 				},
 			};
+			// B3 Task 7：附加欄位 `worldgenVersion` 的三條規則——
+			// 1) 絕不自動補值：舊記錄沒有這個鍵 → 回傳物件就**沒有**這個鍵
+			//    （補了就看不出是舊存檔、也永遠不會跳「地形已改變」提示）。
+			// 2) 原樣保留：記錄上有合法數字 → 原樣帶回。
+			// 3) 非法值剝除：`isValidSavePayload` 不看這個附加欄位（不放寬也不
+			//    收緊結構檢查），所以 'x' 這種值會通過驗證 → 在這裡明確剝除，
+			//    不讓髒值繼續往外傳。
+			const rawVersion: unknown = (value as Partial<SavePayload>).worldgenVersion;
+			const worldgenVersion =
+				typeof rawVersion === 'number' && Number.isFinite(rawVersion) ? rawVersion : undefined;
+			delete migrated.worldgenVersion;
+			if (worldgenVersion !== undefined) {
+				migrated.worldgenVersion = worldgenVersion;
+			}
+			return migrated;
 		} finally {
 			db.close();
 		}

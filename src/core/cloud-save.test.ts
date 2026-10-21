@@ -14,6 +14,7 @@ import { createVitals } from '../player/survival';
 import { starterSlots, type ItemStack } from './items';
 import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
+import { WORLDGEN_VERSION } from '../world/worldgen';
 
 function validSettings(): Settings {
   return {
@@ -144,6 +145,44 @@ describe('cloud-save', () => {
   it('exposes format version 1 and a 64 KiB cap', () => {
     expect(CLOUD_FORMAT_VERSION).toBe(1);
     expect(CLOUD_MAX_BYTES).toBe(65536);
+  });
+
+  /**
+   * B3 Task 7：`worldgenVersion` 是 format 1 之下的**附加欄位**（跟 B1.3 的
+   * `stash` 同一套路）——格式號不變、舊 payload 不受影響。
+   */
+  it('buildCloudData stamps the worldgen version', () => {
+    const built = buildCloudData({
+      seed: 1337,
+      pos: [0, 64, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [],
+      advancements: { done: {}, nightSeen: false },
+      settings: validSettings(),
+      stash: createModeStash(),
+    });
+    expect(built.worldgenVersion).toBe(WORLDGEN_VERSION);
+  });
+
+  it('a cloud payload without worldgenVersion stays valid (format 1 forwards-compat)', () => {
+    // 舊的 format-1 payload 沒有這個欄位 → 仍然合法（不覆蓋、不強制）
+    expect(validateCloudData(rawValid())).toBe(true);
+    const accepted = acceptCloudData(rawValid());
+    expect(accepted).not.toBeNull();
+    // 沒有就不加這個鍵（不是塞 undefined）→ 讀取端才判得出「舊存檔」
+    expect('worldgenVersion' in accepted!).toBe(false);
+  });
+
+  it('a cloud payload with a non numeric worldgenVersion is rejected', () => {
+    expect(validateCloudData({ ...rawValid(), worldgenVersion: 'x' })).toBe(false);
+  });
+
+  it('an older cloud worldgenVersion is carried through verbatim', () => {
+    const accepted = acceptCloudData({ ...rawValid(), worldgenVersion: 0 });
+    expect(accepted?.worldgenVersion).toBe(0);
+    // 原樣保留（不得被改寫成當前版本——改了就看不出是舊生成器的存檔）
   });
 
   it('byteSizeOf: small payload is under 1 KiB', () => {

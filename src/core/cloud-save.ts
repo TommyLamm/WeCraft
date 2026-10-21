@@ -4,12 +4,15 @@
 // the payload (brief ruling); the cap keeps uploads within the 64 KiB budget.
 // B1.3: format 1 stays — per-mode stash support is a purely ADDITIVE optional
 // field (old payloads without one are still valid and derive it on accept).
+// B3 Task 7: same pattern again — `worldgenVersion` is an ADDITIVE optional
+// field under format 1 (the format number itself does NOT change).
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from './items';
 import { sanitizeAdvancements, type AdvancementState } from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
+import { WORLDGEN_VERSION } from '../world/worldgen';
 
 /** Payload schema version. Must match game.json `writeFormat` (Task 5). */
 export const CLOUD_FORMAT_VERSION = 1 as const;
@@ -44,6 +47,12 @@ export interface CloudData {
    *  valid and `acceptCloudData` derives the stash from the legacy
    *  mode/inventory/vitals instead. */
   stash?: StashPayload;
+  /** B3 Task 7 additive field (format 1 unchanged): the worldgen version that
+   *  produced the terrain this cloud save was played on. ABSENT on payloads
+   *  written before B3 → that is the "old save" signal, so the accept path
+   *  must NOT fill it in (filling it in would hide the old save and the
+   *  one-time "terrain changed" notice would never fire). */
+  worldgenVersion?: number;
 }
 
 export interface CloudBuildSource {
@@ -68,7 +77,9 @@ export interface CloudBuildSource {
  *  advancements/settings objects) — callers pass live, type-guaranteed state,
  *  and the game-side caller wraps the call in try/catch. seed/clockT pass
  *  through untouched — malformed values are rejected downstream by
- *  `validateCloudData`. */
+ *  `validateCloudData`. B3 Task 7: every built payload carries the CURRENT
+ *  `WORLDGEN_VERSION` — writing is the only place that stamps the value (the
+ *  accept path never fills it in, so old payloads stay recognizable as old). */
 export function buildCloudData(src: CloudBuildSource): CloudData {
   const pos: [number, number, number] =
     Array.isArray(src.pos) &&
@@ -99,6 +110,7 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
       creative: src.stash.creative.map((s) => (s === null ? null : { ...s })),
       survivalVitals: { ...src.stash.survivalVitals },
     },
+    worldgenVersion: WORLDGEN_VERSION,
   };
 }
 
@@ -115,7 +127,9 @@ const isFiniteNum = (v: unknown): v is number =>
  *  allowed (forwards-compatible); advancements only needs to be an object
  *  because `sanitizeAdvancements` normalizes it on the accept path, and the
  *  B1.3 stash only needs to be an object-or-absent for the same reason
- *  (`normalizeModeStash`). */
+ *  (`normalizeModeStash`). B3 Task 7: the additive `worldgenVersion` field, if
+ *  present, MUST be a finite number — a bogus value would otherwise reach the
+ *  "old save?" comparison unchecked. Absent stays valid (old payloads). */
 export function validateCloudData(x: unknown): x is CloudData {
   if (typeof x !== 'object' || x === null) return false;
   const r = x as Record<string, unknown>;
@@ -145,6 +159,7 @@ export function validateCloudData(x: unknown): x is CloudData {
   if (!isFiniteNum(s.dayLengthSec)) return false;
   if (typeof s.shadows !== 'boolean') return false;
   if (typeof s.clouds !== 'boolean') return false;
+  if (r.worldgenVersion !== undefined && !isFiniteNum(r.worldgenVersion)) return false;
   return true;
 }
 
@@ -156,10 +171,15 @@ export function validateCloudData(x: unknown): x is CloudData {
  *  stash via `normalizeModeStash` (slots sanitized to the hotbar width, vitals
  *  normalized; absent in old format-1 payloads — then derived from the mode,
  *  inventory and vitals they DID record). Illegal inventory item ids are KEPT
- *  as strings — the main-side inventory model discards them. */
+ *  as strings — the main-side inventory model discards them.
+ *  B3 Task 7: the additive `worldgenVersion` is carried through VERBATIM and
+ *  is NEVER filled in here — a payload without the key stays without the key
+ *  (that is exactly how an old save is recognized). `validateCloudData` has
+ *  already rejected a present-but-bogus value. */
 export function acceptCloudData(x: unknown): CloudData | null {
   if (!validateCloudData(x)) return null;
   const clamped = clampSettings({ ...DEFAULT_SETTINGS, ...x.settings });
+  const worldgenVersion = x.worldgenVersion;
   return {
     seed: x.seed,
     pos: [x.pos[0], x.pos[1], x.pos[2]],
@@ -182,6 +202,7 @@ export function acceptCloudData(x: unknown): CloudData | null {
       shadows: clamped.shadows,
       clouds: clamped.clouds,
     },
+    ...(worldgenVersion === undefined ? {} : { worldgenVersion }),
   };
 }
 

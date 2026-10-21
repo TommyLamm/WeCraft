@@ -14,6 +14,7 @@ import { createVitals } from '../player/survival';
 import { emptyAdvancements } from '../core/advancements';
 import { createModeStash, type ModeStash } from '../core/mode-stash';
 import { starterSlots, type ItemStack } from '../core/items';
+import { WORLDGEN_VERSION } from './worldgen';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
@@ -62,6 +63,10 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
       creative: slots({ item: 'stone', count: 64 }),
       survivalVitals: { ...createVitals(), hp: 12 },
     },
+    // B3 Task 7：附加欄位（payload 版本仍是 3）——記錄這份地形是哪一版生成器
+    // 生成的。fixture 必須帶著它，否則 round-trip 的 deep-equal 會失敗
+    //（讀回來的舊記錄不會被自動補值 → 見下面的舊存檔案例）。
+    worldgenVersion: WORLDGEN_VERSION,
     ...patch,
   };
 }
@@ -238,6 +243,51 @@ describe('saveGame / loadGame', () => {
       },
     });
     expect(loaded!.version).toBe(3);
+  });
+
+  /**
+   * B3 Task 7：附加欄位 `worldgenVersion` 的語意。
+   *
+   * 舊存檔（沒有這個鍵）必須照讀、照遷移，且**不得被自動補值**——補了就看不出
+   * 是舊存檔、也永遠不會跳「地形已改變」提示。所以判準是「鍵不存在」，不是
+   * 「鍵的值是 undefined」。
+   */
+  it('a record without worldgenVersion keeps the key absent', async () => {
+    const noVersion = makePayload() as Partial<SavePayload>;
+    delete noVersion.worldgenVersion;
+    await putRawRecord(noVersion);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    // 鍵不存在（不是塞 undefined 鍵）→ 舊存檔的判準
+    expect('worldgenVersion' in loaded!).toBe(false);
+  });
+
+  it('a record with a non numeric worldgenVersion drops the key', async () => {
+    const base = makePayload();
+    // 附加欄位不放寬也不收緊 `isValidSavePayload` 的結構檢查 → 這個記錄照樣通過
+    // 驗證並被讀出來，但非法值不得原樣帶回。
+    expect(isValidSavePayload({ ...base, worldgenVersion: 'x' })).toBe(true);
+    await putRawRecord({ ...base, worldgenVersion: 'x' });
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    expect('worldgenVersion' in loaded!).toBe(false);
+  });
+
+  it('a migrated v1 record has no worldgenVersion', async () => {
+    const v1 = makeV1Payload();
+    await putRawRecord(v1);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    // v1 → v3 的遷移不得補上版本戳記（否則舊存檔看不出是舊存檔）
+    expect('worldgenVersion' in loaded!).toBe(false);
+  });
+
+  it('a record with an older worldgenVersion keeps its value', async () => {
+    const base = makePayload();
+    await putRawRecord({ ...base, worldgenVersion: 0 });
+    const loaded = await loadGame();
+    expect(loaded?.worldgenVersion).toBe(0);
+    // 原樣保留（不得被改寫成當前版本——改了就看不出是舊生成器的存檔）
   });
 
   /** Vitals written before Task 1 have no `exhaustion` field — the load path
@@ -472,6 +522,21 @@ describe('collectSavePayload', () => {
     expect(payload.advancements).toEqual(advancements);
     expect(payload.stash).toEqual(createModeStash()); // the other mode's state travels too
     expect(payload.savedAt).toBe(123);
+  });
+
+  /** B3 Task 7：新存的 payload 一律蓋上「當前」的世界生成版本戳記——只有存檔
+   *  寫入端才會補值，讀取端不會（讀取端只原樣保留記錄上的值）。 */
+  it('collectSavePayload stamps the current worldgen version', () => {
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      vitals: null,
+      clockT: 0,
+      advancements: emptyAdvancements(),
+      stash: createModeStash(),
+      savedAt: 0,
+    });
+    expect(payload.worldgenVersion).toBe(WORLDGEN_VERSION);
   });
 
   it('copies the player sub-object and advancements — no aliasing', () => {
