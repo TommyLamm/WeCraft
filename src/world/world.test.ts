@@ -120,6 +120,28 @@ describe('World', () => {
   });
 });
 
+/** B3 Task 5：`isTargetable` ＝「可被瞄準／挖掘命中」＝實心方塊 ＋ cross 植被。
+ *  水與空氣不可命中；植被不碰撞但必須能被挖掉（見 `blocks.ts` 的 `isTargetable`）。 */
+describe('World.isTargetable (B3 Task 5)', () => {
+  it('solid blocks and cross plants are targetable; air and water are not', () => {
+    const w = new World();
+    w.setBlock(5, 64, 5, BLOCK.STONE);
+    w.setBlock(6, 64, 5, BLOCK.DANDELION);
+    w.setBlock(7, 64, 5, BLOCK.WATER);
+    expect(w.isTargetable(5, 64, 5)).toBe(true);
+    expect(w.isTargetable(6, 64, 5)).toBe(true); // cross 植被：可命中（不碰撞）
+    expect(w.isTargetable(7, 64, 5)).toBe(false); // 水：不可命中
+    expect(w.isTargetable(8, 64, 5)).toBe(false); // 空氣：不可命中
+  });
+
+  it('out of range cells are not targetable', () => {
+    const w = new World();
+    expect(w.isTargetable(0, -1, 0)).toBe(false);
+    expect(w.isTargetable(0, 256, 0)).toBe(false);
+    expect(w.isTargetable(1000, 64, 1000)).toBe(false); // 沒有區塊 → 空氣
+  });
+});
+
 describe('serializeModified / applyModified', () => {
   it('round-trips placed and mined blocks through a fresh world', () => {
     const w1 = new World();

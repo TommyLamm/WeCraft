@@ -229,3 +229,70 @@ describe('raycast skipOriginBlock (B2.4 第三身相機護欄)', () => {
     expect(hit).toBeNull(); // 1.4 < 1.5 → 超過 reach
   });
 });
+
+/** B3 Task 5：射線的命中判定改用「可命中」（實心 ＋ cross 植被）。
+ *  植被不碰撞（走不過去、不擋視線），但**必須能被瞄準、挖掘**（硬度 0 → 瞬破）；
+ *  水與空氣仍然不可命中（射線直接穿過水面）。 */
+describe('raycast 可命中判定（B3 Task 5：植被可命中、水／空氣不可命中）', () => {
+  it('a flower is hit by the ray even though it is not solid', () => {
+    const w = setup();
+    w.setBlock(5, 64, 4, BLOCK.DANDELION); // cross 植被：solid = false
+    // 起點格 (5,64,5) 是空氣 → 不會走「起點在方塊內」分支
+    const hit = raycast(w, { x: 5.5, y: 64.5, z: 5.5 }, { x: 0, y: 0, z: -1 }, 4);
+    expect(hit).not.toBeNull();
+    expect(hit!.x).toBe(5);
+    expect(hit!.y).toBe(64);
+    expect(hit!.z).toBe(4);
+    expect(hit!.t).toBe(0.5);
+    expect(hit!.nz).toBe(1); // 從 +z 側進入 → 法線朝射線來向
+  });
+
+  it('air and water are still not hittable', () => {
+    const w = setup();
+    w.setBlock(0, 64, -2, BLOCK.WATER);
+    w.setBlock(0, 64, -4, BLOCK.STONE);
+    const hit = raycast(w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: -1 }, 10);
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBe(-4); // 射線穿過水格（不可命中）→ 命中水後方的實心方塊
+    expect(hit!.t).toBe(3.5); // 原點 z=0.5 → 走 3.5 格進到 cell z=-4
+  });
+
+  it('a solid block behind a flower is still hit when the flower is not in the way', () => {
+    const w = setup();
+    w.setBlock(6, 64, 0, BLOCK.DANDELION); // 花不在射線路徑上
+    w.setBlock(0, 64, -4, BLOCK.STONE);
+    const hit = raycast(w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: -1 }, 10);
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBe(-4);
+  });
+
+  it('a plant in the origin cell is hit at t=0 (first person: the eye cell is a valid target)', () => {
+    const w = setup();
+    w.setBlock(5, 64, 5, BLOCK.DANDELION); // 原點所在格
+    const hit = raycast(w, { x: 5.5, y: 64.5, z: 5.5 }, { x: 0, y: 0, z: -1 }, 10);
+    expect(hit).not.toBeNull();
+    expect(hit!.x).toBe(5);
+    expect(hit!.y).toBe(64);
+    expect(hit!.z).toBe(5);
+    expect(hit!.t).toBe(0);
+  });
+
+  it('skipOriginBlock：原點格的植被與實心方塊一樣被跳過（第三身相機護欄一致）', () => {
+    const w = setup();
+    w.setBlock(5, 64, 5, BLOCK.DANDELION); // 原點所在格（相機卡在花裡）
+    w.setBlock(5, 64, 3, BLOCK.STONE); // 走出原點格後的第一個實心方塊
+    const hit = raycast(
+      w,
+      { x: 5.5, y: 64.5, z: 5.5 },
+      { x: 0, y: 0, z: -1 },
+      10,
+      { skipOriginBlock: true },
+    );
+    expect(hit).not.toBeNull();
+    expect(hit!.x).toBe(5);
+    expect(hit!.y).toBe(64);
+    expect(hit!.z).toBe(3);
+    expect(hit!.t).toBe(1.5);
+    expect(hit!.nz).toBe(1); // 真正的入射面法線
+  });
+});

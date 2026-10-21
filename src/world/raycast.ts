@@ -20,8 +20,9 @@ export function reachFor(mode: GameMode): number {
 
 /** 射線查詢選項（`raycast` 的第 5 參數；省略＝既有行為）。 */
 export interface RaycastOptions {
-  /** **跳過「原點所在的那一格」**：當射線原點位於實心方塊內時，該格**不會**
-   *  成為命中目標——射線照原路走出那一格，再找下一個實心方塊。
+  /** **跳過「原點所在的那一格」**：當射線原點位於**可命中**方塊內時（實心方塊
+   *  或 cross 植被），該格**不會**成為命中目標——射線照原路走出那一格，再找下一個
+   *  可命中的方塊。
    *
    *  **為什麼需要**：第三身（面後／面前）時射線原點是**相機**，而相機可能被
    *  地形夾住（玩家背靠土坡／面前有牆）→ 原點落在實心方塊內時，一般的 DDA
@@ -30,16 +31,23 @@ export interface RaycastOptions {
    *
    *  **行為定義（可預期）**：
    *  - 原點在空氣中 → 與既有行為完全相同（此選項無作用）。
-   *  - 原點在實心方塊內 → 該格被跳過；命中的是「走出那一格之後的第一個實心
+   *  - 原點在實心方塊內 → 該格被跳過；命中的是「走出那一格之後的第一個可命中
    *    方塊」，且法線是**真正的入射面**（不是原點格的近似背面法線）。
+   *  - 原點在 cross 植被內 → **一樣被跳過**（植被不碰撞，相機卡在花叢裡時不該
+   *    去挖「看不見的那一朵」）；與實心格的處理一致。
    *  - `t` 仍從**原點**起算 → reach 預算不因跳過而改變。
-   *  - 原點格之外沒有任何實心方塊 → 回傳 `null`（不會退回去命中原點格）。 */
+   *  - 原點格之外沒有任何可命中方塊 → 回傳 `null`（不會退回去命中原點格）。 */
   skipOriginBlock?: boolean;
 }
 
 /** DDA raycast. dir is normalized internally; maxDistance is euclidean world units.
  *
- *  `options.skipOriginBlock`：跳過原點所在的實心方塊（見 `RaycastOptions`）。 */
+ *  **命中判定（B3 Task 5）**：命中的是**可命中**方塊（`world.isTargetable`）
+ *  ＝實心方塊 **＋ cross 植被**（花／草）。植被不碰撞（走過去不會被擋），但
+ *  必須能被瞄準、挖掘（硬度 0 → 瞬破，見 `interact.ts`）。水與空氣**不可命中**
+ *  ——射線直接穿過水面。
+ *
+ *  `options.skipOriginBlock`：跳過原點所在的那一格（見 `RaycastOptions`）。 */
 export function raycast(
   world: World,
   origin: { x: number; y: number; z: number },
@@ -80,8 +88,11 @@ export function raycast(
   // (ties resolved x, then y, then z) so the normal is always a single-axis
   // unit vector — keeps placeTarget = hit + normal face-adjacent (Task 15).
   // **例外（`skipOriginBlock`）**：原點所在的那一格不算目標 → 不early return，
-  // 直接往下走 DDA：射線先走出那一格，再找下一個實心方塊（`t` 仍從原點起算）。
-  if (world.isSolid(x, y, z) && !skipOriginBlock) {
+  // 直接往下走 DDA：射線先走出那一格，再找下一個可命中方塊（`t` 仍從原點起算）。
+  // **B3 Task 5**：判定是「可命中」（實心 ＋ cross 植被）→ 原點格是花／草時，
+  // 第一人稱一樣在 `t = 0` 命中原點格（可以挖掉眼前那一朵）；第三身
+  // （`skipOriginBlock`）則與實心格一致地被跳過。
+  if (world.isTargetable(x, y, z) && !skipOriginBlock) {
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
     const az = Math.abs(dz);
@@ -114,7 +125,8 @@ export function raycast(
       nz = -stepZ;
     }
     if (t > maxDist) break;
-    if (world.isSolid(x, y, z)) {
+    if (world.isTargetable(x, y, z)) {
+      // 可命中 ＝ 實心方塊 ＋ cross 植被；水／空氣不可命中（射線穿過水面）
       return { x, y, z, nx, ny, nz, t };
     }
   }

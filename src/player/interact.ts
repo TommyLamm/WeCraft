@@ -1,4 +1,4 @@
-import { getBlockDef, BLOCK, type ToolKind } from '../world/blocks';
+import { getBlockDef, BLOCK, isCross, type ToolKind } from '../world/blocks';
 import type { World } from '../world/world';
 import type { RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
@@ -84,10 +84,15 @@ export function toolSpeed(blockId: number, held: ItemStack | null): number {
  *  `hardness × (canHarvest ? 1.5 : 5) ÷ toolSpeed`. Harvestable blocks get the
  *  fast ×1.5 rate; a tool that cannot harvest pays the ×5 penalty even when its
  *  kind matches (iron ore + wooden pickaxe: 3.0 × 5 / 2 = 7.5 s). Infinity for
- *  unbreakable blocks (bedrock/water). */
+ *  unbreakable blocks (bedrock/water).
+ *
+ *  **硬度 0 → 回傳 0（瞬破）**：cross 植被（原版花／草的硬度就是 0）一按即消失。
+ *  這與「Infinity（永遠打不破）」是兩件不同的事 → 明確分開處理，不讓 0 掉進
+ *  Infinity 的分支。 */
 export function getBreakTime(blockId: number, held: ItemStack | null): number {
   const h = getBlockDef(blockId).hardness;
   if (!Number.isFinite(h)) return Infinity;
+  if (h === 0) return 0; // 植被：瞬破（不是 Infinity）
   return (h * (canHarvest(blockId, held) ? 1.5 : 5)) / toolSpeed(blockId, held);
 }
 
@@ -238,7 +243,10 @@ export function attackMob(
  *  the tool-speed factor applied inside it. Progress accumulates
  *  `dt / breakTimeSec` (0..1 bar), so the block breaks after exactly
  *  `breakTimeSec` seconds of real time; a non-finite break time (bedrock/
- *  water) never accumulates. */
+ *  water) never accumulates.
+ *
+ *  **瞬破（`breakTimeSec <= 0`，B3 Task 5）**：直接返回、**不做 `dt / 0`**——
+ *  植被的破壞時間是 0 秒（不是 Infinity），進度條對它沒有意義。 */
 export class DigProgress {
   private key = '';
   progress = 0;
@@ -250,6 +258,7 @@ export class DigProgress {
       this.progress = 0;
     }
     if (!Number.isFinite(breakTimeSec)) return; // bedrock 永不累進
+    if (breakTimeSec <= 0) return; // 瞬破（植被）：不做 dt / 0
     this.progress = Math.min(1, this.progress + dt / breakTimeSec);
   }
 
@@ -275,7 +284,12 @@ export class DigProgress {
  *  breaks, in either mode. Survival: resolves the held stack's real break time
  *  (hardness × 1.5/×5 ÷ tool speed, `getBreakTime` — wooden pickaxe on iron
  *  ore = 7.5s) and drives the timed `DigProgress` with it, then reports
- *  `isDone`. */
+ *  `isDone`.
+ *
+ *  **瞬破（B3 Task 5）**：破壞時間為 0 秒的方塊（cross 植被：花／草）→
+ *  生存與創造都**一按即破**（`dig.reset()` → 不留進度條）。這個分支放在
+ *  Infinity 判斷**之後**（不可破壞的方塊仍然永不破壞）、creative 分支**之前**
+ *  （兩種模式都瞬破），而且**不進入** `dig.update`（不做 `dt / 0` 的除法）。 */
 export function digStep(
   mode: GameMode,
   dig: DigProgress,
@@ -286,6 +300,10 @@ export function digStep(
 ): boolean {
   const time = getBreakTime(blockId, held);
   if (!Number.isFinite(time)) return false; // unbreakable: never, both modes
+  if (time === 0) {
+    dig.reset(); // 瞬破：清掉任何殘留進度（不進度條、不做除法）
+    return true;
+  }
   if (mode === 'creative') {
     dig.reset(); // mode-switch hygiene: drop leftover survival progress (creative never accumulates)
     return true;
@@ -310,7 +328,10 @@ export function canPlaceAt(
 ): boolean {
   if (y < 0 || y >= CHUNK_HEIGHT) return false;
   const id = world.getBlock(x, y, z);
-  if (id !== BLOCK.AIR && id !== BLOCK.WATER) return false; // 只能放進空氣/水
+  // 只能放進空氣／水／cross 植被（B3 Task 5）。
+  // **植被是被「覆蓋」而不是卡住**：花／草不碰撞，本來就長在方塊上，
+  // 放新方塊上去時直接取代它（像原版蓋掉雜草）——不放寬玩家 AABB 的規則。
+  if (id !== BLOCK.AIR && id !== BLOCK.WATER && !isCross(id)) return false;
 
   // 方塊 AABB: [x,x+1]³ vs 玩家 AABB
   const pMinX = playerPos.x - PLAYER_HALF_WIDTH;

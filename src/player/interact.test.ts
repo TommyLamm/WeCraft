@@ -533,3 +533,59 @@ describe('hitMobId / attackMob (Task 9 ray → mob hitbox)', () => {
     expect(res.mobs[0].hp).toBe(20);
   });
 });
+
+/** B3 Task 5：cross 植被（花／草）的互動語意——
+ *  ① 硬度 0 → **瞬破**（生存與創造都是一按即消失，不是「永遠打不破」）；
+ *  ② 放置方塊到植被格 → **覆蓋植被**（像原版），不是卡住不放。 */
+describe('cross 植被的互動（B3 Task 5：瞬破／覆蓋放置）', () => {
+  const hit: RayHit = { x: 5, y: 64, z: 5, nx: 0, ny: 1, nz: 0, t: 0 };
+
+  function w(): World {
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    return world;
+  }
+
+  it('a hardness zero plant breaks instantly', () => {
+    expect(getBreakTime(BLOCK.DANDELION, null)).toBe(0);
+    expect(getBreakTime(BLOCK.SHORT_GRASS, null)).toBe(0);
+    const d = new DigProgress();
+    expect(digStep('survival', d, BLOCK.DANDELION, hit, 1 / 60, null)).toBe(true);
+  });
+
+  it('a plant breaks instantly in creative too', () => {
+    const d = new DigProgress();
+    expect(digStep('creative', d, BLOCK.DANDELION, hit, 1 / 60, null)).toBe(true);
+    expect(d.progress).toBe(0);
+  });
+
+  it('digStep never divides by zero for instant-break blocks', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.STONE, hit, 1, 7.5); // 先累積一點進度
+    expect(digStep('survival', d, BLOCK.DANDELION, hit, 1 / 60, null)).toBe(true);
+    expect(d.progress).toBe(0); // 瞬破 → dig.reset()（不留下進度條）
+    expect(Number.isNaN(d.progress)).toBe(false);
+  });
+
+  it('DigProgress never divides by zero for an instant-break target', () => {
+    const d = new DigProgress();
+    d.update(BLOCK.DANDELION, hit, 1, 0); // breakTimeSec === 0 → 直接返回
+    expect(d.progress).toBe(0); // 不是 dt / 0 = Infinity
+    expect(Number.isNaN(d.progress)).toBe(false);
+    expect(d.isDone(BLOCK.DANDELION, 0)).toBe(false);
+  });
+
+  it('a block can be placed onto a plant cell (the vegetation is covered, not stuck)', () => {
+    const world = w();
+    world.setBlock(5, 64, 5, BLOCK.DANDELION);
+    // 玩家位置必須在別處，否則 AABB 重疊檢查會擋下
+    expect(canPlaceAt(world, 5, 64, 5, { x: 9.5, y: 64, z: 9.5 })).toBe(true);
+  });
+
+  it('the plant-cell allowance does not bypass the player-overlap rule', () => {
+    const world = w();
+    world.setBlock(5, 64, 5, BLOCK.DANDELION);
+    // 玩家站在同一格 → 身體 AABB 與目標格重疊 → 仍然不能放
+    expect(canPlaceAt(world, 5, 64, 5, { x: 5.5, y: 64, z: 5.5 })).toBe(false);
+  });
+});

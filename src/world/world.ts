@@ -1,5 +1,10 @@
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './chunk';
-import { BLOCK, type BlockId, isSolid as blockIsSolid } from './blocks';
+import {
+  BLOCK,
+  type BlockId,
+  isSolid as blockIsSolid,
+  isTargetable as blockIsTargetable,
+} from './blocks';
 
 export function chunkKey(cx: number, cz: number): string {
   return `${cx},${cz}`;
@@ -116,5 +121,15 @@ export class World {
 
   isSolid(x: number, y: number, z: number): boolean {
     return blockIsSolid(this.getBlock(x, y, z));
+  }
+
+  /** 「可被瞄準／挖掘命中」的方塊（B3 Task 5）＝**實心方塊 ＋ cross 植被**。
+   *
+   *  - 與 `isSolid` 的差別：cross 植被（花／草）**不碰撞**（走過去不會被擋），
+   *    但必須**能被射線命中**——玩家要能瞄準它、把它挖掉（硬度 0 → 瞬破）。
+   *  - 水與空氣**不可命中**（射線直接穿過水面）。
+   *  - 越界（y 超出世界高度、座標落在未載入的區塊）→ `getBlock` 回空氣 → false。 */
+  isTargetable(x: number, y: number, z: number): boolean {
+    return blockIsTargetable(this.getBlock(x, y, z));
   }
 }
