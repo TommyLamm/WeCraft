@@ -297,7 +297,7 @@ npm run lint       # eslint .
   驗證：1088 tests / 65 files、typecheck／lint／build 全綠、pinned 工具 pack＋validate
   通過；**批末真實瀏覽器驗收 42 項全 PASS／0 FAIL**（跨來源 sandbox iframe ＋ `/sub/`
   子目錄 24 項、foliage pass 12 項、冰面外觀 4 項、地形視覺取樣 2 項〔7 個生態
-  取樣點〕），**未驗證清單共 7 條**。**真正未驗的是「跨來源 iframe ＋ 頂層
+  取樣點〕），**批末驗收的未驗證清單共 7 條**。**真正未驗的是「跨來源 iframe ＋ 頂層
   Keyboard Lock ＋ 原生全螢幕」的組合情境，以及地形視覺的完整驗證**；其餘未驗證
   項目（真 worker 位元組一致性、霧色逐像素比對等）見 `docs/releases/v0.6.0.md`
   的〈已知問題〉。
