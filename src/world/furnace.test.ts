@@ -88,7 +88,7 @@ describe('stepFurnace', () => {
     expect(r.state.output).toEqual(stack('glass', 1));
     expect(r.state.input).toBeNull();
     expect(r.state.fuel).toBeNull();
-    expect(r.state.fuelUnits).toBe(0); // 1 − 1 completed
+    expect(r.state.fuelUnits).toBe(0); // 木棍 0.5 − 1（每完成一次冶煉扣 1）→ 夾在 ≥ 0
   });
 
   it('coal_ore is not smeltable — progress freezes', () => {
