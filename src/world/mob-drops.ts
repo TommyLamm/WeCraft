@@ -84,3 +84,44 @@ export function rollMobDrops(
   }
   return out;
 }
+
+/** 一筆「生物死亡 → 掉落」的結果：物品、數量、與掉落物的落點。 */
+export interface MobDeathDrop {
+  item: ItemId;
+  count: number;
+  /** 掉落物的位置（生物腳底 ＋ 0.9 格 → 落在身體高度，不卡在地板裡）。 */
+  pos: { x: number; y: number; z: number };
+}
+
+/** 一隻死掉的生物——`dropsForDeaths` 只需要「種類」與「位置」。 */
+export interface DeadMob {
+  kind: MobDropKind;
+  pos: { x: number; y: number; z: number };
+}
+
+/**
+ * **生物死亡 → 掉落**（B4 Task 4 審查 I-2）：把死掉的生物換成它們的掉落物清單。
+ *
+ * **為什麼要抽成一個函式**：掉落是**死因無關**的——近戰、箭、白天燃燒…每一種死因
+ * 都該掉同一份掉落表。先前掉落只接在「近戰擊殺」那一支 → 其他死因的生物（例如
+ * 被箭打死）會**什麼都不掉**，掉落表裡的項目也就不可達。這個函式**不收死因** →
+ * 呼叫端只管「誰死了」，掉落表在哪裡只有一份。
+ *
+ * 純函式：rng 可注入（測試可重現）；輸入的生物不會被修改。
+ */
+export function dropsForDeaths(
+  dead: readonly DeadMob[],
+  rng: () => number = Math.random,
+): MobDeathDrop[] {
+  const out: MobDeathDrop[] = [];
+  for (const m of dead) {
+    for (const drop of rollMobDrops(m.kind, rng)) {
+      out.push({
+        item: drop.item,
+        count: drop.count,
+        pos: { x: m.pos.x, y: m.pos.y + 0.9, z: m.pos.z },
+      });
+    }
+  }
+  return out;
+}

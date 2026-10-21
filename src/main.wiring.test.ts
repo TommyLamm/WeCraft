@@ -387,3 +387,33 @@ describe('main.ts 接線（B3 Task 9 Step 3：危險傷害與生物群系取樣�
     expect(playing).toContain('applyBiomeTint(');
   });
 });
+
+// ---- B4 Task 4 審查 I-2：生物死亡 → 掉落（單一路徑，不看死因）-------------
+describe('main.ts 接線（B4 Task 4 I-2：任何死因都會掉落）', () => {
+  it('the shared death→drop helper is the only place the drop table is used', () => {
+    const body = functionBody('spawnMobDeathDrops');
+    expect(body).toContain('dropsForDeaths('); // 掉落表在 mob-drops.ts（單一真值）
+    expect(body).toContain('spawnDrop('); // 這裡只負責把它變成地上的掉落物
+    // 掉落表**不在 main.ts 裡被重複呼叫**（否則兩條死因路徑會各擲一次骰子）
+    expect(countOf('rollMobDrops(')).toBe(0);
+  });
+
+  it('both the melee kill and the death-removal path use the shared helper', () => {
+    // 近戰支（當場擊殺）→ 共用函式
+    expect(countOf('spawnMobDeathDrops(dead)')).toBe(1);
+    // 死亡移除支（**任何其他死因**：箭、白天燃燒…）→ 同一個共用函式
+    expect(countOf('spawnMobDeathDrops(deadNow)')).toBe(1);
+    // 定義 + 兩個呼叫端（沒有第三條私藏的掉落路徑）
+    expect(countOf('spawnMobDeathDrops(')).toBe(3);
+  });
+
+  it('the death-removal path drops the loot before the corpse leaves the world', () => {
+    // 死亡移除的那一段（本體：過濾死亡／超距的生物）必須**先**算掉落再移除
+    const playing = playingBranchBody();
+    const at = playing.indexOf('spawnMobDeathDrops(deadNow)');
+    const filterAt = playing.indexOf('!isDead(m)');
+    expect(at).toBeGreaterThan(-1);
+    expect(filterAt).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(filterAt);
+  });
+});

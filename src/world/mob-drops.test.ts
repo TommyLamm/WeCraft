@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rollMobDrops, type MobDropKind } from './mob-drops';
+import { rollMobDrops, dropsForDeaths, type MobDropKind } from './mob-drops';
 
 // ---- helpers -------------------------------------------------------------
 /** 固定的 rng：永遠回同一個值 → 掉落數量可重現。 */
@@ -82,5 +82,44 @@ describe('rollMobDrops (B4 Task 4：擊殺掉落表)', () => {
         }
       }
     }
+  });
+});
+
+// ---- B4 Task 4 審查 I-2：生物死亡 → 掉落（單一路徑，不看死因）-------------
+describe('dropsForDeaths (生物死亡 → 掉落：死因無關)', () => {
+  it('a death drops the same loot whatever the cause (melee / arrow / burn)', () => {
+    // 這個函式**不收死因** → 近戰、箭、白天燃燒…走同一條路徑、同一份掉落表。
+    // 骷髏 → 骨頭 0–2 ＋ 箭 0–2（'arrow' 是既有 ItemId → 掉落確實會發生）。
+    expect(
+      dropsForDeaths([{ kind: 'skeleton', pos: { x: 1, y: 2, z: 3 } }], () => 0.999),
+    ).toEqual([
+      { item: 'bone', count: 2, pos: { x: 1, y: 2.9, z: 3 } },
+      { item: 'arrow', count: 2, pos: { x: 1, y: 2.9, z: 3 } },
+    ]);
+  });
+
+  it('the loot lands at the body height of the dead mob (+0.9)', () => {
+    const [drop] = dropsForDeaths([{ kind: 'zombie', pos: { x: -4, y: 64, z: 8 } }], () => 0.999);
+    expect(drop.pos).toEqual({ x: -4, y: 64.9, z: 8 });
+  });
+
+  it('several deaths merge their loot (one entry per item and mob)', () => {
+    const out = dropsForDeaths(
+      [
+        { kind: 'zombie', pos: { x: 0, y: 0, z: 0 } },
+        { kind: 'skeleton', pos: { x: 5, y: 0, z: 0 } },
+      ],
+      () => 0.999,
+    );
+    expect(out.map((d) => d.item)).toEqual([
+      'rotten_flesh',
+      'bone',
+      'arrow',
+    ]);
+    expect(out.map((d) => d.pos.x)).toEqual([0, 5, 5]);
+  });
+
+  it('no dead mobs means no drops', () => {
+    expect(dropsForDeaths([], () => 0.999)).toEqual([]);
   });
 });

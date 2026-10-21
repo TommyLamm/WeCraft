@@ -505,4 +505,20 @@ describe('chanceDropFor (機率掉落：樹葉 0.5% 蘋果)', () => {
   it('the apple chance is 0.5%', () => {
     expect(LEAF_APPLE_CHANCE).toBe(0.005);
   });
+
+  // B4 Task 4 審查 I-1：spec §B4.3 寫的是「橡木／白樺樹葉 0.5% 掉蘋果」→
+  // 白樺葉（B3 已有的 `BLOCK.BIRCH_LEAVES`）**也要**有同一個機率。
+  it('birch leaves have the same 0.5% apple chance', () => {
+    expect(chanceDropFor(BLOCK.BIRCH_LEAVES, () => 0.004)).toBe('apple');
+    expect(chanceDropFor(BLOCK.BIRCH_LEAVES, () => 0.006)).toBeNull();
+    // 白樺葉**本體**仍然不掉（B3 的規則不動；這裡只是「機率掉落」）
+    expect(dropItemFor(BLOCK.BIRCH_LEAVES)).toBeNull();
+  });
+
+  it('spruce leaves have no apple chance (the spec lists oak and birch only)', () => {
+    // 雲杉葉刻意未納入 spec §B4.3 的「橡木／白樺」名單 → 沒有機率掉落，
+    // 本體也不掉（B3 的規則不動）。
+    expect(chanceDropFor(BLOCK.SPRUCE_LEAVES, () => 0)).toBeNull();
+    expect(dropItemFor(BLOCK.SPRUCE_LEAVES)).toBeNull();
+  });
 });

@@ -97,7 +97,7 @@ import {
 } from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
 // B4 Task 4：生物的擊殺掉落表（殭屍腐肉／骷髏骨頭與箭／之後的被動生物）。
-import { rollMobDrops } from './world/mob-drops';
+import { dropsForDeaths } from './world/mob-drops';
 import {
   stepMobs,
   stepArrows,
@@ -1103,6 +1103,32 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
   }
   setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
   hurtFlash.flash();
+}
+
+/**
+ * **生物死亡 → 掉落**（B4 Task 4 審查 I-2）：**死因無關**的單一路徑。
+ *
+ * 掉落表在 `mob-drops.ts`（`dropsForDeaths`）→ 這裡只負責把清單變成地上的掉落物。
+ * 兩條死因路徑都走這個函式：
+ * 1. **近戰擊殺**（當場把死掉的生物從名單移走的那一支）；
+ * 2. **死亡移除**（生物因為任何其他原因死了、被過濾掉的那一支：箭、之後的白天
+ *    燃燒…）。
+ *
+ * 為什麼要抽成共用函式：先前掉落只接在近戰那一支 → 被箭打死的生物**什麼都不掉**，
+ * 掉落表裡的項目也就不可達。現在「誰死了」與「掉什麼」是分開的 → 每種死因都走
+ * 同一份掉落表。**不會重複生成**：近戰支會立刻把死掉的生物從 `mobs` 名單移除，
+ * 死亡移除那一支就看不到牠（同一幀內也不會二次觸發）。
+ *
+ * 回傳「有沒有真的掉東西」→ 呼叫端才知道要不要發 `drops-changed`。
+ */
+function spawnMobDeathDrops(dead: readonly Mob[]): boolean {
+  if (currentMode !== 'survival') return false; // 創造模式不掉落
+  let spilled = false;
+  for (const d of dropsForDeaths(dead)) {
+    drops = spawnDrop(drops, d.item, d.count, d.pos);
+    spilled = true;
+  }
+  return spilled;
 }
 
 function refreshQueues(): void {
@@ -2469,10 +2495,16 @@ gs.renderer.setAnimationLoop(() => {
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
     for (const ev of shot.events) applyMobEvent(ev, true);
-    // dead mobs despawn past 48 blocks (kill loot — 生物掉落表 — is
-    // spawned at the melee kill site above, not here)
+    // **死亡 → 掉落（死因無關的單一路徑）**：任何死因（箭、白天燃燒…）的生物都要
+    // 掉掉落表裡的東西 → 在牠們被移出世界**之前**先算掉落。
+    const deadNow = mobs.filter((m) => isDead(m));
+    const spilled = deadNow.length > 0 && spawnMobDeathDrops(deadNow);
+    // dead mobs despawn past 48 blocks (超距的生物不是死的 → 不掉東西)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
+    // 近戰當場殺掉的那一批已經在近戰支裡掉過了（那一支會立刻把死掉的生物從
+    // `mobs` 移走 → 這裡看不到牠 → 不會重複掉）。
+    if (spilled) bus.emit('drops-changed', {});
 
     // ---- 生存值（Task 9）：sprint/jump exhaustion + regen/starve tick ----
     // Mob/arrow damage already went through setVitals above (each emits
@@ -2661,21 +2693,12 @@ gs.renderer.setAnimationLoop(() => {
               // 殭屍掉腐肉 0–2、骷髏掉骨頭／箭 0–2。
               // **舊的「殭屍必掉 1 顆蘋果」已移除**：那是 Phase 4 為了讓
               // 「吃蘋果」有來源而加的臨時手段，現在蘋果的來源改成
-              // **橡木樹葉 0.5% 機率掉落**（`chanceDropFor`）→ 兩條鏈分開，
+              // **橡木／白樺樹葉 0.5% 機率掉落**（`chanceDropFor`）→ 兩條鏈分開，
               // 殭屍不再靠「必掉蘋果」硬塞食物。
-              // 創造模式不產生掉落（`spawnBlockDrop` 的慣例）。
-              if (currentMode === 'survival') {
-                let spilled = false;
-                for (const d of dead) {
-                  for (const drop of rollMobDrops(d.kind)) {
-                    drops = spawnDrop(drops, drop.item, drop.count, {
-                      x: d.pos.x, y: d.pos.y + 0.9, z: d.pos.z,
-                    });
-                    spilled = true;
-                  }
-                }
-                if (spilled) bus.emit('drops-changed', {});
-              }
+              // 掉落走**共用**的 `spawnMobDeathDrops`（死因無關）→ 與「死亡移除」
+              // 那一支同一份掉落表，且不會重複生成（這裡把死掉的生物從 `mobs`
+              // 移走了 → 死亡移除支看不到牠）。
+              if (spawnMobDeathDrops(dead)) bus.emit('drops-changed', {});
             }
           }
         }

@@ -90,9 +90,13 @@ export function dropItemFor(blockId: number): ItemId | null {
 }
 
 /**
- * 機率掉落：橡木樹葉有 0.5%（1/200）機率掉 1 顆蘋果。
+ * 機率掉落：**橡木葉與白樺葉**有 0.5%（1/200）機率掉 1 顆蘋果。
  *
- * 出處：Java 版原版（2026-10-20 查證）——橡樹葉有 0.5% 機率掉 1 顆蘋果。
+ * 出處：spec §B4.3「蘋果來源修正：移除『殭屍必掉蘋果』；改為橡木／白樺樹葉 0.5%
+ * 掉蘋果（原版機制）」；原版 Java 1.20+ 各種葉子都是 0.5%（minecraft.wiki/Block，
+ * 2026-10-20 查證）。**白樺葉自 B3（0.6.0）起就有**（`BLOCK.BIRCH_LEAVES`）→ 與橡木
+ * 葉同一個機率。
+ *
  * 本作**沒有**剪刀／絲絨觸碰 → 樹葉本體仍然不掉（B1.6 起 `dropItemFor` 回 null），
  * 只有這個 0.5% 的額外獎勵。
  */
@@ -101,9 +105,12 @@ export const LEAF_APPLE_CHANCE = 0.005;
 /**
  * 方塊的**機率掉落**：擲一次 rng，落在門檻內就回該物品，否則回 null。
  *
- * 目前只有橡木樹葉有機率掉落（0.5% 蘋果）。**這是「方塊掉落」這條鏈**，與
- * 「生物掉落」（`mob-drops.ts` 的 `rollMobDrops`）分開——生物掉落不該被
- * `spawnBlockDrop` 的「持有工具門檻」語意污染。
+ * 目前**橡木葉與白樺葉**有機率掉落（0.5% 蘋果；spec §B4.3 的名單）。
+ * **雲杉葉刻意未納入**——spec §B4.3 只列橡木／白樺；要加的話把
+ * `BLOCK.SPRUCE_LEAVES` 加進下面這個條件即可，規則不用改（雲杉葉本體同樣不掉）。
+ *
+ * 這是「方塊掉落」這條鏈，與「生物掉落」（`mob-drops.ts` 的 `rollMobDrops`）分開
+ * ——生物掉落不該被 `spawnBlockDrop` 的「持有工具門檻」語意污染。
  *
  * rng 可注入（測試可重現）；不給時用 `Math.random`。
  */
@@ -111,7 +118,7 @@ export function chanceDropFor(
   blockId: number,
   rng: () => number = Math.random,
 ): ItemId | null {
-  if (blockId !== BLOCK.LEAVES) return null;
+  if (blockId !== BLOCK.LEAVES && blockId !== BLOCK.BIRCH_LEAVES) return null;
   return rng() < LEAF_APPLE_CHANCE ? 'apple' : null;
 }
 
