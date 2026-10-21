@@ -5,7 +5,7 @@ import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
-import { spawnDrop, dropItemFor, type DropEntity } from '../world/drops';
+import { spawnDrop, dropItemFor, chanceDropFor, type DropEntity } from '../world/drops';
 import { damageMob, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
@@ -17,6 +17,11 @@ import { damageMob, type Mob } from '../world/mobs';
  *  spawn nothing too. Drop mapping via `dropItemFor` (coal_ore → coal;
  *  iron_ore → raw_iron; grass → dirt; leaves/glass/snow → nothing). Pickup is
  *  proximity-based (main loop + `pickable`/`pickup`).
+ *
+ *  **機率掉落（B4 Task 4）**：橡木樹葉有 0.5% 機率掉 1 顆蘋果（`chanceDropFor`）。
+ *  它**不受 `dropItemFor` 回 null 的影響**（樹葉本體不掉，但機率掉落照算），
+ *  但**仍受創造模式與收穫門檻約束**（創造模式不產生任何掉落；收穫門檻管的是
+ *  「這一次破壞有沒有收穫」）。`rng` 可注入 → 測試能釘住 0.5% 這個門檻。
  *  Returns the new drops array — unchanged (same ref) when nothing spawns. */
 export function spawnBlockDrop(
   drops: DropEntity[],
@@ -24,12 +29,19 @@ export function spawnBlockDrop(
   blockId: number,
   pos: { x: number; y: number; z: number },
   held: ItemStack | null,
+  rng: () => number = Math.random,
 ): DropEntity[] {
-  if (mode === 'creative') return drops;
-  if (!canHarvest(blockId, held)) return drops;
+  if (mode === 'creative') return drops; // 創造模式不產生任何掉落（含機率掉落）
+  if (!canHarvest(blockId, held)) return drops; // 收穫門檻同樣管住機率掉落
+  // **機率掉落先算**：樹葉的 `dropItemFor` 回 null，若把這段排在下面的
+  // `if (!item) return …` 之後，樹葉的 0.5% 蘋果**永遠不會發生**（那一格
+  // 永遠先被 return 截走）→ 順序是這裡最容易做錯的地方。
+  const chance = chanceDropFor(blockId, rng);
+  const withChance = chance ? spawnDrop(drops, chance, 1, pos) : drops;
   const item = dropItemFor(blockId);
-  if (!item) return drops;
-  return spawnDrop(drops, item, 1, pos);
+  if (!item) return withChance; // 樹葉：只有 0.5% 蘋果，沒有本體
+  // 一般掉落最後 append → 掉落陣列的順序是「機率掉落先、本體後」。
+  return spawnDrop(withChance, item, 1, pos);
 }
 
 // ---- Survival mining (Task 5): vanilla break-time formula + harvest gates ----

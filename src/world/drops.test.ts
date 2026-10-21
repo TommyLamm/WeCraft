@@ -5,6 +5,8 @@ import {
   pickable,
   pickup,
   dropItemFor,
+  chanceDropFor,
+  LEAF_APPLE_CHANCE,
   GRAVITY,
   SPAWN_PICKUP_DELAY,
   PLAYER_DROP_PICKUP_DELAY,
@@ -486,5 +488,21 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.CACTUS)).toBe('cactus');
     // 冰原版要絲絨觸碰才掉；本作沒有絲絨 → 不掉
     expect(dropItemFor(BLOCK.ICE)).toBeNull();
+  });
+});
+
+// ---- B4 Task 4：機率掉落（樹葉 0.5% 蘋果） ------------------------------
+describe('chanceDropFor (機率掉落：樹葉 0.5% 蘋果)', () => {
+  it('leaves have a 0.5% apple chance', () => {
+    // 剛好落在門檻內 → 掉蘋果
+    expect(chanceDropFor(BLOCK.LEAVES, () => 0.004)).toBe('apple');
+    // 剛好落在門檻外 → 什麼都沒有
+    expect(chanceDropFor(BLOCK.LEAVES, () => 0.006)).toBeNull();
+    // 其他方塊沒有機率掉落（rng 就算回 0 也不掉）
+    expect(chanceDropFor(BLOCK.STONE, () => 0)).toBeNull();
+  });
+
+  it('the apple chance is 0.5%', () => {
+    expect(LEAF_APPLE_CHANCE).toBe(0.005);
   });
 });

@@ -89,6 +89,32 @@ export function dropItemFor(blockId: number): ItemId | null {
   return itemFromBlock(blockId);
 }
 
+/**
+ * 機率掉落：橡木樹葉有 0.5%（1/200）機率掉 1 顆蘋果。
+ *
+ * 出處：Java 版原版（2026-10-20 查證）——橡樹葉有 0.5% 機率掉 1 顆蘋果。
+ * 本作**沒有**剪刀／絲絨觸碰 → 樹葉本體仍然不掉（B1.6 起 `dropItemFor` 回 null），
+ * 只有這個 0.5% 的額外獎勵。
+ */
+export const LEAF_APPLE_CHANCE = 0.005;
+
+/**
+ * 方塊的**機率掉落**：擲一次 rng，落在門檻內就回該物品，否則回 null。
+ *
+ * 目前只有橡木樹葉有機率掉落（0.5% 蘋果）。**這是「方塊掉落」這條鏈**，與
+ * 「生物掉落」（`mob-drops.ts` 的 `rollMobDrops`）分開——生物掉落不該被
+ * `spawnBlockDrop` 的「持有工具門檻」語意污染。
+ *
+ * rng 可注入（測試可重現）；不給時用 `Math.random`。
+ */
+export function chanceDropFor(
+  blockId: number,
+  rng: () => number = Math.random,
+): ItemId | null {
+  if (blockId !== BLOCK.LEAVES) return null;
+  return rng() < LEAF_APPLE_CHANCE ? 'apple' : null;
+}
+
 /** `spawnDrop` 的可選覆寫項——不給時**預設行為與既有呼叫端完全相同**
  *  （既有呼叫端：`spawnBlockDrop`（src/player/interact.ts）與 main.ts 的掉落呼叫）。 */
 export interface SpawnDropOptions {

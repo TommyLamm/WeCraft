@@ -96,6 +96,8 @@ import {
   type DropEntity,
 } from './world/drops';
 import { spawnBreakBurst, spawnDigChip, stepParticles, type Particle } from './world/particles';
+// B4 Task 4：生物的擊殺掉落表（殭屍腐肉／骷髏骨頭與箭／之後的被動生物）。
+import { rollMobDrops } from './world/mob-drops';
 import {
   stepMobs,
   stepArrows,
@@ -2467,7 +2469,7 @@ gs.renderer.setAnimationLoop(() => {
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
     for (const ev of shot.events) applyMobEvent(ev, true);
-    // dead mobs despawn past 48 blocks (kill loot — zombie apples — is
+    // dead mobs despawn past 48 blocks (kill loot — 生物掉落表 — is
     // spawned at the melee kill site above, not here)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
@@ -2655,21 +2657,22 @@ gs.renderer.setAnimationLoop(() => {
               bus.emit('mobs-changed', { count: mobs.length });
               // Task 12: the kill filter actually removed a mob → unlock event
               applyAdvancement({ type: 'mob-killed', mode: currentMode });
-              // Phase 4 verification fix: a zombie kill drops 1 apple in
-              // survival — Task 8 shipped the eat/tasty side but no drop
-              // source, so apples were unobtainable and the promised
-              // 殭屍蘋果掉落→進食 chain dead-ended. Guaranteed (not chance):
-              // deterministic for progression, modest (+4 hunger) for balance.
-              // Creative spawns nothing (spawnBlockDrop convention); skeletons
-              // drop nothing (their arrows are ammo, not loot — minimal fix).
+              // B4 Task 4：擊殺掉落走**生物掉落表**（`rollMobDrops`）——
+              // 殭屍掉腐肉 0–2、骷髏掉骨頭／箭 0–2。
+              // **舊的「殭屍必掉 1 顆蘋果」已移除**：那是 Phase 4 為了讓
+              // 「吃蘋果」有來源而加的臨時手段，現在蘋果的來源改成
+              // **橡木樹葉 0.5% 機率掉落**（`chanceDropFor`）→ 兩條鏈分開，
+              // 殭屍不再靠「必掉蘋果」硬塞食物。
+              // 創造模式不產生掉落（`spawnBlockDrop` 的慣例）。
               if (currentMode === 'survival') {
                 let spilled = false;
                 for (const d of dead) {
-                  if (d.kind !== 'zombie') continue;
-                  drops = spawnDrop(drops, 'apple', 1, {
-                    x: d.pos.x, y: d.pos.y + 0.9, z: d.pos.z,
-                  });
-                  spilled = true;
+                  for (const drop of rollMobDrops(d.kind)) {
+                    drops = spawnDrop(drops, drop.item, drop.count, {
+                      x: d.pos.x, y: d.pos.y + 0.9, z: d.pos.z,
+                    });
+                    spilled = true;
+                  }
                 }
                 if (spilled) bus.emit('drops-changed', {});
               }

@@ -21,6 +21,7 @@ import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import type { RayHit } from '../world/raycast';
 import { PLAYER_HEIGHT } from './physics';
+import type { DropEntity } from '../world/drops';
 
 describe('getBreakTime (Task 5: hardness × (harvestable ? 1.5 : 5) ÷ tool speed)', () => {
   const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
@@ -485,6 +486,44 @@ describe('spawnBlockDrop (Task 7 + Task 6 harvest gate)', () => {
     expect(second).toHaveLength(2);
     expect(second[0]).toBe(first[0]); // existing entities kept as-is
     expect(second[1].id).not.toBe(second[0].id);
+  });
+});
+
+// ---- B4 Task 4：機率掉落（樹葉 0.5% 蘋果） ------------------------------
+describe('spawnBlockDrop 的機率掉落（B4 Task 4）', () => {
+  const at = { x: 1, y: 2, z: 3 };
+  const woodenPick = { item: 'wooden_pickaxe', count: 1 } as const;
+
+  it('breaking leaves can drop an apple', () => {
+    // 樹葉本體不掉（B1.6 起 `dropItemFor` 回 null）→ 這 1 筆只能是機率掉的蘋果。
+    // 機率掉落**不受** `dropItemFor` 回 null 影響，但仍受創造模式與收穫門檻約束
+    // （樹葉的 `requiredTool` 是 null → 徒手也能收穫）。
+    const drops = spawnBlockDrop([], 'survival', BLOCK.LEAVES, at, null, () => 0.001);
+    expect(drops).toHaveLength(1);
+    expect(drops[0].item).toBe('apple');
+    expect(drops[0].count).toBe(1);
+  });
+
+  it('breaking leaves usually drops nothing', () => {
+    const input: DropEntity[] = [];
+    const drops = spawnBlockDrop(input, 'survival', BLOCK.LEAVES, at, null, () => 0.5);
+    expect(drops).toHaveLength(0);
+    expect(drops).toBe(input); // 沒有東西掉落 → 回傳同一參考（既有契約）
+  });
+
+  it('creative mode never drops the lucky apple', () => {
+    // 機率掉落也受創造模式門檻約束（創造模式無限供應 → 不產生任何掉落）
+    const drops = spawnBlockDrop([], 'creative', BLOCK.LEAVES, at, null, () => 0);
+    expect(drops).toHaveLength(0);
+  });
+
+  it('the lucky apple does not replace the normal drop', () => {
+    // 石頭沒有機率掉落 → 照舊只掉 1 顆圓石。
+    // **持有工具**：石頭要木鎬才收得到（既有收穫門檻案例不動）→ 這裡帶木鎬，
+    // 否則「正常的圓石掉落」這件事根本不會發生（徒手挖石頭＝不掉）。
+    const drops = spawnBlockDrop([], 'survival', BLOCK.STONE, at, woodenPick, () => 0);
+    expect(drops).toHaveLength(1);
+    expect(drops[0].item).toBe('cobblestone');
   });
 });
 
