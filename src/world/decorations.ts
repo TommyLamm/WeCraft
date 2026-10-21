@@ -234,6 +234,8 @@ export function plantDecorations(data: Uint8Array, cx: number, cz: number, seed:
       }
 
       // 3) 冰：水深 ≥ 2 格（h < SEA_LEVEL − 1）且氣溫 < −0.24 → 取代水面頂端
+      // （冰底面與水的頂面會共面 → 已知現象，見 `blocks.ts` 的冰資料與
+      //  `mesher.ts` 的 `faceVisible` 註解）
       if (h < SEA_LEVEL - 1 && isCold(wx, wz, seed)) {
         const i = chunkIndex(lx, SEA_LEVEL, lz);
         if (data[i] === BLOCK.WATER) data[i] = BLOCK.ICE;

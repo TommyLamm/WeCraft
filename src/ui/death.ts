@@ -8,8 +8,16 @@ import './ui.css';
  *  Task 13 adds an optional cause-of-death line (`.death-cause`) under the title. */
 /** Cause of death (Task 13): tracked in main.ts (`deathCause`) and rendered
  *  as a `.death-cause` line under the title. `unknown` covers a mobId with no
- *  matching live mob; `null` (no cause recorded) renders no line at all. */
-export type DamageSource = 'fall' | 'zombie' | 'skeleton' | 'starve' | 'unknown';
+ *  matching live mob; `null` (no cause recorded) renders no line at all.
+ *  `cactus` (B3 Task 6): the cactus contact hazard (`world/hazards.ts`) records
+ *  it the same way the mob path records its cause. */
+export type DamageSource =
+  | 'fall'
+  | 'zombie'
+  | 'skeleton'
+  | 'starve'
+  | 'cactus'
+  | 'unknown';
 
 /** Traditional Chinese death line per source; `null` → `''` (no line). */
 export function deathMessageFor(source: DamageSource | null): string {
@@ -22,6 +30,8 @@ export function deathMessageFor(source: DamageSource | null): string {
       return '你被骷髏射死了';
     case 'starve':
       return '你餓死了';
+    case 'cactus':
+      return '你被仙人掌刺死了';
     case 'unknown':
       return '你死了';
     case null:

@@ -1787,6 +1787,7 @@ function continueGame(payload: SavePayload): void {
   fallState = resetFall();
   attackCd = 0;
   deathCause = null; // Task 13: Continue restores a living player — no death cause
+  hazardState = createHazardState(); // B3 Task 6: 讀檔進場 → 仙人掌計時歸零
 
   currentMode = payload.player.mode; // 3. mode
   input.setFlyEnabled(currentMode === 'creative'); // survival save → stay grounded
@@ -1856,6 +1857,7 @@ function continueFromCloud(): void {
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
   resetViewMode(); // B2.4: 進場 → 視角回到第一人稱
+  hazardState = createHazardState(); // B3 Task 6: 進場 → 仙人掌計時歸零（與 continueGame 同一路徑）
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
@@ -2193,6 +2195,8 @@ gs.renderer.setAnimationLoop(() => {
     // 見 `src/world/hazards.ts` 的檔頭註解）。
     // 傷害節奏由 `stepHazards` 的累積器決定（與幀率無關）；扣血照樣走
     // `setVitals` 路徑，並沿用生物傷害的 0.5 s 無敵幀（`invuln`）。
+    // **受擊回饋與生物傷害完全同一套**（審查 I-1）：`exhaust(..., EXHAUST_HURT)`
+    // ＋ `hurtFlash.flash()`，不多不少。
     const hazard = stepHazards(
       hazardState,
       touchesCactus(world, player.position, PLAYER_HALF_WIDTH, PLAYER_HEIGHT),
@@ -2203,7 +2207,9 @@ gs.renderer.setAnimationLoop(() => {
       const nowSec = performance.now() / 1000;
       if (canBeHurt(invuln, nowSec)) {
         invuln = markHurt(invuln, nowSec);
-        setVitals(damage(vitals, hazard.damage)); // emits vitals-changed via setVitals
+        deathCause = 'cactus'; // Task 13 的慣例：著實的傷害記錄死因（讀取時機＝死亡轉場）
+        setVitals(exhaust(damage(vitals, hazard.damage), EXHAUST_HURT)); // emits vitals-changed via setVitals
+        hurtFlash.flash(); // 與生物傷害同一套受擊回饋（紅色閃爍）
       }
     }
 

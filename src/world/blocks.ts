@@ -116,6 +116,14 @@ const DEFS: Record<number, BlockDef> = {
   // 而且冰**不遮擋 AO**（鄰面不會因冰而變暗）、冰面**不會**被相鄰的不透明方塊
   // 遮掉（`faceVisible` 只看鄰居是否透明）。若之後要做「半透明、可看穿」的冰，
   // 需要獨立的透明 pass 或 `opacity` 材質 → 不在本批。
+  //
+  // **已知現象（B3 Task 6 記錄，待批次末驗收）**：冰會**取代水面頂端那一格**
+  // （`decorations.ts` 的結冰規則）→ 冰塊（transparent）緊貼著下方的水
+  // （transparent）→ `mesher.ts` 的 `faceVisible` 兩邊都判定「鄰居透明 → 畫」，
+  // 於是**冰的底面與水的頂面在同一個平面上各發出一片**。水材質 `depthWrite: false`
+  // → 比較可能呈現「水色疊加」而不是閃爍，但**水下視角的外觀尚未驗收**
+  // → 列入批次末瀏覽器驗收的待驗項；要根治需要獨立的透明 pass（渲染層改動，
+  // 不在本批範圍）。
   21: { id: 21, name: 'dandelion', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
   22: { id: 22, name: 'poppy', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
   23: { id: 23, name: 'short_grass', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },

@@ -83,6 +83,15 @@ function faceSignature(
   return id | (tile << 8) | (shadeKey << 16) | (aoKey << AO_SHIFT) | (isWater ? WATER_BIT : 0);
 }
 
+/**
+ * 這一面的鄰居要不要畫。
+ *
+ * **注意（B3 Task 6 的已知現象）**：兩個「透明」方塊相鄰時，兩邊的接觸面都會
+ * 被畫出來 → 冰（transparent）取代水面頂端那一格時，**冰的底面與水的頂面在
+ * 同一個平面上各一片**（水材質 depthWrite: false → 可能是「水色疊加」而非
+ * 閃爍；水下視角尚未驗收，列入批次末瀏覽器驗收待驗項）。根治需要獨立的
+ * 透明 pass（渲染層改動，不在本批範圍）。
+ */
 function faceVisible(id: number, neighbor: number): boolean {
   if (neighbor === BLOCK.AIR) return true;
   if (id === neighbor) return false; // 同種相鄰（含玻璃/水內部）不畫

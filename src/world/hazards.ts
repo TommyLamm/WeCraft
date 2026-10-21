@@ -45,6 +45,11 @@ export function createHazardState(): HazardState {
  * 掃描範圍＝身體框（寬 `2 × halfWidth`、高 `height`）**加上腳下 2 層**，
  * 任何一格是 `BLOCK.CACTUS` 就算接觸。
  *
+ * **本作採「整格判定」**：原版是「貼框擦邊判定」（仙人掌的碰撞形狀內縮 1/16，
+ * 身體擦過就算受傷）→ **站在仙人掌旁邊的格不會受傷**，只有踩在仙人掌上、
+ * 或跳過仙人掌時身體框與仙人掌格重疊才會受傷。這個差異要寫進 Task 10 的
+ * README／發布說明〈與原版的差異〉。
+ *
  * 非有限值（壞掉的座標／尺寸）一律回 false → NaN 不會變成「一直受傷」。
  */
 export function touchesCactus(
