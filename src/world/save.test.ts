@@ -282,6 +282,15 @@ describe('saveGame / loadGame', () => {
     expect('worldgenVersion' in loaded!).toBe(false);
   });
 
+  it('a migrated v2 record has no worldgenVersion', async () => {
+    const v2 = makeV2Payload();
+    await putRawRecord(v2);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    // v2 → v3 的遷移同樣不得補上版本戳記
+    expect('worldgenVersion' in loaded!).toBe(false);
+  });
+
   it('a record with an older worldgenVersion keeps its value', async () => {
     const base = makePayload();
     await putRawRecord({ ...base, worldgenVersion: 0 });

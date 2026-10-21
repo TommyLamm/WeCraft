@@ -2,8 +2,8 @@
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 // B1.3: payload v3 (dual-mode stash) + v1/v2→v3 migration in `loadGame`.
-// B3 Task 7: additive `worldgenVersion` field — the payload VERSION STAYS 3
-// (old builds ignore the unknown field); only the version stamp is added.
+// B3 Task 7：附加欄位 `worldgenVersion`——payload 版本**維持 3**（舊版程式會直接
+// 忽略不認識的欄位），只多蓋一個版本戳記而已。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from '../core/items';
@@ -13,7 +13,7 @@ import {
   sanitizeAdvancements,
   type AdvancementState,
 } from '../core/advancements';
-import { WORLDGEN_VERSION } from './worldgen';
+import { WORLDGEN_VERSION, readWorldgenVersion } from './worldgen';
 
 /** Pre-v2 payload shape (Task 11): kept for the migration path so records
  *  written by earlier builds still validate and load. */
@@ -47,12 +47,11 @@ export interface SavePayloadV2 extends Omit<SavePayloadV1, 'version'> {
 export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	version: 3;
 	stash: StashPayload;
-	/** B3 Task 7 additive field — the payload VERSION STAYS 3, this is only an
-	 *  extra key an old build simply ignores. It records which worldgen
-	 *  produced the terrain this save was played on. ABSENT on records written
-	 *  before B3 → that is the "old save" signal, so `loadGame` must NOT fill
-	 *  it in (filling it in would hide the old save and the one-time
-	 *  "terrain changed" notice would never fire). */
+	/** B3 Task 7 附加欄位——payload 版本**維持 3**，這只是多出來的一個鍵，舊版
+	 *  程式讀到不認識的欄位會直接忽略。它記錄「這份存檔玩的是哪一版生成器做出來
+	 *  的地形」。B3 之前的記錄**沒有**這個鍵 → 那就是「舊存檔」的判準，所以
+	 *  `loadGame` **不得**自動補值（補了就看不出是舊存檔、也永遠不會跳「地形已改變」
+	 *  提示）。 */
 	worldgenVersion?: number;
 }
 
@@ -87,9 +86,8 @@ export interface SaveSources {
  *  objects, fresh advancements, fresh stash) so later mutations of the live
  *  state never alias into an already captured payload. `modified` comes from
  *  `world.serializeModified()`, which already returns fresh tuples.
- *  B3 Task 7: every newly written payload carries the CURRENT
- *  `WORLDGEN_VERSION` — writing is the only place that stamps the value (the
- *  read path never fills it in, so old saves stay recognizable as old). */
+ *  B3 Task 7：每一份新寫出的 payload 都帶「當前」的 `WORLDGEN_VERSION`——寫入端
+ *  是唯一會蓋值的地方（讀取端從不補值，所以舊存檔仍然看得出是舊存檔）。 */
 export function collectSavePayload(args: SaveSources): SavePayload {
 	return {
 		version: 3,
@@ -130,11 +128,9 @@ export function collectSavePayload(args: SaveSources): SavePayload {
  *  skip, item ids and counts by the inventory model / sanitizeSlots. Neither
  *  v2 `advancements` nor v3 `stash` is part of this base check: `loadGame`
  *  sanitizes both (sanitizeAdvancements / normalizeModeStash) before returning.
- *  B3 Task 7: the additive `worldgenVersion` field is NOT part of this check
- *  either — the base shape stays exactly as it was (neither widened nor
- *  tightened): old v1/v2/v3 records without the field keep validating, and a
- *  record carrying a bogus value ('x') is still read (the read path strips the
- *  key instead of rejecting the whole save).
+ *  B3 Task 7：附加欄位 `worldgenVersion` **不在**這個檢查裡——基本結構檢查完全不動
+ *  （既不放寬也不收緊）：沒有這個欄位的舊 v1/v2/v3 記錄照樣通過；帶著髒值（`'x'`）
+ *  的記錄也照樣被讀出來（讀取端會把該鍵剝除，而不是整筆拒收）。
  *  Pure: exported for tests, called by loadGame. */
 export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayloadV2 | SavePayload {
 	if (typeof x !== 'object' || x === null) return false;
@@ -228,12 +224,10 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  Vitals written before `exhaustion` existed (or otherwise malformed) run
  *  through survival.ts `normalizeVitals` — for the live player AND for the
  *  stash's survival snapshot — so the live model always sees the full shape.
- *  B3 Task 7 — the additive `worldgenVersion` field is carried through
- *  VERBATIM and is NEVER filled in here: a record without the key stays
- *  without the key (that is exactly how an old save is recognized), a record
- *  with a finite number keeps that number, and a record with a bogus value
- *  (e.g. the string 'x' — the base shape check deliberately does not look at
- *  this additive field) loses the key instead of handing a bogus version on. */
+ *  B3 Task 7——附加欄位 `worldgenVersion` **原樣帶回、絕不在這裡補值**：記錄沒有
+ *  這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）；記錄上是有限數字 →
+ *  原樣保留；記錄上是髒值（例如字串 `'x'`——基本結構檢查刻意不看這個附加欄位）
+ *  → 把該鍵剝除，不讓髒版本值繼續往外傳。 */
 export async function loadGame(): Promise<SavePayload | null> {
 	try {
 		const db = await openSaveDb();
@@ -270,14 +264,18 @@ export async function loadGame(): Promise<SavePayload | null> {
 			// 3) 非法值剝除：`isValidSavePayload` 不看這個附加欄位（不放寬也不
 			//    收緊結構檢查），所以 'x' 這種值會通過驗證 → 在這裡明確剝除，
 			//    不讓髒值繼續往外傳。
-			const rawVersion: unknown = (value as Partial<SavePayload>).worldgenVersion;
-			const worldgenVersion =
-				typeof rawVersion === 'number' && Number.isFinite(rawVersion) ? rawVersion : undefined;
-			delete migrated.worldgenVersion;
-			if (worldgenVersion !== undefined) {
-				migrated.worldgenVersion = worldgenVersion;
-			}
-			return migrated;
+			// 「什麼算合法版本值」由 worldgen.ts 的 `readWorldgenVersion` 單一定義
+			// （雲端存檔的驗證端也用同一支）→ 兩邊的規則不會漂移。
+			//
+			// 明確丟棄這個鍵（不靠副作用式 `delete`）：回傳物件組出來就不帶它。
+			// 取出的值型別是 `number | undefined`，但記錄裡實際可能是字串等髒值
+			// → 再交給 `readWorldgenVersion` 於執行期擋一次。
+			const { worldgenVersion: rawVersion, ...migratedClean } = migrated;
+			const worldgenVersion = readWorldgenVersion(rawVersion);
+			return {
+				...migratedClean,
+				...(worldgenVersion === undefined ? {} : { worldgenVersion }),
+			};
 		} finally {
 			db.close();
 		}

@@ -33,3 +33,17 @@ export const WORLDGEN_VERSION = 1;
 export function needsWorldgenNotice(saved: number | undefined | null): boolean {
   return saved !== WORLDGEN_VERSION;
 }
+
+/**
+ * 讀出存檔上的 `worldgenVersion` 欄位值並正規化：**合法（有限數字）就原樣回傳**；
+ * 不存在或型別不符（字串 `'x'`、`NaN`、`Infinity`、`null`…）→ 回傳 `undefined`
+ *（＝「沒有這個欄位」＝舊存檔的判準）。
+ *
+ * 為什麼要有這個共用 helper：「什麼算合法的版本值」只有這裡定義一次，本機存檔讀取端
+ * （`src/world/save.ts`）與雲端存檔驗證端（`src/core/cloud-save.ts`）共用同一支 →
+ * 兩邊的規則不會各自漂移。**策略**仍然兩邊不同（那是 brief 指定的）：
+ * 本機讀取端剝除該鍵後照常載入、雲端驗證端整筆拒收。
+ */
+export function readWorldgenVersion(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined;
+}
