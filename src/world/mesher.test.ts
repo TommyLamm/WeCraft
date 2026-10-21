@@ -306,6 +306,14 @@ describe('cross foliage pass', () => {
     return meshChunk(w, cx, cz).foliage;
   }
 
+  /** The (x,z) corner pairs of quad `q`, sorted and joined — a cross plane has
+   *  exactly two distinct (x,z) pairs (它的兩個底部角點)。同一條對角線的兩片
+   *  會得到**同一個**字串 → 這就是「A／B 是不是同一條對角線」的判別依據。 */
+  function quadDiagonal(m: MeshData, q: number): string {
+    const pairs = new Set(quadVerts(m, q).map((v) => `${v[0]},${v[2]}`));
+    return [...pairs].sort().join(' | ');
+  }
+
   it('a cross block produces two diagonal quads in the foliage mesh', () => {
     const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
     const m = meshChunk(w, 0, 0);
@@ -335,6 +343,56 @@ describe('cross foliage pass', () => {
     }
   });
 
+  // ---- B3 Task 4 審查 I-1：兩片必須是**不同的**對角線，且各有自己的法線 ----
+  // 前一版斷言只檢查「x、z 各跨 1 格」，兩片畫在同一條對角線上也會綠 → 補釘。
+  it('the two foliage planes lie on DIFFERENT diagonals', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = foliage(w);
+    expect(m.quadCount).toBe(2);
+    const diagonals = [quadDiagonal(m, 0), quadDiagonal(m, 1)];
+    // A 片走 (5,5)→(6,6)、B 片走 (5,6)→(6,5)：兩條對角線不可相同
+    expect(new Set(diagonals).size).toBe(2);
+    expect([...diagonals].sort()).toEqual(['5,5 | 6,6', '5,6 | 6,5']);
+  });
+
+  it('each foliage plane carries its own 45° normal, and the winding agrees', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = foliage(w);
+    const S = Math.SQRT1_2;
+    // A 片（對角 (5,5)→(6,6)）法線 (−1/√2, 0, 1/√2)；B 片（(5,6)→(6,5)）法線 (1/√2, 0, 1/√2)
+    const expected: Record<string, [number, number, number]> = {
+      '5,5 | 6,6': [-S, 0, S],
+      '5,6 | 6,5': [S, 0, S],
+    };
+    // 兩片的法線必須一負一正（各自面向不同方向）——兩片同對角線時會變成同號而紅
+    const nx = [0, 1].map((q) => quadNormal(m, q)[0]);
+    expect(nx[0] * nx[1]).toBeLessThan(0);
+    for (let q = 0; q < m.quadCount; q++) {
+      const key = quadDiagonal(m, q);
+      const want = expected[key];
+      expect(want, `unknown diagonal ${key}`).toBeDefined();
+      // 頂點法線欄位（法線存在 Float32Array 裡 → 1/√2 只有約 1.2e-8 的誤差，
+      // 精度 6 位（±5e-7）足夠嚴格又不會被 float32 誤差咬到）
+      const nrm = quadNormal(m, q);
+      expect(nrm[0]).toBeCloseTo(want[0], 6);
+      expect(nrm[1]).toBeCloseTo(want[1], 6);
+      expect(nrm[2]).toBeCloseTo(want[2], 6);
+      // winding：幾何法線（由頂點順序算出，長度 √2）正規化後必須與法線欄位同向
+      const v = quadVerts(m, q);
+      const e1 = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
+      const e2 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
+      const geo = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      ];
+      const len = Math.hypot(geo[0], geo[1], geo[2]);
+      expect(geo[0] / len).toBeCloseTo(want[0], 6);
+      expect(geo[1] / len).toBeCloseTo(want[1], 6);
+      expect(geo[2] / len).toBeCloseTo(want[2], 6);
+    }
+  });
+
   it('the foliage quads use one tile of UV', () => {
     const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
     const m = foliage(w);
@@ -342,6 +400,20 @@ describe('cross foliage pass', () => {
       const uvs = Array.from(m.uvs.slice(q * 8, q * 8 + 8));
       expect(Math.max(...uvs)).toBe(1);
       expect(Math.min(...uvs)).toBe(0);
+    }
+  });
+
+  it('foliage quads are fully lit (no AO) and use exactly one whole tile of UV', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = foliage(w);
+    for (let q = 0; q < m.quadCount; q++) {
+      // cross 不做 AO：每個頂點都是滿亮度 1.0（cross 透明 → 不是遮蔽者）
+      for (let i = 0; i < 4; i++) {
+        expect(m.shades[q * 4 + i]).toBe(1.0);
+      }
+      // UV 剛好是一整個 tile：[0,0] [1,0] [0,1] [1,1]
+      const uvs = Array.from(m.uvs.slice(q * 8, q * 8 + 8));
+      expect(uvs).toEqual([0, 0, 1, 0, 0, 1, 1, 1]);
     }
   });
 

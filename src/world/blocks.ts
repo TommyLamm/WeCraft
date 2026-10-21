@@ -33,7 +33,8 @@ export const BLOCK = {
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
 
 /** 方塊的幾何形狀：`cube` 是滿格的立方體；`cross` 是原版花／草那種
- *  「兩片對角平面」的十字模型（不碰撞、不遮擋、單獨一條 foliage pass 渲染）。 */
+ *  「兩片對角平面」的十字模型（不碰撞、不遮擋、單獨一條 foliage pass 渲染）。
+ *  幾何細節與「與原版內縮模型的差異」見 `mesher.ts` 的 `emitCrossQuads`。 */
 export type BlockShape = 'cube' | 'cross';
 
 /** Tool families. Only pickaxe/axe exist as items today (`ItemId` has no
@@ -110,6 +111,11 @@ const DEFS: Record<number, BlockDef> = {
   20: { id: 20, name: 'birch_leaves', hardness: 0.2, solid: true, transparent: true, shape: 'cube', top: T.BIRCH_LEAVES, side: T.BIRCH_LEAVES, bottom: T.BIRCH_LEAVES, requiredTool: null, fastTool: null },
   // B3 Task 4：花／草是 cross 型（不碰撞、不遮擋、硬度 0 → 徒手瞬破）；
   // 仙人掌與冰是滿格立方體（硬度 0.4／0.5 為原版數值）。
+  // 冰的 `transparent: true` 副作用（與玻璃同一級）：冰走**不透明 pass**，
+  // 材質沒有 `transparent`／`opacity` → **看不穿冰面**（冰面是不透明的淡藍白），
+  // 而且冰**不遮擋 AO**（鄰面不會因冰而變暗）、冰面**不會**被相鄰的不透明方塊
+  // 遮掉（`faceVisible` 只看鄰居是否透明）。若之後要做「半透明、可看穿」的冰，
+  // 需要獨立的透明 pass 或 `opacity` 材質 → 不在本批。
   21: { id: 21, name: 'dandelion', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
   22: { id: 22, name: 'poppy', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
   23: { id: 23, name: 'short_grass', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },
