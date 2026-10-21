@@ -146,7 +146,16 @@ export function treeExists(x: number, z: number, seed: number): boolean {
   return true;
 }
 
-/** 樹冠的一層：`dy` 是相對「樹幹頂端」的層數（負數在樹幹頂端之上）。 */
+/**
+ * 樹冠的一層。
+ *
+ * **統一慣例**：`dy` ＝ 相對「**樹幹頂端**」的偏移（格）。
+ * - `dy < 0` → 在樹幹頂端**之下**（葉層包住樹幹的上段）。
+ * - `dy = 0` → 與樹幹頂端同高。
+ * - `dy > 0` → 在樹幹頂端**之上**。
+ *
+ * 每一層是一個水平圓盤：半徑 `radius`，`skipCorners` 時去掉四角。
+ */
 export interface TreeLeafLayer {
   dy: number;
   radius: number;
@@ -167,14 +176,27 @@ const TRUNK_RANGE: Record<TreeSpecies, readonly [number, number]> = {
 };
 
 /**
- * 各樹種的葉形（計畫 §5）。
+ * 樹幹高度的變體數（0..2）。3 個變體映射到區間的「最小／中間／最大」，
+ * 區間有 4 個值時（雲杉 6–9）中間那個取較接近的一端 → **區間上限也抽得到**
+ * （雲杉的 9 不會變成不可達的值）。
+ */
+const TRUNK_VARIANTS = 3;
+
+/**
+ * 各樹種的葉形（計畫 §5；`dy` 的語意見 `TreeLeafLayer`）。
  *
- * - **橡木**：葉層 d ∈ [−2, +1]；d ≤ −1 半徑 2、d ≥ 0 半徑 1 且去掉四角
- *   （與舊的橡樹形狀完全一致 → 舊存檔裡種下的橡樹不會突然變形）。
- * - **白樺**：d = 0 半徑 1；d = 1, 2 半徑 2 但去掉四角 → 十字形，視覺較窄。
- * - **雲杉**：d = 0 半徑 0（尖端）；d = 1 半徑 1；d ≥ 2 半徑依 d 的奇偶
- *   （偶數 2、奇數 1）→ 層層收斂的錐形。層數（深度）§5 沒寫死，取 5 層
- *   （d = 0..4），寬窄交替是原版雲杉的經典層次感。
+ * - **橡木**（§5 明寫「既有形狀」→ **不得改動**）：葉層跨在樹幹頂端上下
+ *   （`dy ∈ [−2, +1]`）——`dy ≤ −1` 半徑 2（留角）、`dy ≥ 0` 半徑 1 去四角。
+ *   與舊的橡樹形狀逐格等價 → 舊存檔裡玩家種的橡樹不會突然變形。
+ * - **白樺**：樹冠**起於樹幹頂端**（`dy = 0`）往上三層，半徑由下而上
+ *   `2 → 2 → 1`（皆去四角）→ 十字形、**窄端在上**（視覺較窄）。
+ * - **雲杉**：樹冠**起於樹幹頂端**（`dy = 0`）往上五層，半徑由下而上
+ *   `2 → 1 → 2 → 1 → 0` → **最寬層在最下、尖端（半徑 0）在最頂端**，是原版
+ *   那種上尖下寬的錐形；寬窄交替是原版雲杉的經典層次感。
+ *
+ * （樹冠錨點：橡木因為是「既有形狀」而跨在樹幹頂端上下；白樺／雲杉採
+ * 「樹冠起於樹幹頂端、往上長」——這兩條都是規格沒寫死、由本批選定的規則，
+ * 已寫回計畫 §5。）
  */
 const LEAF_LAYERS: Record<TreeSpecies, readonly TreeLeafLayer[]> = {
   oak: [
@@ -184,16 +206,16 @@ const LEAF_LAYERS: Record<TreeSpecies, readonly TreeLeafLayer[]> = {
     { dy: 1, radius: 1, skipCorners: true },
   ],
   birch: [
-    { dy: 0, radius: 1, skipCorners: true },
+    { dy: 0, radius: 2, skipCorners: true },
     { dy: 1, radius: 2, skipCorners: true },
-    { dy: 2, radius: 2, skipCorners: true },
+    { dy: 2, radius: 1, skipCorners: true },
   ],
   spruce: [
-    { dy: 0, radius: 0, skipCorners: false },
+    { dy: 0, radius: 2, skipCorners: false },
     { dy: 1, radius: 1, skipCorners: false },
     { dy: 2, radius: 2, skipCorners: false },
     { dy: 3, radius: 1, skipCorners: false },
-    { dy: 4, radius: 2, skipCorners: false },
+    { dy: 4, radius: 0, skipCorners: false },
   ],
 };
 
@@ -205,9 +227,14 @@ const LEAF_LAYERS: Record<TreeSpecies, readonly TreeLeafLayer[]> = {
  */
 export function treeShape(species: TreeSpecies, variant: number): TreeShape {
   const [min, max] = TRUNK_RANGE[species];
-  const v = Number.isFinite(variant) ? Math.min(2, Math.max(0, Math.floor(variant))) : 0;
+  const v = Number.isFinite(variant)
+    ? Math.min(TRUNK_VARIANTS - 1, Math.max(0, Math.floor(variant)))
+    : 0;
   return {
-    trunkHeight: Math.min(max, min + v),
+    trunkHeight: Math.min(
+      max,
+      min + Math.round((v * (max - min)) / (TRUNK_VARIANTS - 1)),
+    ),
     leaves: LEAF_LAYERS[species].map((l) => ({ ...l })),
   };
 }
@@ -251,7 +278,9 @@ export function plantTrees(data: Uint8Array, cx: number, cz: number, seed: numbe
       // 樹幹：ground + 1 .. ground + 樹幹高度
       for (let t = 1; t <= shape.trunkHeight; t++) put(tx, ground + t, tz, logId);
 
-      // 樹冠：相對樹幹頂端（ground + 樹幹高度）的每一層
+      // 樹冠：每一層放在「樹幹頂端 + layer.dy」（dy 的語意見 `TreeLeafLayer`：
+      // 負數在樹幹頂端之下、正數在其上）。橡木跨在樹幹頂端上下；白樺／雲杉
+      // 起於樹幹頂端往上長（最寬層在下、尖端在上）。
       const top = ground + shape.trunkHeight;
       for (const layer of shape.leaves) {
         const y = top + layer.dy;

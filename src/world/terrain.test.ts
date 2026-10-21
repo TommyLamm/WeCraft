@@ -231,6 +231,32 @@ describe('generateChunk', () => {
         expect(count, `leaf ${key} written twice`).toBe(1);
       }
       expect(claimed.size).toBeGreaterThan(0);
+
+      // 更強的斷言：樹冠**每一格**都真的長出葉子（樹幹那一格除外）
+      // → 只斷言「兩塊都有葉子」抓不到「某一塊少寫了幾格」。
+      const cellAt = (x: number, y: number, z: number): number => {
+        const inLeftCell = x < borderX;
+        const data = inLeftCell ? left : right;
+        const baseX = inLeftCell ? 24 * CHUNK_SIZE : borderX;
+        return data[chunkIndex(x - baseX, y, z)];
+      };
+      let expectedLeaves = 0;
+      for (const layer of shape.leaves) {
+        const y = t.top + layer.dy;
+        const r = layer.radius;
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dz = -r; dz <= r; dz++) {
+            if (layer.skipCorners && Math.abs(dx) === r && Math.abs(dz) === r) continue;
+            if (dx === 0 && dz === 0) continue; // 樹幹那一格是原木
+            expectedLeaves++;
+            expect(
+              cellAt(t.wx + dx, y, t.wz + dz),
+              `canopy cell ${t.wx + dx},${y},${t.wz + dz} is not a leaf`,
+            ).toBe(leavesId);
+          }
+        }
+      }
+      expect(expectedLeaves, `tree ${t.wx},${t.wz} canopy size`).toBeGreaterThan(0);
     }
   });
 
