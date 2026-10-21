@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { surfaceHeight, SEA_LEVEL, biomeAt, type Biome } from './terrain';
+import { treeExists } from './trees';
 
 // 取樣設定（之後所有統計測試共用；寫在檔頂端的 helper 區）
 const SEED = 1337;
@@ -128,4 +129,98 @@ describe('worldgen biome statistics', () => {
       },
     );
   }
+});
+
+// ---- B3 Task 3：樹密度 ----
+
+/**
+ * 樹密度的取樣區：**連續 1024×1024 格**（不是跨距取樣——樹距規則是
+ * 鄰域性質，跨距取樣會把鄰居關係抽掉）。與計畫 §5 的實測值同一區域。
+ */
+const TREE_SAMPLE_SIZE = 1024;
+
+/** 每個生態的樹棵數與柱數（模組層級記憶化 → 9 個案例共用同一份結果）。 */
+interface TreeStats {
+  trees: number;
+  columns: number;
+}
+let treeStats: Map<Biome, TreeStats> | null = null;
+function sampledTreeStats(): Map<Biome, TreeStats> {
+  if (treeStats) return treeStats;
+  const stats = new Map<Biome, TreeStats>();
+  // 逐列掃描（z 外層、x 內層）→ 鄰域查詢的工作集只有 5 列，
+  // terrain-noise 的逐欄位快取不會被衝掉。
+  for (let z = 0; z < TREE_SAMPLE_SIZE; z++) {
+    for (let x = 0; x < TREE_SAMPLE_SIZE; x++) {
+      const biome = biomeAt(x, z, SEED);
+      let s = stats.get(biome);
+      if (!s) {
+        s = { trees: 0, columns: 0 };
+        stats.set(biome, s);
+      }
+      s.columns++;
+      if (treeExists(x, z, SEED)) s.trees++;
+    }
+  }
+  treeStats = stats;
+  return stats;
+}
+
+/** 某個生態的樹密度：樹棵數 ÷ 該生態的柱數 × 256（256 柱 = 一個 16×16 區塊的面積）。 */
+function treeDensity(biome: Biome): number {
+  const s = sampledTreeStats().get(biome);
+  if (!s || s.columns === 0) return 0;
+  return (s.trees / s.columns) * 256;
+}
+
+/**
+ * 樹密度的容差（計畫 §5；實測值＝同一區域、同一規則重算的結果）。
+ *
+ * 門檻是「釘死種子 1337 的實測值 ± 容差」，不是「看起來差不多」：
+ * 實測值 plains 0.116／forest 6.96／birch_forest 9.02／taiga 6.41／
+ * snowy_plains 0.054／mountains 0.365；沙漠與海洋 0。
+ */
+const TREE_DENSITY_TOLERANCE: ReadonlyArray<readonly [Biome, number, number]> = [
+  ['plains', 0.05, 0.25],
+  ['forest', 5.5, 8.5],
+  ['birch_forest', 7.5, 10.5],
+  ['taiga', 5.0, 7.5],
+  ['snowy_plains', 0, 0.15],
+  ['mountains', 0.2, 1.2],
+  ['desert', 0, 0],
+  ['ocean', 0, 0],
+];
+
+describe('worldgen tree density statistics', () => {
+  for (const [biome, min, max] of TREE_DENSITY_TOLERANCE) {
+    it(
+      `the ${biome} tree density stays inside ${min}–${max} per 256 columns`,
+      { timeout: 120000 },
+      () => {
+        const density = treeDensity(biome);
+        expect(density, `${biome} tree density`).toBeGreaterThanOrEqual(min);
+        expect(density, `${biome} tree density`).toBeLessThanOrEqual(max);
+      },
+    );
+  }
+
+  it(
+    'every biome in the sampled region actually appears (the density table is not vacuous)',
+    { timeout: 120000 },
+    () => {
+      const stats = sampledTreeStats();
+      for (const biome of [
+        'plains',
+        'forest',
+        'birch_forest',
+        'taiga',
+        'snowy_plains',
+        'mountains',
+        'desert',
+        'ocean',
+      ] as const) {
+        expect(stats.get(biome)?.columns ?? 0, biome).toBeGreaterThan(0);
+      }
+    },
+  );
 });

@@ -469,4 +469,12 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.AIR)).toBeNull();
     expect(dropItemFor(BLOCK.WATER)).toBeNull();
   });
+
+  // B3 Task 3：本批釘死雲杉／白樺的掉落規則（原木掉自身、葉子不掉）
+  it('the new wood blocks drop themselves; their leaves drop nothing', () => {
+    expect(dropItemFor(BLOCK.SPRUCE_LOG)).toBe('spruce_log');
+    expect(dropItemFor(BLOCK.BIRCH_LOG)).toBe('birch_log');
+    expect(dropItemFor(BLOCK.SPRUCE_LEAVES)).toBeNull();
+    expect(dropItemFor(BLOCK.BIRCH_LEAVES)).toBeNull();
+  });
 });

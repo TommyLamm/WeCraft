@@ -64,7 +64,7 @@ export interface DropEntity {
  *    furnace recipe and the stone_age advancement were unreachable);
  *  - grass → `dirt` (vanilla: the grass block itself needs silk touch);
  *  - leaves/glass/snow → null (silk-touch-only drops; no shears/silk touch
- *    in this game).
+ *    in this game); the B3 spruce/birch leaves behave exactly like oak leaves.
  *  Null also when the block has no item form at all (air, water) → nothing
  *  spawns. */
 export function dropItemFor(blockId: number): ItemId | null {
@@ -72,7 +72,16 @@ export function dropItemFor(blockId: number): ItemId | null {
   if (blockId === BLOCK.IRON_ORE) return 'raw_iron';
   if (blockId === BLOCK.STONE) return 'cobblestone';
   if (blockId === BLOCK.GRASS) return 'dirt';
-  if (blockId === BLOCK.LEAVES || blockId === BLOCK.GLASS || blockId === BLOCK.SNOW) return null;
+  if (
+    blockId === BLOCK.LEAVES ||
+    blockId === BLOCK.GLASS ||
+    blockId === BLOCK.SNOW ||
+    blockId === BLOCK.SPRUCE_LEAVES ||
+    blockId === BLOCK.BIRCH_LEAVES
+  ) {
+    return null;
+  }
+  // 原木走既有的 itemFromBlock fallback → 掉自身（'spruce_log'／'birch_log'）
   return itemFromBlock(blockId);
 }
 

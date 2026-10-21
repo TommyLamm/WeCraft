@@ -166,6 +166,46 @@ export function drawAtlas(): AtlasImage {
     const c = vary([125, 125, 125, 255], r, 20);
     return [clamp255(c[0] + v), clamp255(c[1] + v), clamp255(c[2] + v), 255];
   }); // furnace_side
+  // ---- B3 Task 3: spruce / birch ----
+  put(21, (x, _y, r) => {
+    // spruce_log_side: dark brown with vertical dark stripes
+    const stripe = x % 4 === 0 ? -26 : 0;
+    const c = vary([64, 48, 32, 255], r, 14);
+    return [clamp255(c[0] + stripe), clamp255(c[1] + stripe), clamp255(c[2] + stripe), 255];
+  }); // spruce_log_side
+  put(22, (x, y, r) => {
+    // spruce_log_top: concentric growth rings (dark brown)
+    const dx = x - 7.5;
+    const dy = y - 7.5;
+    const ring = Math.floor(Math.sqrt(dx * dx + dy * dy)) % 2 === 0 ? 16 : -12;
+    const c = vary([78, 58, 38, 255], r, 12);
+    return [clamp255(c[0] + ring), clamp255(c[1] + ring), clamp255(c[2] + ring), 255];
+  }); // spruce_log_top
+  put(23, (_x, _y, r) => {
+    // spruce_leaves: dark green with 18% transparent holes (like oak leaves)
+    if (r() < 0.18) return [0, 0, 0, 0];
+    return vary([46, 96, 40, 255], r, 34);
+  }); // spruce_leaves
+  put(24, (x, y, r) => {
+    // birch_log_side: pale bark + horizontal black dashes (one every ~5 rows)
+    const band = y % 5;
+    const dash = (band === 2 || band === 3) && (x + (y % 3) * 5) % 7 < 4 ? -150 : 0;
+    const c = vary([216, 214, 206, 255], r, 10);
+    return [clamp255(c[0] + dash), clamp255(c[1] + dash), clamp255(c[2] + dash), 255];
+  }); // birch_log_side
+  put(25, (x, y, r) => {
+    // birch_log_top: pale growth rings
+    const dx = x - 7.5;
+    const dy = y - 7.5;
+    const ring = Math.floor(Math.sqrt(dx * dx + dy * dy)) % 2 === 0 ? 14 : -10;
+    const c = vary([214, 206, 182, 255], r, 10);
+    return [clamp255(c[0] + ring), clamp255(c[1] + ring), clamp255(c[2] + ring), 255];
+  }); // birch_log_top
+  put(26, (_x, _y, r) => {
+    // birch_leaves: light green with 18% transparent holes (like oak leaves)
+    if (r() < 0.18) return [0, 0, 0, 0];
+    return vary([126, 168, 84, 255], r, 34);
+  }); // birch_leaves
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

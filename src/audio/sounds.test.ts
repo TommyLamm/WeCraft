@@ -28,6 +28,11 @@ describe('materialGroup', () => {
       [BLOCK.IRON_ORE]: 'stone',
       [BLOCK.CRAFTING_TABLE]: 'wood',
       [BLOCK.FURNACE]: 'stone',
+      // B3 Task 3：雲杉／白樺（未登記者會落到預設 'dirt' 音）
+      [BLOCK.SPRUCE_LOG]: 'wood',
+      [BLOCK.SPRUCE_LEAVES]: 'leaves',
+      [BLOCK.BIRCH_LOG]: 'wood',
+      [BLOCK.BIRCH_LEAVES]: 'leaves',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

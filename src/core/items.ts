@@ -12,7 +12,11 @@ export type ItemId =
   // Blocks that exist in world/blocks.ts today but were missing from the plan's
   // union — without them the creative hotbar/palette can't represent them
   // (plan requirement: "union covers blocks" + keep existing behavior working).
-  | 'oak_leaves' | 'snow_block' | 'bedrock';
+  | 'oak_leaves' | 'snow_block' | 'bedrock'
+  // B3 Task 3: spruce/birch blocks (the three-tree-species batch). They land
+  // WITH their item forms — the "every block maps to an item" invariant below
+  // is the guard that forced it.
+  | 'spruce_log' | 'spruce_leaves' | 'birch_log' | 'birch_leaves';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -29,9 +33,10 @@ const ITEM_IDS: Record<ItemId, true> = {
   wooden_sword: true, stone_sword: true, iron_sword: true,
   arrow: true, apple: true,
   oak_leaves: true, snow_block: true, bedrock: true,
+  spruce_log: true, spruce_leaves: true, birch_log: true, birch_leaves: true,
 };
 
-/** Every ItemId, canonically (32 today). */
+/** Every ItemId, canonically (36 today). */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }
@@ -56,6 +61,10 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['bedrock', BLOCK.BEDROCK],
   ['crafting_table', BLOCK.CRAFTING_TABLE],
   ['furnace', BLOCK.FURNACE],
+  ['spruce_log', BLOCK.SPRUCE_LOG],
+  ['spruce_leaves', BLOCK.SPRUCE_LEAVES],
+  ['birch_log', BLOCK.BIRCH_LOG],
+  ['birch_leaves', BLOCK.BIRCH_LEAVES],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

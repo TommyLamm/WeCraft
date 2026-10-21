@@ -12,6 +12,7 @@ import {
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 import { temperature, moisture } from './terrain-noise';
+import { treeShape, type TreeSpecies } from './trees';
 
 // 生成器無關的掃描範圍：種子 1337 底下，世界座標 (0,0)–(63,63) 共 4×4 個區塊。
 // 舊測試把「哪一塊是沙地／哪一塊是水」寫死成座標，新生成器的地形本來就不同
@@ -31,12 +32,28 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-// Topmost terrain block, ignoring water and tree blocks (logs/leaves).
+// Topmost terrain block, ignoring water and tree blocks (logs/leaves of all
+// three species — B3 Task 3 added spruce/birch logs and leaves).
+const TREE_BLOCKS: ReadonlySet<number> = new Set([
+  BLOCK.LOG,
+  BLOCK.LEAVES,
+  BLOCK.SPRUCE_LOG,
+  BLOCK.SPRUCE_LEAVES,
+  BLOCK.BIRCH_LOG,
+  BLOCK.BIRCH_LEAVES,
+]);
+
+/** 所有樹種的原木 id（B3 Task 3：橡木／雲杉／白樺）。 */
+const LOG_BLOCKS: ReadonlySet<number> = new Set([
+  BLOCK.LOG,
+  BLOCK.SPRUCE_LOG,
+  BLOCK.BIRCH_LOG,
+]);
+
 function topTerrainY(c: Uint8Array, lx: number, lz: number): number {
   for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
     const id = c[chunkIndex(lx, y, lz)];
-    if (id !== BLOCK.AIR && id !== BLOCK.WATER && id !== BLOCK.LOG && id !== BLOCK.LEAVES)
-      return y;
+    if (id !== BLOCK.AIR && id !== BLOCK.WATER && !TREE_BLOCKS.has(id)) return y;
   }
   return -1;
 }
@@ -106,7 +123,8 @@ describe('generateChunk', () => {
             if (c[chunkIndex(x, groundY, z)] !== BLOCK.SAND) continue;
             sandColumns++;
             for (let y = groundY + 1; y < CHUNK_HEIGHT; y++) {
-              if (c[chunkIndex(x, y, z)] === BLOCK.LOG) logsAboveSand++;
+              // 三種樹的原木都要查（樹種無關）
+              if (LOG_BLOCKS.has(c[chunkIndex(x, y, z)])) logsAboveSand++;
             }
           }
         }
@@ -130,44 +148,89 @@ describe('generateChunk', () => {
 
   it('tree canopies are not clipped at chunk borders', () => {
     const seed = 1337;
-    const left = generateChunk(0, 0, seed);
-    const right = generateChunk(1, 0, seed);
+    // 邊界帶（世界座標 x ∈ [398,401]）在 chunk (24,0)／(25,0) 之間；
+    // 種子 1337 底下該帶有 3 棵橡木：(400,5)、(401,8)、(400,12)。
+    // （舊寫法用 chunk (0,0)/(1,0)，但那兩塊在這個生成器底下完全沒有樹。）
+    const left = generateChunk(24, 0, seed);
+    const right = generateChunk(25, 0, seed);
+    const borderX = 25 * CHUNK_SIZE; // world x = 400
 
-    // Trunk columns whose radius-2 canopy crosses the x=16 chunk border.
-    const trunks: { wx: number; wz: number; top: number }[] = [];
-    for (let wx = CHUNK_SIZE - 2; wx <= CHUNK_SIZE + 1; wx++) {
-      const c = wx < CHUNK_SIZE ? left : right;
-      const lx = wx % CHUNK_SIZE;
-      for (let wz = 0; wz < CHUNK_SIZE; wz++) {
-        let topLog = -1;
-        for (let y = 0; y < CHUNK_HEIGHT; y++) {
-          if (c[chunkIndex(lx, y, wz)] === BLOCK.LOG && y > topLog) topLog = y;
+    // 樹幹的原木 id → 該樹種的葉子 id（樹種無關：橡木／雲杉／白樺）
+    const leavesOf = (logId: number): number => {
+      if (logId === BLOCK.LOG) return BLOCK.LEAVES;
+      if (logId === BLOCK.SPRUCE_LOG) return BLOCK.SPRUCE_LEAVES;
+      if (logId === BLOCK.BIRCH_LOG) return BLOCK.BIRCH_LEAVES;
+      return -1;
+    };
+    const speciesOf = (logId: number): TreeSpecies => {
+      if (logId === BLOCK.SPRUCE_LOG) return 'spruce';
+      if (logId === BLOCK.BIRCH_LOG) return 'birch';
+      return 'oak';
+    };
+
+    const trunks: { wx: number; wz: number; top: number; logId: number }[] = [];
+    for (const [wx, wz] of [
+      [400, 5],
+      [401, 8],
+      [400, 12],
+    ] as const) {
+      const inLeft = wx < borderX;
+      const c = inLeft ? left : right;
+      const lx = wx - (inLeft ? 24 * CHUNK_SIZE : borderX);
+      let top = -1;
+      let logId = -1;
+      for (let y = 0; y < CHUNK_HEIGHT; y++) {
+        const id = c[chunkIndex(lx, y, wz)];
+        if (leavesOf(id) === -1) continue;
+        if (y > top) {
+          top = y;
+          logId = id;
         }
-        if (topLog >= 0) trunks.push({ wx, wz, top: topLog });
       }
+      // 樹幹必須出現在兩塊的其中一側
+      expect(top, `trunk at ${wx},${wz}`).toBeGreaterThan(0);
+      trunks.push({ wx, wz, top, logId });
     }
     expect(trunks.length).toBeGreaterThan(0);
 
     for (const t of trunks) {
+      const leavesId = leavesOf(t.logId);
+      // 樹冠的垂直範圍由**該樹種的樹形**決定（不是寫死橡木的 −2..+1）
+      const shape = treeShape(speciesOf(t.logId), 0);
+      const dyMin = Math.min(...shape.leaves.map((l) => l.dy));
+      const dyMax = Math.max(...shape.leaves.map((l) => l.dy));
       let ownSideLeaves = 0;
       let otherSideLeaves = 0;
-      const trunkOnLeft = t.wx < CHUNK_SIZE;
-      for (let x = t.wx - 2; x <= t.wx + 2; x++) {
-        if (x < 0 || x >= CHUNK_SIZE * 2) continue;
-        const c = x < CHUNK_SIZE ? left : right;
-        const lx = x % CHUNK_SIZE;
-        for (let y = t.top - 2; y <= t.top + 1; y++) {
-          if (y < 0 || y >= CHUNK_HEIGHT) continue;
-          for (let z = t.wz - 2; z <= t.wz + 2; z++) {
-            if (z < 0 || z >= CHUNK_SIZE) continue;
-            if (c[chunkIndex(lx, y, z)] !== BLOCK.LEAVES) continue;
-            if (x < CHUNK_SIZE === trunkOnLeft) ownSideLeaves++;
-            else otherSideLeaves++;
+      const trunkOnLeft = t.wx < borderX;
+      const claimed = new Map<string, number>();
+      for (const [data, baseX] of [
+        [left, 24 * CHUNK_SIZE],
+        [right, borderX],
+      ] as const) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const x = baseX + lx;
+          if (x < t.wx - 2 || x > t.wx + 2) continue;
+          for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+            const z = lz;
+            if (z < t.wz - 2 || z > t.wz + 2) continue;
+            for (let y = t.top + dyMin; y <= t.top + dyMax; y++) {
+              if (data[chunkIndex(lx, y, lz)] !== leavesId) continue;
+              const key = `${x},${y},${z}`;
+              claimed.set(key, (claimed.get(key) ?? 0) + 1);
+              if (x < borderX === trunkOnLeft) ownSideLeaves++;
+              else otherSideLeaves++;
+            }
           }
         }
       }
-      expect(ownSideLeaves).toBeGreaterThan(0);
-      expect(otherSideLeaves).toBeGreaterThan(0);
+      // 兩側都要有葉子 → 樹冠沒有被切斷
+      expect(ownSideLeaves, `tree ${t.wx},${t.wz} own side`).toBeGreaterThan(0);
+      expect(otherSideLeaves, `tree ${t.wx},${t.wz} other side`).toBeGreaterThan(0);
+      // 同一格葉子只出現在其中一塊（不重複寫）
+      for (const [key, count] of claimed) {
+        expect(count, `leaf ${key} written twice`).toBe(1);
+      }
+      expect(claimed.size).toBeGreaterThan(0);
     }
   });
 

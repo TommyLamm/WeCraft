@@ -44,6 +44,11 @@ describe('blocks', () => {
       [BLOCK.FURNACE, 3.5],
       [BLOCK.BEDROCK, Infinity],
       [BLOCK.WATER, Infinity],
+      // B3 Task 3 新增的三樹種（雲杉／白樺）：數值與既有橡木一致
+      [BLOCK.SPRUCE_LOG, 2.0],
+      [BLOCK.SPRUCE_LEAVES, 0.2],
+      [BLOCK.BIRCH_LOG, 2.0],
+      [BLOCK.BIRCH_LEAVES, 0.2],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -71,6 +76,11 @@ describe('blocks', () => {
       [BLOCK.IRON_ORE, { kind: 'pickaxe', level: 1 }, 'pickaxe'],
       [BLOCK.CRAFTING_TABLE, null, 'axe'],
       [BLOCK.FURNACE, { kind: 'pickaxe', level: 0 }, 'pickaxe'],
+      // B3 Task 3 新增的三樹種：原木用斧頭、葉子不用工具
+      [BLOCK.SPRUCE_LOG, null, 'axe'],
+      [BLOCK.SPRUCE_LEAVES, null, null],
+      [BLOCK.BIRCH_LOG, null, 'axe'],
+      [BLOCK.BIRCH_LEAVES, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -132,5 +142,56 @@ describe('blocks', () => {
     expect(def.bottom).toBe(getBlockDef(BLOCK.STONE).top); // stone bottom
     expect(def.top).not.toBe(def.side); // mouth top vs door side
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.FURNACE); // palette/creative only, not starter
+  });
+
+  // B3 Task 3：新增雲杉／白樺方塊。id 只能往後追加——舊存檔的 `modified`
+  // 記的是數字 id，重編號會讓舊存檔的方塊全部變形。
+  it('the new wood blocks keep their ids and vanilla hardness', () => {
+    expect(BLOCK.SPRUCE_LOG).toBe(17);
+    expect(BLOCK.SPRUCE_LEAVES).toBe(18);
+    expect(BLOCK.BIRCH_LOG).toBe(19);
+    expect(BLOCK.BIRCH_LEAVES).toBe(20);
+
+    expect(getBlockDef(BLOCK.SPRUCE_LOG).hardness).toBe(2.0);
+    expect(getBlockDef(BLOCK.SPRUCE_LEAVES).hardness).toBe(0.2);
+    expect(getBlockDef(BLOCK.BIRCH_LOG).hardness).toBe(2.0);
+    expect(getBlockDef(BLOCK.BIRCH_LEAVES).hardness).toBe(0.2);
+
+    // 原木不透明、葉子半透明（與既有橡木一致）
+    expect(isTransparent(BLOCK.SPRUCE_LEAVES)).toBe(true);
+    expect(isTransparent(BLOCK.BIRCH_LEAVES)).toBe(true);
+    expect(isTransparent(BLOCK.SPRUCE_LOG)).toBe(false);
+    expect(isTransparent(BLOCK.BIRCH_LOG)).toBe(false);
+    expect(isSolid(BLOCK.SPRUCE_LOG)).toBe(true);
+    expect(isSolid(BLOCK.BIRCH_LEAVES)).toBe(true);
+
+    // 物品形式在本批補上 → 四個新方塊都可放（創造清單以 PLACEABLE 為 Palette）
+    for (const id of [BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES, BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES]) {
+      expect(PLACEABLE, `block ${id} is not placeable`).toContain(id);
+    }
+    // 各自的正面／側面／頂面 tile 不可共用（否則三種木頭看起來一樣）
+    expect(getBlockDef(BLOCK.SPRUCE_LOG).side).not.toBe(getBlockDef(BLOCK.BIRCH_LOG).side);
+    expect(getBlockDef(BLOCK.SPRUCE_LEAVES).side).not.toBe(getBlockDef(BLOCK.BIRCH_LEAVES).side);
+  });
+
+  it('existing block ids are unchanged', () => {
+    // 既有 0–16 的 id 不得重編（舊存檔靠數字 id 認方塊）
+    expect(BLOCK.AIR).toBe(0);
+    expect(BLOCK.STONE).toBe(1);
+    expect(BLOCK.DIRT).toBe(2);
+    expect(BLOCK.GRASS).toBe(3);
+    expect(BLOCK.SAND).toBe(4);
+    expect(BLOCK.LOG).toBe(5);
+    expect(BLOCK.LEAVES).toBe(6);
+    expect(BLOCK.PLANKS).toBe(7);
+    expect(BLOCK.COBBLE).toBe(8);
+    expect(BLOCK.WATER).toBe(9);
+    expect(BLOCK.BEDROCK).toBe(10);
+    expect(BLOCK.SNOW).toBe(11);
+    expect(BLOCK.GLASS).toBe(12);
+    expect(BLOCK.COAL_ORE).toBe(13);
+    expect(BLOCK.IRON_ORE).toBe(14);
+    expect(BLOCK.CRAFTING_TABLE).toBe(15);
+    expect(BLOCK.FURNACE).toBe(16);
   });
 });

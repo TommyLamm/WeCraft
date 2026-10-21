@@ -2,6 +2,7 @@ import { Noise, hash2 } from '../core/noise';
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 import { SEA_LEVEL, surfaceHeight, temperature, moisture } from './terrain-noise';
+import { plantTrees } from './trees';
 
 // 高度與海平面改由 terrain-noise 提供（多層噪音：海陸／侵蝕／山脊），
 // 這裡只做轉出，既有 import 路徑（`./world/terrain`）不變。
@@ -213,46 +214,3 @@ export function generateChunk(cx: number, cz: number, seed: number): Uint8Array 
   return data;
 }
 
-function plantTrees(data: Uint8Array, cx: number, cz: number, seed: number): void {
-  const baseX = cx * CHUNK_SIZE;
-  const baseZ = cz * CHUNK_SIZE;
-
-  // Halo of 2 covers the radius-2 canopy of bases just outside the chunk,
-  // so canopies are written by the chunk that owns each cell (deterministic).
-  for (let tz = -2; tz < CHUNK_SIZE + 2; tz++) {
-    for (let tx = -2; tx < CHUNK_SIZE + 2; tx++) {
-      const wx = baseX + tx;
-      const wz = baseZ + tz;
-      const h = hash2(wx, wz, seed ^ 0xabc123);
-      if (h % 100 >= 6) continue;
-
-      const ground = surfaceHeight(wx, wz, seed);
-      if (ground <= OCEAN_MAX_HEIGHT) continue; // 海洋（含沙灘）不長樹
-
-      // 生物群系取樣與 `generateChunk`／`biomeAt` 同一條路徑（terrain-noise 的氣候場）
-      const biome = biomeOfColumn(wx, wz, seed, ground);
-      if (biome === 'desert') continue; // 沙漠不長樹
-
-      const trunkH = 4 + (h % 3);
-      const put = (x: number, y: number, z: number, id: number) => {
-        if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return;
-        if (y < 0 || y >= CHUNK_HEIGHT) return;
-        const i = chunkIndex(x, y, z);
-        if (data[i] === BLOCK.AIR) data[i] = id;
-      };
-
-      for (let t = 1; t <= trunkH; t++) put(tx, ground + t, tz, BLOCK.LOG);
-
-      const top = ground + trunkH;
-      for (let dy = -2; dy <= 1; dy++) {
-        const r = dy <= -1 ? 2 : 1;
-        for (let dx = -r; dx <= r; dx++) {
-          for (let dz = -r; dz <= r; dz++) {
-            if (Math.abs(dx) === r && Math.abs(dz) === r && dy >= 0) continue;
-            put(tx + dx, top + dy, tz + dz, BLOCK.LEAVES);
-          }
-        }
-      }
-    }
-  }
-}

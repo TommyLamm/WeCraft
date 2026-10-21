@@ -312,10 +312,30 @@ describe('buildTextureArray', () => {
     expect(glass).not.toEqual(MAGENTA);
     // the first empty layer (TILE_COUNT) + deeper ones never drawn → magenta debug fill
     // (alphaTest-proof)
-    for (const layer of [TILE_COUNT, 32, 47, 63]) {
+    // 洋紅除錯色只存在於「未畫」的層；用 TILE_COUNT 起算，不要寫死層號
+    // （B3 Task 3 的唯一修復點：之後 TILE_COUNT 變化都自動適應）
+    for (const layer of [TILE_COUNT, TILE_COUNT + 1, 47, 63]) {
       for (const [x, y] of [[0, 0], [8, 8], [15, 15]] as const) {
         expect(layerPixel(tex, layer, x, y), `layer ${layer} px ${x},${y}`).toEqual(MAGENTA);
       }
+    }
+  });
+
+  it('every declared tile is painted (never the magenta debug layer)', () => {
+    // 斷言寫在「紋理陣列層」而不是 atlas：洋紅除錯色在 buildTextureArray()
+    // 沒被畫到的層；atlas 裡沒畫的區域是全 0 的透明像素 → 用 atlas 判斷會
+    // 「任何 tile 都通過」，等於沒有測試。
+    const data = buildTextureArray().image.data as Uint8Array;
+    for (let t = 0; t < TILE_COUNT; t++) {
+      let magenta = 0;
+      let painted = 0;
+      for (let p = 0; p < TILE_PX * TILE_PX; p++) {
+        const i = (t * TILE_PX * TILE_PX + p) * 4;
+        if (data[i] === 255 && data[i + 1] === 0 && data[i + 2] === 255) magenta++;
+        if (data[i + 3] > 0) painted++;
+      }
+      expect(magenta, `tile ${t} magenta`).toBeLessThan(TILE_PX * TILE_PX);
+      expect(painted, `tile ${t} painted`).toBeGreaterThan(0);
     }
   });
 });

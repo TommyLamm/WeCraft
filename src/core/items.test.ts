@@ -18,6 +18,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'grass', 'dirt', 'stone', 'cobblestone', 'oak_log', 'oak_planks',
   'sand', 'gravel', 'glass', 'coal_ore', 'iron_ore',
   'crafting_table', 'furnace', 'chest',
+  // B3 Task 3：雲杉／白樺的方塊物品形式（隨三樹種一起補上）
+  'spruce_log', 'spruce_leaves', 'birch_log', 'birch_leaves',
 ];
 const TOOL_ITEMS: ItemId[] = [
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
@@ -34,7 +36,8 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    expect(ALL_ITEMS.length).toBe(32);
+    // B3 Task 3：基數 32 → 36（新增 4 個雲杉／白樺方塊的物品形式）
+    expect(ALL_ITEMS.length).toBe(36);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
     for (const id of Object.values(BLOCK)) {
@@ -43,8 +46,8 @@ describe('items', () => {
     }
   });
 
-  it('ALL_ITEM_IDS is the canonical list: 32 entries, no dupes, same set as the union', () => {
-    expect(ALL_ITEM_IDS.length).toBe(32);
+  it('ALL_ITEM_IDS is the canonical list: 36 entries, no dupes, same set as the union', () => {
+    expect(ALL_ITEM_IDS.length).toBe(36);
     expect(new Set(ALL_ITEM_IDS).size).toBe(ALL_ITEM_IDS.length);
     // Same membership as the test's own hand-maintained union mirror — the
     // Record<ItemId, true> source makes drift a tsc error (Minor 5).
@@ -75,6 +78,22 @@ describe('items', () => {
     expect(blockFromItem('furnace')).toBe(BLOCK.FURNACE); // Task 6 block pair
     expect(blockFromItem('chest')).toBeNull(); // no chest block yet
     expect(blockFromItem('iron_pickaxe')).toBeNull(); // tools are not blocks
+  });
+
+  // B3 Task 3：雲杉／白樺方塊的物品形式（隨三樹種一起補上）
+  it('the new wood blocks have an item form in both directions', () => {
+    expect(itemFromBlock(BLOCK.SPRUCE_LOG)).toBe('spruce_log');
+    expect(itemFromBlock(BLOCK.SPRUCE_LEAVES)).toBe('spruce_leaves');
+    expect(itemFromBlock(BLOCK.BIRCH_LOG)).toBe('birch_log');
+    expect(itemFromBlock(BLOCK.BIRCH_LEAVES)).toBe('birch_leaves');
+    expect(blockFromItem('spruce_log')).toBe(BLOCK.SPRUCE_LOG);
+    expect(blockFromItem('spruce_leaves')).toBe(BLOCK.SPRUCE_LEAVES);
+    expect(blockFromItem('birch_log')).toBe(BLOCK.BIRCH_LOG);
+    expect(blockFromItem('birch_leaves')).toBe(BLOCK.BIRCH_LEAVES);
+    // 物品可以堆疊（方塊物品都是 64）
+    expect(maxStack('spruce_log')).toBe(64);
+    expect(maxStack('birch_leaves')).toBe(64);
+    expect(stackFromBlock(BLOCK.BIRCH_LOG)).toEqual({ item: 'birch_log', count: 64 });
   });
 
   it('stackName title-cases item ids', () => {

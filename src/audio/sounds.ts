@@ -41,6 +41,11 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.LEAVES]: 'leaves',
   [BLOCK.GLASS]: 'glass',
   [BLOCK.WATER]: 'water',
+  // B3 Task 3：雲杉／白樺（未登記者會落到預設 'dirt' 音）
+  [BLOCK.SPRUCE_LOG]: 'wood',
+  [BLOCK.SPRUCE_LEAVES]: 'leaves',
+  [BLOCK.BIRCH_LOG]: 'wood',
+  [BLOCK.BIRCH_LEAVES]: 'leaves',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

@@ -16,6 +16,12 @@ export const BLOCK = {
   IRON_ORE: 14,
   CRAFTING_TABLE: 15,
   FURNACE: 16,
+  // B3 Task 3：三樹種（橡木／雲杉／白樺）。id 只能往後追加——舊存檔的
+  // `modified` 記的是數字 id，重編號會讓舊存檔的方塊全部變形。
+  SPRUCE_LOG: 17,
+  SPRUCE_LEAVES: 18,
+  BIRCH_LOG: 19,
+  BIRCH_LEAVES: 20,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -49,13 +55,16 @@ const T = {
   COAL: 15, IRON: 16,
   CRAFTING_TOP: 17, CRAFTING_SIDE: 18,
   FURNACE_TOP: 19, FURNACE_SIDE: 20,
+  // B3 Task 3：雲杉／白樺的六個 tile（跨批編號：B3 用 21–26）
+  SPRUCE_LOG_SIDE: 21, SPRUCE_LOG_TOP: 22, SPRUCE_LEAVES: 23,
+  BIRCH_LOG_SIDE: 24, BIRCH_LOG_TOP: 25, BIRCH_LEAVES: 26,
 } as const;
 
-/** Tiles `T` defines (0..TILE_COUNT-1) — `FURNACE_SIDE` is the highest tile.
+/** Tiles `T` defines (0..TILE_COUNT-1) — `BIRCH_LEAVES` is the highest tile.
  *  drawAtlas paints exactly these; the texture array fills every layer past
  *  them with the magenta debug color, so adding a tile to T without drawing it
  *  fails loudly instead of silently sampling magenta in-game. */
-export const TILE_COUNT = T.FURNACE_SIDE + 1;
+export const TILE_COUNT = T.BIRCH_LEAVES + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -79,6 +88,11 @@ const DEFS: Record<number, BlockDef> = {
   14: { id: 14, name: 'iron_ore', hardness: 3.0, solid: true, transparent: false, top: T.IRON, side: T.IRON, bottom: T.IRON, requiredTool: { kind: 'pickaxe', level: 1 }, fastTool: 'pickaxe' },
   15: { id: 15, name: 'crafting_table', hardness: 2.5, solid: true, transparent: false, top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
   16: { id: 16, name: 'furnace', hardness: 3.5, solid: true, transparent: false, top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
+  // B3 Task 3：雲杉／白樺。硬度沿用原版數值（與既有橡木一致）。
+  17: { id: 17, name: 'spruce_log', hardness: 2.0, solid: true, transparent: false, top: T.SPRUCE_LOG_TOP, side: T.SPRUCE_LOG_SIDE, bottom: T.SPRUCE_LOG_TOP, requiredTool: null, fastTool: 'axe' },
+  18: { id: 18, name: 'spruce_leaves', hardness: 0.2, solid: true, transparent: true, top: T.SPRUCE_LEAVES, side: T.SPRUCE_LEAVES, bottom: T.SPRUCE_LEAVES, requiredTool: null, fastTool: null },
+  19: { id: 19, name: 'birch_log', hardness: 2.0, solid: true, transparent: false, top: T.BIRCH_LOG_TOP, side: T.BIRCH_LOG_SIDE, bottom: T.BIRCH_LOG_TOP, requiredTool: null, fastTool: 'axe' },
+  20: { id: 20, name: 'birch_leaves', hardness: 0.2, solid: true, transparent: true, top: T.BIRCH_LEAVES, side: T.BIRCH_LEAVES, bottom: T.BIRCH_LEAVES, requiredTool: null, fastTool: null },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -92,6 +106,8 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLE, BLOCK.PLANKS,
   BLOCK.LOG, BLOCK.LEAVES, BLOCK.SAND, BLOCK.GLASS, BLOCK.SNOW,
   BLOCK.BEDROCK, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.CRAFTING_TABLE, BLOCK.FURNACE,
+  // B3 Task 3：雲杉／白樺的方塊物品形式在本批補上 → 創造清單自動出現
+  BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES, BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [
