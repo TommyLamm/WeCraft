@@ -15,6 +15,8 @@ import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
+// B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
+import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, type ItemId, type ItemStack } from './core/items';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
@@ -117,6 +119,9 @@ import { createCrafting, type CraftingParams } from './ui/crafting';
 import { createFurnace } from './ui/furnace';
 import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
+// B3 Task 8：「地形已改變」一次性提示（**toast** 路徑，與 B1.4 的模態確認框
+// `menus.showConfirm` 分開——這裡只 import 提示模組，不碰 menus）。
+import { pushWorldgenNotice } from './ui/worldgen-notice';
 import { loadSettings, saveSettings } from './core/settings';
 import { createClock, tickClock, phaseOf, sunDirection, skyColors, type Clock } from './core/daynight';
 import { applyBiomeTint } from './core/biome-fog';
@@ -1420,6 +1425,13 @@ function applyCloudData(data: CloudData): void {
   clock = createClock(settings.dayLengthSec);
   clock.t = data.clockT;
   audio.setPhase(phaseOf(clock.t));
+  // B3 Task 8：雲端進度若是**舊存檔**（`worldgenVersion` 缺漏或 ≠ 當前版本）
+  // → 同樣跳一次「地形已改變」的**非模態 toast**（與 B1.4 的模態確認框無關）。
+  // 這裡**不**急著把新版本寫回雲端：下一次 checkpoint 送出時自然會帶上當前的
+  // `WORLDGEN_VERSION`（`buildCloudData` 是唯一蓋值的地方）。
+  if (needsWorldgenNotice(data.worldgenVersion)) {
+    pushWorldgenNotice(toasts);
+  }
 }
 
 /** Checkpoint: snapshot live progress to the cloud slot (Phase 4 Task 4).
@@ -1844,6 +1856,34 @@ function continueGame(payload: SavePayload): void {
 
   cloudAppliedAtBoot = false; // Ruling I: this local payload is the session now
   sessionStarted = true;
+
+  // B3 Task 8：舊存檔（`worldgenVersion` 缺漏或 ≠ 當前版本）→ 進遊戲時跳一次
+  // 「地形已改變」的**非模態 toast**（右上角、自動消失），並**立刻**把新版本
+  // 寫回本機存檔 → 下次載入不再提示（一次性）。
+  //
+  // 三個要分清楚的地方：
+  // 1) **不是** B1.4 的 `menus.showConfirm` 模態確認框（那是標題畫面、防止誤
+  //    覆蓋進度用的）——這裡是進遊戲後的 toast，兩條路徑互不干擾。
+  // 2) 寫回的是「**現在這個 session 的 payload**」（還原後的現況），
+  //    **不是**把欄位補到「讀到的舊記錄」上——補到舊記錄上會掩蓋「它是舊存檔」
+  //    這件事（Task 7 的讀取端刻意不補值）。
+  // 3) 寫入失敗只吞掉：存檔是 best-effort，**不得**阻擋進遊戲（也不記未標記事故）。
+  if (needsWorldgenNotice(payload.worldgenVersion)) {
+    pushWorldgenNotice(toasts);
+    const current = sessionSavePayload(); // 現況快照（還原後的 session）
+    if (current) {
+      const stamped: SavePayload = { ...current, worldgenVersion: WORLDGEN_VERSION };
+      void saveGame(stamped).then(
+        () => {
+          savedPayload = stamped; // 標題畫面的「繼續遊戲」用這份新存檔
+        },
+        () => {
+          /* 寫入失敗不阻擋進遊戲（存檔是 best-effort；下次存檔會再帶上版本） */
+        },
+      );
+    }
+  }
+
   setState('playing'); // same entry tail as startGame
   relockCanvas(); // the click is a user gesture → controls live
 }
