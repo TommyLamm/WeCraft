@@ -1,5 +1,5 @@
 import type { World } from './world';
-import { getBlockDef, isTransparent, BLOCK } from './blocks';
+import { getBlockDef, isTransparent, isCross, BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 
 /** One greedily-merged mesh: four unshared vertices per quad. `texIndex`,
@@ -16,11 +16,14 @@ export interface MeshData {
   quadCount: number;
 }
 
-/** `meshChunk` output: opaque terrain and water are meshed separately —
- *  Task 16 renders `water` in its own translucent pass. */
+/** `meshChunk` output: opaque terrain, water and cross-shaped foliage are
+ *  meshed separately — Task 16 renders `water` in its own translucent pass,
+ *  B3 Task 4 renders `foliage` (flower/grass cross models) in its own
+ *  DoubleSide, shadow-free pass. */
 export interface ChunkMesh {
   opaque: MeshData;
   water: MeshData;
+  foliage: MeshData;
 }
 
 /** One visible face direction, described for greedy meshing: the normal axis
@@ -274,6 +277,79 @@ function emitQuad(
   b.quadCount++;
 }
 
+/** 1/√2 — the diagonal planes' normal components (the planes stand at 45°). */
+const CROSS_NORMAL = Math.SQRT1_2;
+
+/** Emit the two diagonal planes of one cross-shaped plant cell (B3 Task 4).
+ *
+ *  原版的十字模型：每格不是立方體，而是兩片互相垂直的對角平面（像一個 X），
+ *  從任何角度看都像一株植物。平面 A 從格子角 (x,z) 連到 (x+1,z+1)，平面 B
+ *  從 (x,z+1) 連到 (x+1,z)；兩片都是 y → y+1 的整格高。
+ *
+ *  - 法線是各自的平面法向量：(−1,0,1)/√2 與 (1,0,1)/√2 → 兩面都受光，
+ *    材質是 DoubleSide 所以背面也看得見。
+ *  - UV 是 0..1 的**單一** tile（不同於 cube pass 的「以格為單位」的 uv）。
+ *  - **不做 AO**：cross 方塊是透明的 → 不是遮蔽者 → 也不會讓鄰邊變暗；
+ *    所以每個頂點的 shade 直接填 1.0。
+ *  - 索引寫法比照 `emitQuad`（兩片平面各自 4 頂點 2 三角形）。 */
+function emitCrossQuads(
+  b: MeshBuilder,
+  baseX: number,
+  baseZ: number,
+  lx: number,
+  ly: number,
+  lz: number,
+  tile: number,
+): void {
+  const x = baseX + lx;
+  const y = ly;
+  const z = baseZ + lz;
+  const planes: ReadonlyArray<{
+    corners: ReadonlyArray<readonly [number, number, number]>;
+    normal: readonly [number, number, number];
+  }> = [
+    {
+      // 平面 A：(x,y,z) → (x+1,y,z+1) 對角
+      corners: [
+        [x, y, z],
+        [x + 1, y, z + 1],
+        [x, y + 1, z],
+        [x + 1, y + 1, z + 1],
+      ],
+      normal: [-CROSS_NORMAL, 0, CROSS_NORMAL],
+    },
+    {
+      // 平面 B：(x,y,z+1) → (x+1,y,z) 對角
+      corners: [
+        [x, y, z + 1],
+        [x + 1, y, z],
+        [x, y + 1, z + 1],
+        [x + 1, y + 1, z],
+      ],
+      normal: [CROSS_NORMAL, 0, CROSS_NORMAL],
+    },
+  ];
+  const uvs: ReadonlyArray<readonly [number, number]> = [
+    [0, 0],
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ];
+  for (const plane of planes) {
+    const vertBase = b.positions.length / 3;
+    for (let i = 0; i < 4; i++) {
+      const c = plane.corners[i];
+      b.positions.push(c[0], c[1], c[2]);
+      b.normals.push(plane.normal[0], plane.normal[1], plane.normal[2]);
+      b.uvs.push(uvs[i][0], uvs[i][1]);
+      b.texIndex.push(tile);
+      b.shades.push(1.0); // cross 不做 AO
+    }
+    b.indices.push(vertBase, vertBase + 1, vertBase + 2, vertBase + 2, vertBase + 1, vertBase + 3);
+    b.quadCount++;
+  }
+}
+
 /** Greedy rectangle expansion over one slice's mask (0 = not in this sweep):
  *  grow width while the signature matches, then height while every cell of
  *  the candidate rows matches, emit the quad, clear the consumed cells. */
@@ -316,7 +392,11 @@ function greedySweep(
 export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) {
-    return { opaque: finish(createBuilder()), water: finish(createBuilder()) };
+    return {
+      opaque: finish(createBuilder()),
+      water: finish(createBuilder()),
+      foliage: finish(createBuilder()),
+    };
   }
 
   const data = chunk.data;
@@ -334,6 +414,7 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
   const baseZ = cz * CHUNK_SIZE;
   const opaqueB = createBuilder();
   const waterB = createBuilder();
+  const foliageB = createBuilder();
 
   for (const face of FACES) {
     const nDim = AXIS_SIZE[face.nAxis];
@@ -356,6 +437,7 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           cell[face.vAxis] = av;
           const id = data[chunkIndex(cell[0], cell[1], cell[2])];
           if (id === BLOCK.AIR) continue;
+          if (isCross(id)) continue; // cross 植被走 foliage pass，不進 cube pass
           if (!faceVisible(id, sampleAt(data, cell, face.dir, neighbors))) continue;
           const tile = getBlockDef(id)[face.tileKey];
           const aoKey = faceAoKey(data, cell, samples, neighbors);
@@ -388,5 +470,19 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     }
   }
 
-  return { opaque: finish(opaqueB), water: finish(waterB) };
+  // ---- cross pass（B3 Task 4）----
+  // 整個 chunk 掃一遍（65,536 格）找 cross 方塊；相對既有 6 個面方向的掃描
+  // 可忽略。cross 方塊不與相鄰方塊合併（每株都是獨立的兩片平面）。
+  for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const id = data[chunkIndex(lx, ly, lz)];
+        if (id === BLOCK.AIR) continue;
+        if (!isCross(id)) continue;
+        emitCrossQuads(foliageB, baseX, baseZ, lx, ly, lz, getBlockDef(id).top);
+      }
+    }
+  }
+
+  return { opaque: finish(opaqueB), water: finish(waterB), foliage: finish(foliageB) };
 }

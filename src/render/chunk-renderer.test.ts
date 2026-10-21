@@ -141,13 +141,15 @@ describe('ChunkRenderer', () => {
   it('water-only chunk: water mesh visible with 6 quads; the opaque slot stays hidden', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 60, 5, BLOCK.WATER), 0, 0);
-    expect(scene.children).toHaveLength(2); // per-chunk pair: opaque slot + water slot
+    // B3 Task 4：每個 chunk 在場景裡是 3 個 child —— opaque(0)／water(1)／foliage(2)
+    expect(scene.children).toHaveLength(3);
     const opaqueMesh = scene.children[0] as THREE.Mesh;
     const waterMesh = scene.children[1] as THREE.Mesh;
     expect(opaqueMesh.visible).toBe(false); // no opaque geometry → nothing to draw
     expect(waterMesh.visible).toBe(true); // water must not vanish
     expect(waterMesh.geometry.getAttribute('position').count).toBe(6 * 4); // 6 water quads
     expect(waterMesh.renderOrder).toBe(WATER_RENDER_ORDER);
+    expect((scene.children[2] as THREE.Mesh).visible).toBe(false); // no foliage here
     renderer.dispose();
   });
 
@@ -156,7 +158,7 @@ describe('ChunkRenderer', () => {
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     w.setBlock(5, 60, 5, BLOCK.WATER); // same chunk, not adjacent
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(2);
+    expect(scene.children).toHaveLength(3); // opaque(0) + water(1) + foliage(2)
     const opaqueMesh = scene.children[0] as THREE.Mesh;
     const waterMesh = scene.children[1] as THREE.Mesh;
 
@@ -213,7 +215,7 @@ describe('ChunkRenderer', () => {
     expect((scene.children[1] as THREE.Mesh).visible).toBe(true);
     w.setBlock(5, 60, 5, BLOCK.AIR);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(2); // pair persists while the chunk is live
+    expect(scene.children).toHaveLength(3); // the chunk's opaque+water+foliage trio persists
     expect((scene.children[0] as THREE.Mesh).visible).toBe(true);
     expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // empty water geometry
     renderer.dispose();
@@ -236,10 +238,10 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(2); // the chunk's opaque+water pair
+    expect(scene.children).toHaveLength(3); // the chunk's opaque+water+foliage trio
     w.setBlock(5, 64, 5, BLOCK.AIR);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(0); // both passes empty → pair gone
+    expect(scene.children).toHaveLength(0); // all three passes empty → chunk gone
     renderer.dispose();
   });
 
@@ -247,9 +249,45 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
     renderer.rebuild(worldWithBlock(20, 64, 5, BLOCK.STONE), 1, 0);
-    expect(scene.children).toHaveLength(4); // 2 chunks × the opaque+water pair
+    expect(scene.children).toHaveLength(6); // 2 chunks × the opaque+water+foliage trio
     renderer.dispose();
     expect(scene.children).toHaveLength(0);
+  });
+
+  // ---- B3 Task 4: 第三條 mesh（foliage）----
+  it('a chunk with only cross foliage stays in the scene and the foliage mesh is visible', () => {
+    const { scene, renderer } = setup();
+    renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.DANDELION), 0, 0);
+    // 早退條件必須納入 foliage：只有植被的 chunk 不能被整塊移除
+    expect(scene.children).toHaveLength(3);
+    expect((scene.children[0] as THREE.Mesh).visible).toBe(false); // no opaque geometry
+    expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // no water geometry
+    const foliage = scene.children[2] as THREE.Mesh;
+    expect(foliage.visible).toBe(true);
+    expect(foliage.geometry.getAttribute('position').count).toBe(2 * 4); // 兩片對角平面
+    expect(foliage.castShadow).toBe(false); // 植被不投影（否則會投出整格方塊陰影）
+    expect(foliage.receiveShadow).toBe(true);
+    renderer.dispose();
+  });
+
+  it('foliage material: Lambert + alphaTest 0.1 + DoubleSide + the SHARED texture array', () => {
+    const { scene, renderer } = setup();
+    renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.DANDELION), 0, 0);
+    const opaqueMat = (scene.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    const foliageMat = (scene.children[2] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    expect(foliageMat).toBeInstanceOf(THREE.MeshLambertMaterial);
+    expect(foliageMat).not.toBe(opaqueMat); // separate material per pass
+    expect(foliageMat.alphaTest).toBe(0.1); // 植被圖樣是 alpha 裁切
+    expect(foliageMat.vertexColors).toBe(true);
+    expect(foliageMat.side).toBe(THREE.DoubleSide); // 兩片對角平面都要看得見背面
+    expect(foliageMat.map).toBeNull(); // array texture rides the custom mapArray uniform
+    // 與不透明 pass 共用同一張 DataArrayTexture
+    const s1 = fakeShader();
+    const s2 = fakeShader();
+    (opaqueMat.onBeforeCompile as (s: typeof s1) => void)(s1);
+    (foliageMat.onBeforeCompile as (s: typeof s2) => void)(s2);
+    expect(s2.uniforms.mapArray.value).toBe(s1.uniforms.mapArray.value);
+    renderer.dispose();
   });
 
   it('shares ONE texture array across instances; unload/dispose never disposes it', () => {

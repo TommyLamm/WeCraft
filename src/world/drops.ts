@@ -65,6 +65,9 @@ export interface DropEntity {
  *  - grass → `dirt` (vanilla: the grass block itself needs silk touch);
  *  - leaves/glass/snow → null (silk-touch-only drops; no shears/silk touch
  *    in this game); the B3 spruce/birch leaves behave exactly like oak leaves.
+ *  - ice → null (原版要絲絨觸碰才掉；本作沒有絲絨 → 不掉)。
+ *  - 花／草／仙人掌走既有的 itemFromBlock fallback → 掉自身（B5 已定的刻意
+ *    偏離：原版花與草掉的是種子／麥粒，不是花本身）。
  *  Null also when the block has no item form at all (air, water) → nothing
  *  spawns. */
 export function dropItemFor(blockId: number): ItemId | null {
@@ -77,7 +80,8 @@ export function dropItemFor(blockId: number): ItemId | null {
     blockId === BLOCK.GLASS ||
     blockId === BLOCK.SNOW ||
     blockId === BLOCK.SPRUCE_LEAVES ||
-    blockId === BLOCK.BIRCH_LEAVES
+    blockId === BLOCK.BIRCH_LEAVES ||
+    blockId === BLOCK.ICE
   ) {
     return null;
   }

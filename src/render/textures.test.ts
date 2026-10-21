@@ -232,6 +232,64 @@ describe('textures', () => {
     }
     expect(warm).toBeGreaterThan(0);
   });
+
+  // ---- B3 Task 4：花／草／仙人掌／冰的圖樣 ----
+  it('the plant tiles are cut-outs on a transparent background (alphaTest 0.1 可裁切)', () => {
+    const DANDELION = 27;
+    const POPPY = 28;
+    const SHORT_GRASS = 29;
+    const atlas = drawAtlas();
+    for (const tile of [DANDELION, POPPY, SHORT_GRASS]) {
+      let transparent = 0;
+      let painted = 0;
+      for (let y = 0; y < TILE_PX; y++)
+        for (let x = 0; x < TILE_PX; x++) {
+          const a = tilePixel(atlas, tile, x, y)[3];
+          if (a === 0) transparent++;
+          if (a === 255) painted++;
+        }
+      expect(transparent, `tile ${tile} transparent`).toBeGreaterThan(0);
+      expect(painted, `tile ${tile} painted`).toBeGreaterThan(0);
+    }
+    // 蒲公英是黃花、罌粟是紅花：不可畫成同一種顏色
+    const dandelion = tilePixel(atlas, DANDELION, 7, 5);
+    expect(dandelion[0]).toBeGreaterThan(dandelion[2]); // r > b → 暖黃
+    const poppy = tilePixel(atlas, POPPY, 7, 5);
+    expect(poppy[0]).toBeGreaterThan(poppy[2]); // r > b → 紅
+    expect(poppy[0]).not.toBe(dandelion[0]); // 兩種花不可同色
+    // 草叢是綠色
+    const grass = tilePixel(atlas, SHORT_GRASS, 7, 5);
+    expect(grass[1]).toBeGreaterThan(grass[0]);
+    expect(grass[1]).toBeGreaterThan(grass[2]);
+  });
+
+  it('cactus tiles are opaque green with light spines; ice is translucent with white cracks', () => {
+    const CACTUS_SIDE = 30;
+    const CACTUS_TOP = 31;
+    const ICE = 32;
+    const atlas = drawAtlas();
+    for (const tile of [CACTUS_SIDE, CACTUS_TOP]) {
+      for (let y = 0; y < TILE_PX; y++)
+        for (let x = 0; x < TILE_PX; x++) {
+          expect(tilePixel(atlas, tile, x, y)[3], `tile ${tile} px ${x},${y}`).toBe(255);
+        }
+    }
+    // 仙人掌是綠色
+    const [r, g, b] = tilePixel(atlas, CACTUS_SIDE, 8, 8);
+    expect(g).toBeGreaterThan(r);
+    expect(g).toBeGreaterThan(b);
+    // 冰：半透明底（alpha 190）＋ 白色裂紋線（alpha 220 且更亮）
+    let base = 0;
+    let cracks = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [ir, , , a] = tilePixel(atlas, ICE, x, y);
+        if (a === 190) base++;
+        if (a === 220 && ir > 200) cracks++;
+      }
+    expect(base).toBeGreaterThan(0);
+    expect(cracks).toBeGreaterThan(0);
+  });
 });
 
 // ---- Task 15: texture array for greedy-mesh sampling ----

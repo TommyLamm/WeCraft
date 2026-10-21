@@ -4,6 +4,8 @@ import {
   getBlockDef,
   isSolid,
   isTransparent,
+  isCross,
+  isTargetable,
   PLACEABLE,
   HOTBAR_DEFAULT,
   type BlockDef,
@@ -49,6 +51,12 @@ describe('blocks', () => {
       [BLOCK.SPRUCE_LEAVES, 0.2],
       [BLOCK.BIRCH_LOG, 2.0],
       [BLOCK.BIRCH_LEAVES, 0.2],
+      // B3 Task 4 新增：花／草硬度 0（原版可徒手瞬間挖掉）、仙人掌 0.4、冰 0.5
+      [BLOCK.DANDELION, 0],
+      [BLOCK.POPPY, 0],
+      [BLOCK.SHORT_GRASS, 0],
+      [BLOCK.CACTUS, 0.4],
+      [BLOCK.ICE, 0.5],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -81,6 +89,12 @@ describe('blocks', () => {
       [BLOCK.SPRUCE_LEAVES, null, null],
       [BLOCK.BIRCH_LOG, null, 'axe'],
       [BLOCK.BIRCH_LEAVES, null, null],
+      // B3 Task 4 新增：花／草不用工具、仙人掌不用工具（徒手可挖）、冰要鎬但沒有門檻
+      [BLOCK.DANDELION, null, null],
+      [BLOCK.POPPY, null, null],
+      [BLOCK.SHORT_GRASS, null, null],
+      [BLOCK.CACTUS, null, null],
+      [BLOCK.ICE, null, 'pickaxe'],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -193,5 +207,60 @@ describe('blocks', () => {
     expect(BLOCK.IRON_ORE).toBe(14);
     expect(BLOCK.CRAFTING_TABLE).toBe(15);
     expect(BLOCK.FURNACE).toBe(16);
+  });
+
+  // ---- B3 Task 4：cross 型方塊（花／草）＋仙人掌／冰 ----
+
+  it('the new blocks have the pinned ids and vanilla hardness', () => {
+    // id 只能往後追加（舊存檔的 `modified` 記的是數字 id）
+    expect(BLOCK.DANDELION).toBe(21);
+    expect(BLOCK.POPPY).toBe(22);
+    expect(BLOCK.SHORT_GRASS).toBe(23);
+    expect(BLOCK.CACTUS).toBe(24);
+    expect(BLOCK.ICE).toBe(25);
+
+    // 硬度 0 = 瞬破（原版花／草可以徒手瞬間挖掉）；仙人掌 0.4、冰 0.5 為原版數值
+    expect(getBlockDef(BLOCK.DANDELION).hardness).toBe(0);
+    expect(getBlockDef(BLOCK.POPPY).hardness).toBe(0);
+    expect(getBlockDef(BLOCK.SHORT_GRASS).hardness).toBe(0);
+    expect(getBlockDef(BLOCK.CACTUS).hardness).toBe(0.4);
+    expect(getBlockDef(BLOCK.ICE).hardness).toBe(0.5);
+
+    // 物品形式在本批補上 → 五個新方塊都可放（創造清單以 PLACEABLE 為 Palette）
+    for (const id of [BLOCK.DANDELION, BLOCK.POPPY, BLOCK.SHORT_GRASS, BLOCK.CACTUS, BLOCK.ICE]) {
+      expect(PLACEABLE, `block ${id} is not placeable`).toContain(id);
+    }
+  });
+
+  it('plants are cross shaped and non solid', () => {
+    expect(getBlockDef(BLOCK.DANDELION).shape).toBe('cross');
+    expect(getBlockDef(BLOCK.DANDELION).solid).toBe(false);
+    expect(getBlockDef(BLOCK.DANDELION).transparent).toBe(true);
+    expect(getBlockDef(BLOCK.POPPY).shape).toBe('cross');
+    expect(getBlockDef(BLOCK.SHORT_GRASS).shape).toBe('cross');
+    expect(getBlockDef(BLOCK.CACTUS).shape).toBe('cube');
+    expect(getBlockDef(BLOCK.CACTUS).solid).toBe(true);
+    expect(getBlockDef(BLOCK.ICE).shape).toBe('cube');
+    expect(getBlockDef(BLOCK.ICE).solid).toBe(true);
+
+    expect(isCross(BLOCK.DANDELION)).toBe(true);
+    expect(isCross(BLOCK.POPPY)).toBe(true);
+    expect(isCross(BLOCK.SHORT_GRASS)).toBe(true);
+    expect(isCross(BLOCK.CACTUS)).toBe(false);
+    expect(isCross(BLOCK.ICE)).toBe(false);
+  });
+
+  it('every block before the cross ones keeps the cube shape', () => {
+    // 既有 0–20 全部是立方體（cross 是 B3 Task 4 新增的形狀）
+    for (let id = 0; id <= 20; id++) {
+      expect(getBlockDef(id).shape, `block ${id} shape`).toBe('cube');
+    }
+  });
+
+  it('targetable covers solids and cross plants', () => {
+    expect(isTargetable(BLOCK.STONE)).toBe(true);
+    expect(isTargetable(BLOCK.DANDELION)).toBe(true);
+    expect(isTargetable(BLOCK.WATER)).toBe(false);
+    expect(isTargetable(BLOCK.AIR)).toBe(false);
   });
 });

@@ -298,6 +298,89 @@ describe('meshChunk', () => {
   });
 });
 
+// ---- B3 Task 4: cross 型植被的 foliage pass ----
+
+describe('cross foliage pass', () => {
+  /** The foliage mesh of chunk (cx, cz). */
+  function foliage(w: World, cx = 0, cz = 0): MeshData {
+    return meshChunk(w, cx, cz).foliage;
+  }
+
+  it('a cross block produces two diagonal quads in the foliage mesh', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = meshChunk(w, 0, 0);
+    expect(m.foliage.quadCount).toBe(2);
+    expect(m.opaque.quadCount).toBe(0); // cross 不進 cube pass
+    expect(m.water.quadCount).toBe(0);
+  });
+
+  it('the foliage quads span the full cell diagonally', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = foliage(w);
+    expect(m.quadCount).toBe(2);
+    for (let q = 0; q < m.quadCount; q++) {
+      const verts = quadVerts(m, q);
+      // 每個頂點都落在方塊格 (5,5) 的對角線上：x、z 各 ∈ {5, 6}
+      expect(verts.every((v) => v[0] === 5 || v[0] === 6)).toBe(true);
+      expect(verts.every((v) => v[2] === 5 || v[2] === 6)).toBe(true);
+      // 每片平面在 x 與 z 各跨越 1 格（不是整格牆面）
+      const xs = verts.map((v) => v[0]);
+      const zs = verts.map((v) => v[2]);
+      expect(Math.max(...xs) - Math.min(...xs)).toBe(1);
+      expect(Math.max(...zs) - Math.min(...zs)).toBe(1);
+      // 高度是整格（y → y+1），不是貼地的一片
+      const ys = verts.map((v) => v[1]);
+      expect(Math.min(...ys)).toBe(64);
+      expect(Math.max(...ys)).toBe(65);
+    }
+  });
+
+  it('the foliage quads use one tile of UV', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    const m = foliage(w);
+    for (let q = 0; q < m.quadCount; q++) {
+      const uvs = Array.from(m.uvs.slice(q * 8, q * 8 + 8));
+      expect(Math.max(...uvs)).toBe(1);
+      expect(Math.min(...uvs)).toBe(0);
+    }
+  });
+
+  it('cross blocks do not occlude AO', () => {
+    // 石頭頂面的 AO 取樣會踩到旁邊的 cross 植被格 → 植被若不透明就會變暗
+    const bare = worldWithBlock(0, 0, 0, BLOCK.STONE);
+    const withPlant = worldWithBlock(0, 0, 0, BLOCK.STONE);
+    withPlant.setBlock(1, 1, 0, BLOCK.DANDELION);
+    const a = dirQuads(opaque(bare), [0, 1, 0]);
+    const b = dirQuads(opaque(withPlant), [0, 1, 0]);
+    expect(a.length).toBeGreaterThan(0);
+    expect(b).toHaveLength(a.length);
+    for (let q = 0; q < a.length; q++) {
+      expect(b[q].verts).toEqual(a[q].verts);
+      expect(b[q].shades).toEqual(a[q].shades);
+    }
+  });
+
+  it('a chunk without plants has an empty foliage mesh', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    const m = meshChunk(w, 0, 0);
+    expect(m.foliage.quadCount).toBe(0);
+    expect(m.foliage.positions.length).toBe(0);
+    expect(m.foliage.indices.length).toBe(0);
+  });
+
+  it('every cross plant emits its own two quads (multiple plants in one chunk)', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.DANDELION);
+    w.setBlock(7, 64, 5, BLOCK.POPPY);
+    w.setBlock(9, 64, 5, BLOCK.SHORT_GRASS);
+    const m = foliage(w);
+    expect(m.quadCount).toBe(6); // 三株 × 兩片對角平面
+    expect(m.indices.length).toBe(6 * 6);
+    // 每個 cross 方塊用自己的 tile（花／草各不相同）
+    const tiles = new Set(Array.from(m.texIndex));
+    expect(tiles.size).toBe(3);
+  });
+});
+
 // ---- Per-vertex ambient occlusion (Task 2) ----
 
 describe('per-vertex AO', () => {

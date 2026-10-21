@@ -206,6 +206,57 @@ export function drawAtlas(): AtlasImage {
     if (r() < 0.18) return [0, 0, 0, 0];
     return vary([126, 168, 84, 255], r, 34);
   }); // birch_leaves
+  // ---- B3 Task 4: dandelion / poppy / short grass / cactus / ice ----
+  // 植被的底是**透明**的（alpha 0）→ 材質的 alphaTest 0.1 會把背景裁掉，
+  // 只留下花莖與草葉；這是原版花／草「貼圖帶 alpha」的做法。
+  put(27, (x, y) => {
+    // dandelion: transparent base + green stem (2 px wide) + yellow flower
+    const stem = x >= 7 && x <= 8 && y >= 8;
+    if (stem) return [86, 140, 60, 255];
+    const petal = (x >= 6 && x <= 9 && y >= 4 && y <= 6) || (x >= 7 && x <= 8 && y >= 2 && y <= 7);
+    if (petal) return [230, 200, 60, 255];
+    return [0, 0, 0, 0];
+  }); // dandelion
+  put(28, (x, y) => {
+    // poppy: same layout as the dandelion, red flower
+    const stem = x >= 7 && x <= 8 && y >= 8;
+    if (stem) return [86, 140, 60, 255];
+    const petal = (x >= 6 && x <= 9 && y >= 4 && y <= 6) || (x >= 7 && x <= 8 && y >= 2 && y <= 7);
+    if (petal) return [200, 60, 50, 255];
+    return [0, 0, 0, 0];
+  }); // poppy
+  put(29, (x, y) => {
+    // short_grass: a few irregular upright blades on a transparent base
+    const blade =
+      (x === 3 && y >= 7) ||
+      (x === 6 && y >= 11) ||
+      (x === 7 && y >= 4 && y <= 10) ||
+      (x === 10 && y >= 9);
+    if (!blade) return [0, 0, 0, 0];
+    return [92, 150, 62, 255];
+  }); // short_grass
+  put(30, (x, y, r) => {
+    // cactus_side: green body + darker rib edges + light spine dots
+    if ((x === 3 || x === 7 || x === 11) && y % 5 === 2) return [198, 216, 158, 255];
+    const edge = x === 0 || x === 15 ? -28 : 0;
+    const c = vary([74, 130, 66, 255], r, 18);
+    return [clamp255(c[0] + edge), clamp255(c[1] + edge), clamp255(c[2] + edge), 255];
+  }); // cactus_side
+  put(31, (x, y, r) => {
+    // cactus_top: green with a lighter core and a darker rim
+    const dx = x - 7.5;
+    const dy = y - 7.5;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const core = d < 3 ? 26 : d < 6 ? 8 : -20;
+    const c = vary([74, 130, 66, 255], r, 16);
+    return [clamp255(c[0] + core), clamp255(c[1] + core), clamp255(c[2] + core), 255];
+  }); // cactus_top
+  put(32, (x, y) => {
+    // ice: pale blue-white半透明底 + white crack lines
+    const crack = x === (y * 7) % 13 || (x + y) % 11 === 0;
+    if (crack) return [240, 248, 255, 220];
+    return [168, 205, 235, 190];
+  }); // ice
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

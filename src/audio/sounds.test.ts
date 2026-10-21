@@ -33,6 +33,12 @@ describe('materialGroup', () => {
       [BLOCK.SPRUCE_LEAVES]: 'leaves',
       [BLOCK.BIRCH_LOG]: 'wood',
       [BLOCK.BIRCH_LEAVES]: 'leaves',
+      // B3 Task 4：花／草／仙人掌是草的聲音、冰是清脆的玻璃聲
+      [BLOCK.DANDELION]: 'grass',
+      [BLOCK.POPPY]: 'grass',
+      [BLOCK.SHORT_GRASS]: 'grass',
+      [BLOCK.CACTUS]: 'grass',
+      [BLOCK.ICE]: 'glass',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

@@ -46,6 +46,12 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.SPRUCE_LEAVES]: 'leaves',
   [BLOCK.BIRCH_LOG]: 'wood',
   [BLOCK.BIRCH_LEAVES]: 'leaves',
+  // B3 Task 4：花／草是草的聲音；原版仙人掌也走草的音色；冰是清脆的玻璃聲
+  [BLOCK.DANDELION]: 'grass',
+  [BLOCK.POPPY]: 'grass',
+  [BLOCK.SHORT_GRASS]: 'grass',
+  [BLOCK.CACTUS]: 'grass',
+  [BLOCK.ICE]: 'glass',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

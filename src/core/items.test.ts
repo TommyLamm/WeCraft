@@ -20,6 +20,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'crafting_table', 'furnace', 'chest',
   // B3 Task 3：雲杉／白樺的方塊物品形式（隨三樹種一起補上）
   'spruce_log', 'spruce_leaves', 'birch_log', 'birch_leaves',
+  // B3 Task 4：花／草／仙人掌／冰的方塊物品形式（隨 cross 型方塊一起補上）
+  'dandelion', 'poppy', 'short_grass', 'cactus', 'ice',
 ];
 const TOOL_ITEMS: ItemId[] = [
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
@@ -34,10 +36,15 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
+/** 物品基數（本任務動工前讀到的現況值，含 Task 3 已補的 4 個雲杉／白樺物品）。
+ *  B3 Task 4 新增 5 個物品 id → 斷言寫成「基數 + 5」，不寫死總數。 */
+const BASE_ITEM_COUNT = 36;
+const NEW_ITEM_COUNT = 5;
+
 describe('items', () => {
   it('ItemId union covers every obtainable block item', () => {
-    // B3 Task 3：基數 32 → 36（新增 4 個雲杉／白樺方塊的物品形式）
-    expect(ALL_ITEMS.length).toBe(36);
+    // B3 Task 4：基數 36 → 36 + 5（新增 5 個花／草／仙人掌／冰的物品形式）
+    expect(ALL_ITEMS.length).toBe(BASE_ITEM_COUNT + NEW_ITEM_COUNT);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
     // real guard: every block except air and block-only water maps to an item
     for (const id of Object.values(BLOCK)) {
@@ -46,8 +53,8 @@ describe('items', () => {
     }
   });
 
-  it('ALL_ITEM_IDS is the canonical list: 36 entries, no dupes, same set as the union', () => {
-    expect(ALL_ITEM_IDS.length).toBe(36);
+  it('ALL_ITEM_IDS is the canonical list: no dupes, same set as the union', () => {
+    expect(ALL_ITEM_IDS.length).toBe(BASE_ITEM_COUNT + NEW_ITEM_COUNT);
     expect(new Set(ALL_ITEM_IDS).size).toBe(ALL_ITEM_IDS.length);
     // Same membership as the test's own hand-maintained union mirror — the
     // Record<ItemId, true> source makes drift a tsc error (Minor 5).
@@ -94,6 +101,24 @@ describe('items', () => {
     expect(maxStack('spruce_log')).toBe(64);
     expect(maxStack('birch_leaves')).toBe(64);
     expect(stackFromBlock(BLOCK.BIRCH_LOG)).toEqual({ item: 'birch_log', count: 64 });
+  });
+
+  // B3 Task 4：花／草／仙人掌／冰的方塊物品形式（隨 cross 型方塊一起補上）
+  it('the new plant, cactus and ice blocks have an item form in both directions', () => {
+    expect(itemFromBlock(BLOCK.DANDELION)).toBe('dandelion');
+    expect(itemFromBlock(BLOCK.POPPY)).toBe('poppy');
+    expect(itemFromBlock(BLOCK.SHORT_GRASS)).toBe('short_grass');
+    expect(itemFromBlock(BLOCK.CACTUS)).toBe('cactus');
+    expect(itemFromBlock(BLOCK.ICE)).toBe('ice');
+    expect(blockFromItem('dandelion')).toBe(BLOCK.DANDELION);
+    expect(blockFromItem('poppy')).toBe(BLOCK.POPPY);
+    expect(blockFromItem('short_grass')).toBe(BLOCK.SHORT_GRASS);
+    expect(blockFromItem('cactus')).toBe(BLOCK.CACTUS);
+    expect(blockFromItem('ice')).toBe(BLOCK.ICE);
+    // 方塊物品都可堆疊（64）
+    expect(maxStack('dandelion')).toBe(64);
+    expect(maxStack('ice')).toBe(64);
+    expect(stackFromBlock(BLOCK.DANDELION)).toEqual({ item: 'dandelion', count: 64 });
   });
 
   it('stackName title-cases item ids', () => {

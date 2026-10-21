@@ -477,4 +477,14 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.SPRUCE_LEAVES)).toBeNull();
     expect(dropItemFor(BLOCK.BIRCH_LEAVES)).toBeNull();
   });
+
+  // B3 Task 4：本批釘死花／草／仙人掌／冰的掉落規則
+  it('flowers, grass and cactus drop themselves; ice drops nothing', () => {
+    expect(dropItemFor(BLOCK.DANDELION)).toBe('dandelion');
+    expect(dropItemFor(BLOCK.POPPY)).toBe('poppy');
+    expect(dropItemFor(BLOCK.SHORT_GRASS)).toBe('short_grass');
+    expect(dropItemFor(BLOCK.CACTUS)).toBe('cactus');
+    // 冰原版要絲絨觸碰才掉；本作沒有絲絨 → 不掉
+    expect(dropItemFor(BLOCK.ICE)).toBeNull();
+  });
 });

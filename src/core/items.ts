@@ -16,7 +16,10 @@ export type ItemId =
   // B3 Task 3: spruce/birch blocks (the three-tree-species batch). They land
   // WITH their item forms — the "every block maps to an item" invariant below
   // is the guard that forced it.
-  | 'spruce_log' | 'spruce_leaves' | 'birch_log' | 'birch_leaves';
+  | 'spruce_log' | 'spruce_leaves' | 'birch_log' | 'birch_leaves'
+  // B3 Task 4: dandelion/poppy/short_grass (cross-shaped plants), cactus and
+  // ice — same reason: the block↔item invariant below forces the pairing.
+  | 'dandelion' | 'poppy' | 'short_grass' | 'cactus' | 'ice';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -34,6 +37,7 @@ const ITEM_IDS: Record<ItemId, true> = {
   arrow: true, apple: true,
   oak_leaves: true, snow_block: true, bedrock: true,
   spruce_log: true, spruce_leaves: true, birch_log: true, birch_leaves: true,
+  dandelion: true, poppy: true, short_grass: true, cactus: true, ice: true,
 };
 
 /** Every ItemId, canonically (36 today). */
@@ -65,6 +69,11 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['spruce_leaves', BLOCK.SPRUCE_LEAVES],
   ['birch_log', BLOCK.BIRCH_LOG],
   ['birch_leaves', BLOCK.BIRCH_LEAVES],
+  ['dandelion', BLOCK.DANDELION],
+  ['poppy', BLOCK.POPPY],
+  ['short_grass', BLOCK.SHORT_GRASS],
+  ['cactus', BLOCK.CACTUS],
+  ['ice', BLOCK.ICE],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

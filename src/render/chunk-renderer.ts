@@ -83,7 +83,8 @@ function shadeColors(shades: Float32Array): Float32Array {
   return out;
 }
 
-/** Build one BufferGeometry for ONE pass (opaque or water) of a `ChunkMesh`.
+/** Build one BufferGeometry for ONE pass (opaque, water or foliage) of a
+ *  `ChunkMesh`.
  *  Returns null when that pass has no quads. Mesher indices are already
  *  0-based within their pass — each pass is emitted into its own fresh
  *  builder (emitQuad's vertBase starts at 0 there) — so no rebasing happens
@@ -102,12 +103,13 @@ function buildMeshGeometry(data: MeshData): THREE.BufferGeometry | null {
   return geometry;
 }
 
-/** A chunk's render pair: BOTH meshes always exist while the chunk is live;
+/** A chunk's render trio: BOTH/ALL meshes always exist while the chunk is live;
  *  an empty pass is represented by `visible = false` behind a blank geometry
  *  (nothing drawn, nothing in the way). */
 interface ChunkMeshes {
   opaque: THREE.Mesh;
   water: THREE.Mesh;
+  foliage: THREE.Mesh;
 }
 
 /** Point a pass's mesh at freshly built geometry; null means the pass is
@@ -129,6 +131,7 @@ export class ChunkRenderer {
   private chunks = new Map<string, ChunkMeshes>();
   private material: THREE.MeshLambertMaterial;
   private waterMaterial: THREE.MeshLambertMaterial;
+  private foliageMaterial: THREE.MeshLambertMaterial;
   /** Task 4: the SHARED texture array (getTextureArray) — chunks, water and
    *  particles all sample the same upload. Owned by the module memo, so this
    *  class never disposes it (dispose() frees only its own materials). */
@@ -160,6 +163,18 @@ export class ChunkRenderer {
     this.waterMaterial.onBeforeCompile = (shader) => {
       patchTextureArrayShader(shader, this.textureArray);
     };
+    // B3 Task 4: cross 型植被 pass（花／草）。同一張 DataArrayTexture、同一個
+    // onBeforeCompile patch；alphaTest 0.1 讓花莖與草葉的透明背景被裁掉；
+    // DoubleSide 因為每株植物是兩片對角平面，背面也必須看得見。
+    this.foliageMaterial = new THREE.MeshLambertMaterial({
+      alphaTest: 0.1,
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      fog: true,
+    });
+    this.foliageMaterial.onBeforeCompile = (shader) => {
+      patchTextureArrayShader(shader, this.textureArray);
+    };
   }
 
   rebuild(world: World, cx: number, cz: number): void {
@@ -167,8 +182,11 @@ export class ChunkRenderer {
     const mesh = meshChunk(world, cx, cz);
     const opaqueGeometry = buildMeshGeometry(mesh.opaque);
     const waterGeometry = buildMeshGeometry(mesh.water);
+    const foliageGeometry = buildMeshGeometry(mesh.foliage);
 
-    if (!opaqueGeometry && !waterGeometry) {
+    // 早退條件必須納入 foliage：只有植被、沒有方塊的 chunk 不能被整塊移除
+    // （否則花／草會整批看不見）。
+    if (!opaqueGeometry && !waterGeometry && !foliageGeometry) {
       this.remove(cx, cz); // nothing visible at all → chunk leaves the scene
       return;
     }
@@ -178,6 +196,7 @@ export class ChunkRenderer {
       pair = {
         opaque: new THREE.Mesh(new THREE.BufferGeometry(), this.material),
         water: new THREE.Mesh(new THREE.BufferGeometry(), this.waterMaterial),
+        foliage: new THREE.Mesh(new THREE.BufferGeometry(), this.foliageMaterial),
       };
       // Phase 3 Task 5: terrain both casts and receives the sun shadow; the
       // translucent water pass only receives it — water casting an opaque
@@ -186,7 +205,11 @@ export class ChunkRenderer {
       pair.opaque.castShadow = true;
       pair.opaque.receiveShadow = true;
       pair.water.receiveShadow = true;
-      for (const m of [pair.opaque, pair.water]) {
+      // B3 Task 4: 植被只接收陰影、不投影 —— 十字模型若投影會在地上投出一整格
+      // 的方塊陰影（原版的花草不會），看起來像地上有塊黑斑。
+      pair.foliage.castShadow = false;
+      pair.foliage.receiveShadow = true;
+      for (const m of [pair.opaque, pair.water, pair.foliage]) {
         m.matrixAutoUpdate = false;
         m.updateMatrix(); // positions are world-space; the matrix never changes
       }
@@ -198,20 +221,23 @@ export class ChunkRenderer {
       // granularity; triangles WITHIN one water geometry draw in mesher index
       // order (the sort never sees them). Harmless either way: depthWrite
       // false means no water surface ever occludes another.
-      this.scene.add(pair.opaque, pair.water); // opaque first → stable children order
+      // children 順序固定：opaque(0)／water(1)／foliage(2)。
+      this.scene.add(pair.opaque, pair.water, pair.foliage);
       this.chunks.set(key, pair);
     }
     applyGeometry(pair.opaque, opaqueGeometry);
     applyGeometry(pair.water, waterGeometry);
+    applyGeometry(pair.foliage, foliageGeometry);
   }
 
   remove(cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
     const pair = this.chunks.get(key);
     if (!pair) return;
-    this.scene.remove(pair.opaque, pair.water);
+    this.scene.remove(pair.opaque, pair.water, pair.foliage);
     pair.opaque.geometry.dispose();
     pair.water.geometry.dispose(); // per-chunk water geometry freed here
+    pair.foliage.geometry.dispose(); // per-chunk foliage geometry freed here
     this.chunks.delete(key);
   }
 
@@ -221,9 +247,10 @@ export class ChunkRenderer {
 
   dispose(): void {
     for (const pair of this.chunks.values()) {
-      this.scene.remove(pair.opaque, pair.water);
+      this.scene.remove(pair.opaque, pair.water, pair.foliage);
       pair.opaque.geometry.dispose();
       pair.water.geometry.dispose();
+      pair.foliage.geometry.dispose();
     }
     this.chunks.clear();
     // The shared texture array is deliberately NOT disposed here: other chunk
@@ -231,5 +258,6 @@ export class ChunkRenderer {
     // teardown must never break them.
     this.material.dispose();
     this.waterMaterial.dispose();
+    this.foliageMaterial.dispose();
   }
 }
