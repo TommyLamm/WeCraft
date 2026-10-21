@@ -60,7 +60,7 @@
 1. **舊存檔載入路徑不能被新欄位打斷**：`worldgenVersion` 缺失的舊 v1／v2／v3 記錄必須照讀、照遷移，且**不得**被自動補值（補了就看不出是舊存檔、也永遠不會提示）；缺欄位才提示、提示後寫入新值就不再提示 → Task 7（遷移與欄位語意）、Task 8（提示流程與持久化）。
 2. **區塊邊界的樹不能被切斷、也不能重複寫入**：樹幹在鄰塊、樹冠跨邊界時，兩側都必須有葉子且同一格只能由一個區塊寫入 → Task 3（跨塊樹冠測試）；樹木的「樹距 ≥2」必須是**全域**性質（跨區塊邊界也不得貼在一起）→ Task 3（距離不變量測試）。
 3. **統計測試必須是「固定種子＋明確容差」而不是「看起來差不多」**：高度分佈、海洋比例、生態面積、樹密度、裝飾密度全部釘死數字與容差；實作者不得為了讓測試變綠而放寬容差 → Task 1／2／3／6 的 `worldgen-stats.test.ts`。
-4. **cross 型方塊不能破壞既有互動語意**：植被不可碰撞、但必須能被射線命中並瞬破；放置方塊到植被上要像原版一樣「覆蓋」而不是卡住 → Task 5（raycast／digStep／canPlaceAt 測試）。
+4. **cross 型方塊不能破壞既有互動語意**：植被不可碰撞、但必須能被射線命中並瞬破；放置方塊到植被上要像原版一樣「覆蓋」而不是卡住 → Task 5（raycast／digStep／canPlaceAt 測試）；**覆蓋植被的「接線」在 Task 9 實作**（Task 5 只做語意層的 `canPlaceAt` 放行 → 放置目標指向「被點擊格本身」由 Task 9 Step 4 負責）。
 5. **效能不能退化到卡幀**：區塊生成仍在 worker 執行、同步退路（worker 失效）也不能卡住主執行緒 → Task 9（生成時間預算測試＋worker 相容測試）。
 6. **新方塊 id／貼圖層不可破壞舊存檔**：既有 0–16 的 block id 不得重編；新增 tile 不得超出紋理陣列 64 層、未畫的 tile 必須落在 `TILE_COUNT` 之內（否則變成洋紅除錯色）→ Task 3／4（blocks 與 textures 測試）。
 
@@ -944,7 +944,8 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - [ ] **Step 5: 全量驗證＋人工**
 
   Run: `npm run typecheck && npm test && npm run build && npm run lint` → Expected: 全綠。
-  人工（記錄結果）：用方塊瞄準地面上的花 → 一按左鍵即消失（瞬破）；站在花上放置方塊 → 植被被方塊取代（不被卡住）；花不阻擋行走。
+  人工（記錄結果）：用方塊瞄準地面上的花 → 一按左鍵即消失（瞬破）；**瞄準**花放置方塊 → 植被被方塊取代（不被卡住）；花不阻擋行走。
+  （2026-10-21 Task 5 審查修正：原驗收敘述寫「**站在花上**放置方塊 → 植被被方塊取代」；但方塊會與玩家 AABB 相交 → **原版也拒絕**（原版是「點到哪棵草就蓋掉哪棵草」）→ 敘述改為「**瞄準**花放方塊」。**玩家層的接線實作在 Task 9 Step 4**（放置目標指向被點擊格本身）；本任務只交付語意層的 `canPlaceAt` 放行。）
 
 - [ ] **Step 6: Commit**
 
@@ -1253,14 +1254,14 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 ### Task 9: 接線、效能與 worker 相容
 
 **Files:**
-- Modify: `src/main.ts`（生物群系取樣與霧色、危險傷害、生成器接線確認）
+- Modify: `src/main.ts`（生物群系取樣與霧色、危險傷害、生成器接線確認；**＋放置目標：覆蓋植被時放進「被點擊格本身」**——Task 5 審查 Important I-1 指派給**本任務（Task 9）**，見 Step 4）
 - Modify: `src/world/worldgen-stats.test.ts`（效能預算測試）
 - Modify: `src/world/worker-client.test.ts`（worker 相容測試）
 
 **Interfaces:**
 - Consumes: Task 1–8 全部。
 - Produces:
-  - `src/main.ts`：`biomeNow` 的型別自動跟著新的 `Biome` union（`biomeAt` 回傳新 union）；`applyBiomeTint` 自動支援 8 生態。**不新增任何組裝根邏輯**，只確認接線正確。
+  - `src/main.ts`：`biomeNow` 的型別自動跟著新的 `Biome` union（`biomeAt` 回傳新 union）；`applyBiomeTint` 自動支援 8 生態。**除 Step 4 的放置目標外，不新增任何組裝根邏輯**，只確認接線正確。**唯一例外＝Step 4**：覆蓋植被時放置目標要指向「被點擊格本身」（Task 5 審查 Important I-1 指派）。
   - `src/world/worldgen-stats.test.ts`：效能預算測試。
   - `src/world/worker-client.test.ts`：worker 相容測試。
 
@@ -1307,24 +1308,42 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
   3. `spawnPoint()`（約 L680）用 `surfaceHeight(0.5, 0.5, settings.seed) + 1` → 新的高度公式會讓出生點落在新地表上。**必須實作「出生點不可在水裡」的保護**：若 `surfaceHeight(0.5, 0.5, seed) <= SEA_LEVEL`，就在**已同步生成的 (0,0) 區塊內**（`spawnPoint()` 會先生成 chunk (0,0)）以 `(0,0)` 為中心螺旋搜尋第一個 `h > SEA_LEVEL` 的柱，並把出生點放在該柱的 `h + 1`；若整塊都在水裡，退回原公式（`surfaceHeight + 1`）並記錄警告。**不可**把出生點移到未生成的區塊（否則玩家會掉進虛空）。
   4. 危險傷害（Task 6 寫入的 `stepHazards`）在 `state === 'playing'` 分支每幀呼叫一次，且 `resetWorld()`／`startGame()` 會重置 `hazardState`。
 
-- [ ] **Step 4: 跑測試轉綠**
+- [ ] **Step 4: 放置目標：新語意「可被取代的目標格 → 放進同一格」（覆蓋植被，接線層）**
+
+  （**2026-10-21 Task 5 審查修正（Important I-1）指派**：Task 5 只完成了**語意層**——`canPlaceAt` 放行 cross 植被格（`src/player/interact.ts`）；但**接線層**的放置目標恆為「命中格＋法線」（`src/main.ts` 的 `tryPlaceBlock()` → `placeTarget()` → 命中格的**面鄰格**）→ 瞄準花右鍵會在**鄰格**再放一個、**原花還在** → 現行接線下 cross 的放行**實際不可達**。Task 6–10 的 brief 都沒有承接這條 → **由本任務（Task 9）實作**，不修改 Task 5 已交付的程式碼。）
+
+  - **放置目標的新語意**：當**被點擊的格本身**可被取代（AIR／WATER／cross 植被）時 → **放置到被點擊格本身**；否則維持現況的「命中格 ＋ 命中面法線」（面鄰格）。
+  - **實作落點**：`src/main.ts` 的 `tryPlaceBlock()` 改用 **world-aware** 的目標計算（例如 `placeTarget(world, hit)`：讀 `world.getBlock(hit.x, hit.y, hit.z)` → 若是 AIR／WATER／`isCross(id)` 就回 `{hit.x, hit.y, hit.z}`，否則回 `{hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz}`）。**注意**：目標格的判定與 `canPlaceAt` 的放行條件必須**一致**（AIR／WATER／cross），否則兩層規則會打架。
+  - **AABB 規則不放寬**：玩家身體重疊的目標格仍然**不可放**（`canPlaceAt` 的重疊檢查原樣保留）→ 站在花格裡放方塊仍被擋下，這**與原版一致**（原版也拒絕把方塊放進與玩家 AABB 相交的格子；原版是「點到哪棵草就蓋掉哪棵草」，不是「站在草上蓋草」）。
+  - **覆蓋植被時植被不掉落**：被覆蓋的花／草**不產生掉落物**（原版是被取代、不掉）。既有 `world.setBlock()` 是直接覆寫 → 已符合，**不得**在覆蓋時呼叫掉落流程。
+  - **為什麼這樣做**：與原版一致——原版「點到的方塊若可被取代（`canBeReplaced`），新方塊就**取代同一格**；不可取代才放在命中面外側」。植被（花／草）在原版是可被取代的 → 右鍵拿著方塊點花＝**花被方塊取代、位置不變**（不是「花旁邊多一塊」）。
+  - **驗收條件**：
+    1. 瞄準地上的花 → 右鍵放方塊 → **花被方塊取代**（同一格變成新方塊、原花消失；**不是旁邊多一塊**）。
+    2. 覆蓋時**沒有**掉落物（花不產生掉落物；原語意＝被取代、不掉）。
+    3. 站在花格裡放方塊仍被玩家 AABB 規則擋下（與原版一致）。
+    4. 瞄準實心方塊 → 放置目標仍是「命中面外側的鄰格」（既有行為不得改變）。
+    （`src/main.ts` 沒有單元測試 → 這條以**人工／瀏覽器驗收**為證，記錄進 Task 9 的回報；見〈批末驗收〉與本計畫〈已知未測面〉。）
+
+- [ ] **Step 5: 跑測試轉綠**
 
   Run: `npx vitest run src/world/worldgen-stats.test.ts src/world/worker-client.test.ts` → Expected: PASS。
 
-- [ ] **Step 5: 全量驗證＋人工**
+- [ ] **Step 6: 全量驗證＋人工**
 
   Run: `npm run typecheck && npm test && npm run build && npm run lint` → Expected: 全綠。
   人工（記錄結果）：
   - 開新遊戲 → 記錄「生成一個可見範圍（視距 6 → 13×13 = 169 塊）所花的時間」與「是否出現明顯掉幀」。
   - 單塊生成時間：以 Step 1 的效能測試輸出為準（實測約 2–3 ms／塊，預算 8 ms／塊）→ 把實測值寫進回報；同步退路（worker 失效）走的是同一支 `generateChunk`，因此同樣的單塊時間就是退路的上界。
   - 走路穿越生態邊界 → 霧色在 0.5 秒內改變、F3 的 Biome 行同步更新。
+  - **放置覆蓋植被（Step 4）**：瞄準地上的花右鍵放方塊 → 花被方塊取代（同一格）、沒有掉落物；站在花格裡放方塊仍被擋下；瞄準實心方塊仍放在鄰格 → 逐條記錄。
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
   ```bash
   git add src/main.ts src/world/worldgen-stats.test.ts src/world/worker-client.test.ts
   git commit -m "perf(worldgen): B3 效能預算與 worker 相容驗收（生成不卡幀）"
   ```
+  （若 Step 4 有實作（放置目標指向被點擊格本身），改動也在這個 commit 裡 → commit 訊息補「＋覆蓋植被的放置目標」。）
 
 ---
 
@@ -1442,7 +1461,7 @@ spline 節點（`cont → 高度差`）：`[-0.66,-34] [-0.45,-26] [-0.28,-17] [
 - **Spec coverage**：spec §B3.1（多層噪音／海平面 62／高度 0–255）→ Task 1＋§3；§B3.2（8 生態／表層方塊／植被／霧色／面積比例統計）→ Task 2＋Task 6＋§4；§B3.3（樹密度表／三樹種／方塊物品貼圖樹冠／樹距 ≥2）→ Task 3＋§5；§B3.4（花／草叢／仙人掌／冰／cross 模型）→ Task 4＋5＋6＋§6＋§7；§B3.5（決策 B 不保／`worldgenVersion`／一次性提示）→ Task 7＋8＋§8；§批末驗收（生成統計／目視／效能／worker 相容）→ 〈批末驗收〉；§跨批次（版本 0.6.0／README／發布說明）→ Task 10。
 - **型別一致**：`WORLDGEN_VERSION`／`worldgenVersion`（Task 7 產生、Task 8 消費）；`Biome` 8 種 union（Task 2 產生、Task 3／6／`biome-fog` 消費）；`BlockDef.shape`／`isCross`／`isTargetable`（Task 4 產生、Task 5 消費）；`ChunkMesh.foliage`（Task 4 產生、Task 4 的 renderer 消費）；`TREE_CANDIDATE_PROBABILITY`（Task 3 產生、Task 3 的 `worldgen-stats.test.ts` 消費）；**新物品 id（9 個）與 `BLOCK_PAIRS`（Task 3 補 4 個、Task 4 補 5 個；`ITEM_IDS` 計數＝讀現況基數 N → N + 4 → N + 9）**（Task 3／4 產生、Task 3／4 的 `items.test.ts` 消費；`PLACEABLE` 同步補 9 筆）；`needsWorldgenNotice`（Task 7 產生、Task 8 消費）；存檔欄位名與公約 §3 一致（本機 v3 ＋ 附加、雲端 format 1 ＋ 附加）。
 - **既有測試守衛**：本批要改寫的既有測試逐條列在〈本批要改寫的既有測試（清單）〉；**沒有任何一條既有斷言被刪除**（`items.test.ts` 的「每個 block 都要有 item form」守衛、`blocks.test.ts` 的窮舉表、`sounds.test.ts` 的長度斷言、`chunk-renderer.test.ts` 的子節點數斷言都只是「補資料／改數字」，覆蓋範圍不減）。
-- **Review Focus→測試**：舊存檔欄位語意 → Task 7／8；跨塊樹冠與樹距 → Task 3；統計容差 → Task 1／2／3／6；cross 互動 → Task 5；效能與 worker → Task 9；block id 與 tile → Task 3／4。
+- **Review Focus→測試**：舊存檔欄位語意 → Task 7／8；跨塊樹冠與樹距 → Task 3；統計容差 → Task 1／2／3／6；cross 互動 → Task 5（可命中／瞬破／`canPlaceAt` 語意層）＋ **Task 9（覆蓋植被的接線：放置目標指向被點擊格本身，Step 4）**；效能與 worker → Task 9；block id 與 tile → Task 3／4。
 - **比例**：計畫以決策、數值、簽名與測試斷言為主；演算法只在本質上無法由簽名與測試決定的地方（高度公式、樹冠形狀、cross quad 幾何）給出逐字公式／座標表，未抄整支程式。
 - **已知未測面**：`src/main.ts` 無測試（組裝根）——Task 6／8／9 的接線以人工步驟佐證並在回報中列「未自動化」；地形視覺未經 Playwright 自動化驗證（見〈批末驗收〉第 6 點）。
 - **2026-10-20 終審修正摘要**（本計畫依最終跨計畫複核報告修正；修正點在正文以「（2026-10-20 終審修正：…）」標出）：
