@@ -19,6 +19,8 @@
 //    **覆蓋植被時不放任何掉落流程**。
 // ③ 危險傷害與生物群系取樣的每幀接線（Task 9 Step 3 第 2／4 項）。
 // ④ 「地形已改變」提示的時機（Task 8）：套用點不跳、進場點才跳、本機條目回歸。
+// ⑤ 被動生物跨存檔的接線（B4 Task 10）：存檔帶的是**場上名單**、還原結果**指派回**
+//    驅動遊戲的那個變數（AST 層的「結構 + 語意」釘子 → 擋得住「假綠」）。
 
 import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
@@ -240,6 +242,128 @@ function blockAfter(marker: string): string {
   const at = mainSource.indexOf(marker);
   if (at === -1) throw new Error(`main.ts 裡找不到 ${marker}——請更新這支釘子`);
   return braceMatchedBody(at + marker.length - 1);
+}
+
+// ---- AST 層的「結構 + 語意」釘子 -----------------------------------------
+//
+// **為什麼需要 AST**：字串比對**分不出**「存檔傳的是場上的名單」與「存檔傳的是
+// 空陣列」——兩者的原始碼都含 `passiveMobs` 這幾個字 → 那是**假綠**的釘子。
+// AST 看得到「屬性的值是**哪一種節點**」→ 短名屬性（`passiveMobs,`＝模組級變數
+// 本身）與陣列字面值（`passiveMobs: []`）是不同的節點種類 → 釘得住。
+
+/** `main.ts` 的 AST（`setParentNodes = true` → 節點的 `parent` 可用）。 */
+const mainAst = ts.createSourceFile('main.ts', rawMain, ts.ScriptTarget.Latest, true);
+
+/** 走訪某個節點的整棵子樹（含自己）。 */
+function walkAst(node: ts.Node, visit: (n: ts.Node) => void): void {
+  visit(node);
+  ts.forEachChild(node, (child) => walkAst(child, visit));
+}
+
+/** 某個**頂層**函式的宣告節點（找不到 → null）。 */
+function findFunctionDecl(name: string): ts.FunctionDeclaration | null {
+  for (const st of mainAst.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name && st.name.text === name) return st;
+  }
+  return null;
+}
+
+/** 呼叫的「被呼叫者」名稱：識別字（`foo()`）或方法存取（`obj.foo()` → `foo`）。 */
+function calleeName(expr: ts.Expression): string | null {
+  if (ts.isIdentifier(expr)) return expr.text;
+  if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.name)) return expr.name.text;
+  return null;
+}
+
+/** 某個函式本體裡「把 `target` 指派成 `callName(...)` 的呼叫」的呼叫節點。
+ *
+ *  **這是「結果有沒有指派回驅動遊戲的那個變數」的結構判準**：右邊必須是
+ *  `callName(...)`、左邊必須是 `target` 這個識別字。 */
+function findAssignmentCall(
+  fnName: string,
+  target: string,
+  callName: string,
+): ts.CallExpression | null {
+  const fn = findFunctionDecl(fnName);
+  if (!fn) return null;
+  let found: ts.CallExpression | null = null;
+  walkAst(fn, (n) => {
+    if (found) return;
+    if (!ts.isExpressionStatement(n)) return;
+    const e = n.expression;
+    if (!ts.isBinaryExpression(e) || e.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+    if (!ts.isIdentifier(e.left) || e.left.text !== target) return;
+    if (!ts.isCallExpression(e.right)) return;
+    if (calleeName(e.right.expression) !== callName) return;
+    found = e.right;
+  });
+  return found;
+}
+
+/** 某個函式裡「以 `callName(...)` 呼叫、且第一個引數是物件字面值」的呼叫節點。 */
+function findObjectLiteralCall(fnName: string, callName: string): ts.CallExpression | null {
+  const fn = findFunctionDecl(fnName);
+  if (!fn) return null;
+  let found: ts.CallExpression | null = null;
+  walkAst(fn, (n) => {
+    if (found) return;
+    if (!ts.isCallExpression(n)) return;
+    if (calleeName(n.expression) !== callName) return;
+    const first = n.arguments[0];
+    if (!first || !ts.isObjectLiteralExpression(first)) return;
+    found = n;
+  });
+  return found;
+}
+
+/** 全檔的某個函式呼叫（給「驅動遊戲的那個變數」用的跨函式檢查）。 */
+function findAllCalls(callName: string): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  walkAst(mainAst, (n) => {
+    if (ts.isCallExpression(n) && calleeName(n.expression) === callName) out.push(n);
+  });
+  return out;
+}
+
+/** 物件字面值裡某個屬性的**值節點**（短名屬性 → 它自己的識別字）。 */
+function propertyValue(obj: ts.ObjectLiteralExpression, key: string): ts.Expression | null {
+  for (const p of obj.properties) {
+    if (ts.isPropertyAssignment(p)) {
+      if (ts.isIdentifier(p.name) && p.name.text === key) return p.initializer;
+    } else if (ts.isShorthandPropertyAssignment(p) && p.name.text === key) {
+      // 短名屬性（`passiveMobs,`）→ 值就是**那個識別字本身**（模組級變數）。
+      return p.name;
+    }
+  }
+  return null;
+}
+
+/** 模組層級（頂層 `let`／`const`）的變數宣告名。 */
+function moduleLevelVarNames(): string[] {
+  const names: string[] = [];
+  for (const st of mainAst.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (ts.isIdentifier(d.name)) names.push(d.name.text);
+    }
+  }
+  return names;
+}
+
+/** 函式**內部**的區域變數宣告名（**不含**模組層級的 `let`／`const`）。 */
+function localVarNames(): string[] {
+  const names: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const list = node.parent; // VariableDeclarationList
+      const stmt = list && list.parent; // VariableStatement
+      // 模組層級的宣告 → 它的祖先是頂層的 VariableStatement → 不算「區域」。
+      if (!stmt || !ts.isVariableStatement(stmt)) names.push(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(mainAst);
+  return names;
 }
 
 describe('接線釘子的工具（剔除註解）', () => {
@@ -505,38 +629,96 @@ describe('main.ts 接線（B4 Task 9：按住右鍵 1.6 秒才吃）', () => {
 // ---- B4 Task 10 接線：被動生物跨存檔（附加欄位 `passiveMobs`）---------------
 // 這批把「被動生物每場重來」改成「被動生物跟著存檔走」→ 屬於**行為改變** →
 // 用釘子守住（「接線被拆掉」＝ 存／讀之間生物會無聲消失）。
+//
+// **釘子分兩層（AST 層）**：
+// - **結構層**：確實呼叫 `restorePassiveMobs(`；確實把它**指派回** `passiveMobs`。
+// - **語意層**：存檔時傳的是**當前場上的名單**（不是空陣列、不是別名）；被指派
+//   的那個識別字，必須就是渲染器與打擊路徑讀的那一個。
+// （只用字串比對的釘子會**假綠**：把存檔改成傳 `passiveMobs: []`、或把還原結果
+//   丟掉不指派回去，字串釘子都照樣綠。）
 describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
-  it('the save path carries the passive mobs into the payload', () => {
-    // 本機存檔：`sessionSavePayload` → `collectSavePayload` 必須帶 `passiveMobs`。
-    const body = functionBody('sessionSavePayload');
-    expect(body).toContain('passiveMobs');
+  it('the save path stores the LIVE roster (not an empty array)', () => {
+    // `collectSavePayload({...})` 的 `passiveMobs` 屬性值必須是**模組級的
+    // `passiveMobs` 變數本身**（短名屬性）→ 傳 `[]`（空陣列）或傳別的別名都紅。
+    const call = findObjectLiteralCall('sessionSavePayload', 'collectSavePayload');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('sessionSavePayload 沒有呼叫 collectSavePayload');
+    const value = propertyValue(call.arguments[0] as ts.ObjectLiteralExpression, 'passiveMobs');
+    expect(value).not.toBeNull();
+    if (!value) throw new Error('collectSavePayload 沒有 passiveMobs 屬性');
+    expect(ts.isIdentifier(value)).toBe(true);
+    expect(ts.isIdentifier(value) ? value.text : '').toBe('passiveMobs');
+    // 明確擋掉「空陣列」這個退化（型別上它會是 ArrayLiteralExpression）。
+    expect(ts.isArrayLiteralExpression(value)).toBe(false);
   });
 
-  it('the cloud checkpoint path carries the passive mobs into the payload', () => {
-    const body = functionBody('saveCloudNow');
-    expect(body).toContain('buildCloudData(');
-    expect(body).toContain('passiveMobs');
+  it('the cloud checkpoint stores the LIVE roster (not an empty array)', () => {
+    const call = findObjectLiteralCall('saveCloudNow', 'buildCloudData');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('saveCloudNow 沒有呼叫 buildCloudData');
+    const value = propertyValue(call.arguments[0] as ts.ObjectLiteralExpression, 'passiveMobs');
+    expect(value).not.toBeNull();
+    if (!value) throw new Error('buildCloudData 沒有 passiveMobs 屬性');
+    expect(ts.isIdentifier(value)).toBe(true);
+    expect(ts.isIdentifier(value) ? value.text : '').toBe('passiveMobs');
+    expect(ts.isArrayLiteralExpression(value)).toBe(false);
   });
 
-  it('the continue path restores the passive mobs from the payload', () => {
-    const body = functionBody('continueGame');
-    expect(body).toContain('restorePassiveMobs(');
-    expect(body).toContain('normalizePassiveMobs(');
+  it('the continue path assigns the restored roster back to the live variable', () => {
+    // **結構層**：確實呼叫 `restorePassiveMobs(`；**語意層**：結果**指派回**
+    // 模組級的 `passiveMobs`（不是丟掉、不是指派到別的變數）。
+    const call = findAssignmentCall('continueGame', 'passiveMobs', 'restorePassiveMobs');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('continueGame 沒有把還原結果指派回 passiveMobs');
+    // 還原的輸入必須先過正規化（髒紀錄逐筆丟棄）。
+    const arg = call.arguments[0];
+    expect(ts.isCallExpression(arg)).toBe(true);
+    if (arg && ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
+      expect(arg.expression.text).toBe('normalizePassiveMobs');
+    }
     // 還原必須發生在「清掉舊生物」之後（否則會被清掉）。
+    const body = functionBody('continueGame');
     const clearAt = body.indexOf('resetSessionEntities()');
     const restoreAt = body.indexOf('restorePassiveMobs(');
     expect(clearAt).toBeGreaterThan(-1);
     expect(restoreAt).toBeGreaterThan(clearAt);
   });
 
-  it('the cloud apply path restores the passive mobs from the payload', () => {
+  it('the cloud apply path assigns the restored roster back to the live variable', () => {
+    const call = findAssignmentCall('applyCloudData', 'passiveMobs', 'restorePassiveMobs');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('applyCloudData 沒有把還原結果指派回 passiveMobs');
+    const arg = call.arguments[0];
+    expect(ts.isCallExpression(arg)).toBe(true);
+    if (arg && ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
+      expect(arg.expression.text).toBe('normalizePassiveMobs');
+    }
     const body = functionBody('applyCloudData');
-    expect(body).toContain('restorePassiveMobs(');
-    expect(body).toContain('normalizePassiveMobs(');
     const clearAt = body.indexOf('resetSessionEntities()');
     const restoreAt = body.indexOf('restorePassiveMobs(');
     expect(clearAt).toBeGreaterThan(-1);
     expect(restoreAt).toBeGreaterThan(clearAt);
+  });
+
+  it('the live roster variable is the one the game renders, steps and fights with', () => {
+    // **語意閉環**：被指派回去的那個識別字，必須就是「渲染器吃的名單」「AI 步進
+    // 吃的名單」「近戰打擊吃的名單」——否則「指派回 passiveMobs」只是字面上的。
+    for (const callName of ['syncPassiveMobs', 'stepPassiveMobs', 'attackPassiveMob']) {
+      const calls = findAllCalls(callName);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) {
+        const first = c.arguments[0];
+        expect(ts.isIdentifier(first)).toBe(true);
+        expect(first && ts.isIdentifier(first) ? first.text : '').toBe('passiveMobs');
+      }
+    }
+  });
+
+  it('`passiveMobs` is a single module-level roster (no local shadow)', () => {
+    // 模組層級宣告存在 → 「指派回 module 級變數」才有意義。
+    expect(moduleLevelVarNames()).toContain('passiveMobs');
+    // 沒有任何函式裡的同名區域變數（否則指派回的可能是一個被遮蔽的局部變數）。
+    expect(localVarNames()).not.toContain('passiveMobs');
   });
 
   it('a new game restores nothing (the roster starts empty)', () => {

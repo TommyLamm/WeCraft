@@ -19,6 +19,8 @@
  *
  * **數量上限**：`MAX_PASSIVE_MOBS`（12，與生成上限**同一個常數**）→ 超過就只
  * 保留前 12 筆，後面的丟棄（存／讀之間不會有生物無聲消失）。
+ * **兩條路徑都夾制**：`normalizePassiveMobs`（載入）與 `restorePassiveMobs`
+ * （還原）各自都保證不超過 12 → **防禦縱深**，不依賴呼叫端有沒有先正規化。
  */
 
 import {
@@ -77,15 +79,42 @@ export function serializePassiveMobs(mobs: readonly PassiveMob[]): PassiveMobRec
 }
 
 /**
+ * 逐筆驗證一筆記錄 → 回傳**正規化後**的記錄；不合法 → `null`（這一筆要丟棄）。
+ *
+ * **這是「壞資料怎麼辦」的單一真值**：`normalizePassiveMobs`（載入路徑）與
+ * `restorePassiveMobs`（還原路徑）**共用**這一支 → 兩邊的驗證規則不會漂移。
+ * 檢查項目（六項，語意不可更動）：
+ * 1. 種類在 {@link PASSIVE_DEFS}（含原型鍵守門）。
+ * 2. 三個座標都是有限數字。
+ * 3. `hp` 是有限數字且 **> 0**（死掉的生物不該被還原）。
+ * 4. `hp` **夾到該種類的上限**（雞 4／羊 8／豬牛 10）。
+ * 5. `yaw` 不是有限數字（或缺漏）→ 記成 `0`（該筆仍留著：朝向只是附帶資訊）。
+ * 6. 整包不是陣列 → 由呼叫端處理（`normalizePassiveMobs` 回 `[]`）。
+ */
+function normalizePassiveRecord(item: unknown): PassiveMobRecord | null {
+  if (typeof item !== 'object' || item === null) return null;
+  const r = item as Record<string, unknown>;
+  if (!isPassiveKind(r.kind)) return null;
+  const { x, y, z } = r;
+  if (!isFiniteNum(x) || !isFiniteNum(y) || !isFiniteNum(z)) return null;
+  const hp = r.hp;
+  if (!isFiniteNum(hp) || hp <= 0) return null;
+  return {
+    kind: r.kind,
+    x,
+    y,
+    z,
+    hp: Math.min(PASSIVE_DEFS[r.kind].hp, hp),
+    yaw: isFiniteNum(r.yaw) ? r.yaw : 0,
+  };
+}
+
+/**
  * 把（不可信的）原始資料正規化成一份**安全**的記錄清單。
  *
- * 規則（逐筆檢查，**壞的丟棄該筆、好的留著**）：
+ * 規則（逐筆檢查，**壞的丟棄該筆、好的留著**；細節見
+ * {@link normalizePassiveRecord}）：
  * - 整包不是陣列 → 回 `[]`。
- * - 種類不在 {@link PASSIVE_DEFS} → 丟棄該筆（含原型鍵）。
- * - 三個座標不是有限數字 → 丟棄該筆（不許生出 NaN 位置的幽靈生物）。
- * - `hp` 不是有限數字或 ≤ 0 → 丟棄該筆（死掉的生物不該被還原）。
- * - `hp` 超過該種類的上限 → **夾到上限**（雞 4／羊 8／豬牛 10）。
- * - `yaw` 不是有限數字（或缺漏）→ 記成 `0`（該筆仍留著：朝向只是附帶資訊）。
  * - 累積到 {@link MAX_PASSIVE_MOBS}（12）就停止 → 後面的丟棄。
  *
  * 這是**載入路徑**的單一真值：本機存檔（`loadGame`）與雲端存檔
@@ -98,21 +127,8 @@ export function normalizePassiveMobs(raw: unknown): PassiveMobRecord[] {
     // 上限先到就停（後面的記錄一律丟棄）——與生成端的「全場上限 12」同一個
     // 常數 → 存／讀之間不會有生物無聲消失。
     if (out.length >= MAX_PASSIVE_MOBS) break;
-    if (typeof item !== 'object' || item === null) continue;
-    const r = item as Record<string, unknown>;
-    if (!isPassiveKind(r.kind)) continue;
-    const { x, y, z } = r;
-    if (!isFiniteNum(x) || !isFiniteNum(y) || !isFiniteNum(z)) continue;
-    const hp = r.hp;
-    if (!isFiniteNum(hp) || hp <= 0) continue;
-    out.push({
-      kind: r.kind,
-      x,
-      y,
-      z,
-      hp: Math.min(PASSIVE_DEFS[r.kind].hp, hp),
-      yaw: isFiniteNum(r.yaw) ? r.yaw : 0,
-    });
+    const rec = normalizePassiveRecord(item);
+    if (rec) out.push(rec);
   }
   return out;
 }
@@ -124,26 +140,33 @@ export function normalizePassiveMobs(raw: unknown): PassiveMobRecord[] {
  * 朝向（`createPassiveMob` 給的是滿血與隨機初始方向）。
  *
  * **`kbVel`／`vel` 一定要補成合法的有限值**：`stepPassiveMob` 直接讀
- * `m.kbVel.x`／`m.vel.x`（**沒有任何守衛**）→ 這兩個欄位若缺漏，載入後的下一幀
- * 就會 TypeError（整局直接壞掉）。它們是**暫態**（不序列化），所以「載入後必須
- * 存在」這件事只能由還原端保證 —— 這就是本函式明確把它們寫成零的原因。
+ * `m.kbVel.x`／`m.vel.x`（**沒有任何守衛**）、渲染器也讀 `mob.vel.x`（算行走
+ * 週期）→ 這兩個欄位若缺漏，載入後的下一幀就會 TypeError（整局直接壞掉）。
+ * 它們是**暫態**（不序列化），所以「載入後必須存在」這件事只能由還原端保證 ——
+ * 這就是本函式明確把它們寫成零的原因。
+ *
+ * **數量上限也在這裡夾制**（**防禦縱深**）：本函式**自己**保證還原出來的生物
+ * 不超過 {@link MAX_PASSIVE_MOBS}（12）→ 不管呼叫端有沒有先跑
+ * {@link normalizePassiveMobs}，全場上限都不會被突破（否則有人直接呼叫這支
+ * 傳 20 筆進來，就會還原 20 隻、違反「全場上限 12」的不變量）。
  *
  * 記錄本身若不合法（未知種類／非有限座標／非正血量）→ **跳過該筆**（不生出
- * 幽靈生物）；呼叫端通常已經先跑過 {@link normalizePassiveMobs}，這裡是第二道
- * 防線（`restorePassiveMobs` 也可能被直接呼叫）。
+ * 幽靈生物）；逐筆的驗證規則與 {@link normalizePassiveMobs} 共用同一支
+ * {@link normalizePassiveRecord} → 兩邊不會漂移。
  */
 export function restorePassiveMobs(records: readonly PassiveMobRecord[]): PassiveMob[] {
   const out: PassiveMob[] = [];
-  for (const rec of records) {
-    if (!isPassiveKind(rec.kind)) continue;
-    const def = PASSIVE_DEFS[rec.kind];
-    if (!isFiniteNum(rec.x) || !isFiniteNum(rec.y) || !isFiniteNum(rec.z)) continue;
-    if (!isFiniteNum(rec.hp) || rec.hp <= 0) continue;
+  for (const item of records) {
+    // **全場上限（12）**——與生成端、存檔端同一個常數（防禦縱深：不依賴呼叫端
+    // 有沒有先正規化）。
+    if (out.length >= MAX_PASSIVE_MOBS) break;
+    const rec = normalizePassiveRecord(item);
+    if (!rec) continue;
     const mob = createPassiveMob(rec.kind, { x: rec.x, y: rec.y, z: rec.z });
     out.push({
       ...mob,
-      hp: Math.min(def.hp, rec.hp),
-      yaw: isFiniteNum(rec.yaw) ? rec.yaw : 0,
+      hp: rec.hp, // 已由 normalizePassiveRecord 夾到該種類的上限
+      yaw: rec.yaw, // 已由 normalizePassiveRecord 正規化（非有限 → 0）
       // **暫態欄位不序列化，但載入後必須存在且是有限數字**（否則 stepPassiveMob
       // 下一幀就 TypeError）→ 這裡明確寫成零。
       vel: { x: 0, y: 0, z: 0 },

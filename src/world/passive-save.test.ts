@@ -3,6 +3,7 @@ import {
   serializePassiveMobs,
   normalizePassiveMobs,
   restorePassiveMobs,
+  type PassiveMobRecord,
 } from './passive-save';
 import { createPassiveMob, stepPassiveMob, MAX_PASSIVE_MOBS, PASSIVE_DEFS } from './passive-mobs';
 
@@ -172,5 +173,42 @@ describe('restorePassiveMobs', () => {
 
   it('restoring an empty list yields no mobs', () => {
     expect(restorePassiveMobs([])).toEqual([]);
+  });
+
+  /**
+   * I-1（防禦縱深）：**還原端自己**也必須夾制全場上限。
+   *
+   * 呼叫端（`main.ts`）照例會先跑 `normalizePassiveMobs`（它也會夾 12）→ 但
+   * `restorePassiveMobs` **不得**只靠呼叫端：有人直接呼叫它傳 20 筆進來，就會
+   * 還原 20 隻、違反「全場上限 12」的不變量（生成端與存檔端都用同一個常數）。
+   */
+  it('the restored roster is capped at 12 even without a prior normalization', () => {
+    const records = Array.from({ length: 20 }, (_, i) => record('cow', { x: i }));
+    const mobs = restorePassiveMobs(records);
+    expect(mobs).toHaveLength(MAX_PASSIVE_MOBS);
+    expect(mobs).toHaveLength(12);
+    // 只保留**前** 12 筆
+    expect(mobs[0].pos.x).toBe(0);
+    expect(mobs[11].pos.x).toBe(11);
+  });
+
+  it('the cap counts only the mobs that were actually restored', () => {
+    // 前 20 筆裡混著壞的（未知種類／NaN 座標／死掉的）→ 只有好的才計入上限。
+    // 「未知種類」在型別上本來就不合法 → 這裡刻意用轉型塞進去（還原路徑必須
+    // 容忍這種髒資料 → 跳過該筆）。
+    const badKind = { kind: 'dragon', x: 1, y: 2, z: 3, hp: 10, yaw: 0 } as unknown as PassiveMobRecord;
+    const records: PassiveMobRecord[] = [
+      record('cow', { x: 0 }),
+      badKind,
+      record('pig', { x: 1 }),
+      ...Array.from({ length: 30 }, (_, i) => record('sheep', { x: i + 10 })),
+    ];
+    const mobs = restorePassiveMobs(records);
+    expect(mobs).toHaveLength(MAX_PASSIVE_MOBS);
+    expect(mobs.map((m) => m.kind)).toEqual([
+      'cow',
+      'pig',
+      ...Array.from({ length: 10 }, () => 'sheep'),
+    ]);
   });
 });

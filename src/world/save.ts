@@ -72,6 +72,20 @@ export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 /** The shape written to / read from the single local slot. */
 export type SavePayload = SavePayloadV3;
 
+/**
+ * v3 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
+ *
+ * B4 Task 10：`loadGame`（讀取端）與 `collectSavePayload`（寫出端）**一律**帶這個
+ * 鍵 → 用這個型別把「一定有」表達出來，呼叫端不必寫 `?? []` 或「有沒有這個鍵」
+ * 的分支。磁碟上的**舊**記錄仍然可以沒有這個欄位 → 那由 `loadGame` 的正規化補上
+ * （空陣列 ＝ 沒有生物，不是壞檔）。
+ *
+ * 它是 {@link SavePayload}（＝`SavePayloadV3`）的**子型** → 既有呼叫端
+ * （`saveGame(payload: SavePayload)` 等）完全不受影響。 */
+export interface SavePayloadWithPassiveMobs extends SavePayloadV3 {
+	passiveMobs: PassiveMobRecord[];
+}
+
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
  *  tests pass plain objects while main.ts passes thin adapters. */
 export interface SaveSources {
@@ -106,7 +120,7 @@ export interface SaveSources {
  *  `world.serializeModified()`, which already returns fresh tuples.
  *  B3 Task 7：每一份新寫出的 payload 都帶「當前」的 `WORLDGEN_VERSION`——寫入端
  *  是唯一會蓋值的地方（讀取端從不補值，所以舊存檔仍然看得出是舊存檔）。 */
-export function collectSavePayload(args: SaveSources): SavePayload {
+export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMobs {
 	return {
 		version: 3,
 		savedAt: args.savedAt ?? Date.now(),
@@ -254,7 +268,7 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）；記錄上是有限數字 →
  *  原樣保留；記錄上是髒值（例如字串 `'x'`——基本結構檢查刻意不看這個附加欄位）
  *  → 把該鍵剝除，不讓髒版本值繼續往外傳。 */
-export async function loadGame(): Promise<SavePayload | null> {
+export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 	try {
 		const db = await openSaveDb();
 		try {
@@ -296,7 +310,11 @@ export async function loadGame(): Promise<SavePayload | null> {
 			// 明確丟棄這個鍵（不靠副作用式 `delete`）：回傳物件組出來就不帶它。
 			// 取出的值型別是 `number | undefined`，但記錄裡實際可能是字串等髒值
 			// → 再交給 `readWorldgenVersion` 於執行期擋一次。
-			const { worldgenVersion: rawVersion, ...migratedClean } = migrated;
+			const {
+				worldgenVersion: rawVersion,
+				passiveMobs: rawPassiveMobs,
+				...migratedClean
+			} = migrated;
 			const worldgenVersion = readWorldgenVersion(rawVersion);
 			// B4 Task 10：附加欄位 `passiveMobs` —— **一律回傳**（正規化後的陣列）。
 			// 1) 舊記錄沒有這個鍵 → 空陣列（＝沒有生物），**不是**壞檔、不報錯。
@@ -306,10 +324,14 @@ export async function loadGame(): Promise<SavePayload | null> {
 			// 讀取端在這裡**補值**（與 `worldgenVersion` 刻意不補相反）：這個欄位
 			// 沒有「是不是舊存檔」的判準用途 → 一律給空陣列最省事，呼叫端也不必
 			// 寫「有沒有這個鍵」的分支。
+			//
+			// 讀的是**遷移後**的 `migrated`（與旁邊 `worldgenVersion` 同一個寫法：
+			// 把它從 `migrated` 上解構出來 → 原始的髒值不會跟著被回傳，然後再把
+			// 正規化後的值放回去）。
 			return {
 				...migratedClean,
 				...(worldgenVersion === undefined ? {} : { worldgenVersion }),
-				passiveMobs: normalizePassiveMobs((value as Partial<SavePayload>).passiveMobs),
+				passiveMobs: normalizePassiveMobs(rawPassiveMobs),
 			};
 		} finally {
 			db.close();

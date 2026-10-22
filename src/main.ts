@@ -236,9 +236,13 @@ interface WecraftDebug {
   }>;
   /** **敵對**生物的逐隻狀態（id／種類／座標／血量／白天燃燒剩餘秒數）。
    *
-   *  **純唯讀**：只是把當下的 `mobs` 映射成一份新陣列（不修改任何遊戲狀態、
-   *  不產生副作用）。用途：驗「屋簷下的殭屍不掉血」（看 `hp`／`burn`）與
-   *  「20 格外的骷髏不射箭」（看 `pos`）。 */
+   *  **用途**：B4 Task 12 的**批末真實瀏覽器驗收**（repo 外的 Playwright 探針）
+   *  需要讀到「每一隻敵對生物的 hp／burn／位置」→ 驗「屋簷下的殭屍不掉血」
+   *  （看 `hp`／`burn`）與「20 格外的骷髏不射箭」（看 `pos`）。先前只有
+   *  `mobs: () => mobs.length`（只有數量）→ 補不出這兩條。
+   *
+   *  **純唯讀**：只是把當下的 `mobs` 映射成一份**新**陣列（不修改任何遊戲狀態、
+   *  不產生副作用、不改變任何遊戲行為）。內容只有本機遊戲資料。 */
   mobStates: () => Array<{
     id: number;
     kind: MobKind;
@@ -251,9 +255,12 @@ interface WecraftDebug {
   }>;
   /** 玩家的生命／飢餓／飽食度現況（創造模式 → `null`，沒有飢餓條）。
    *
-   *  **純唯讀**：回傳當下 `vitals` 的一份新快照。欄位名沿用 `player/survival.ts`
-   *  的 `Vitals`（`hp`／`maxHp`／`hunger`／`maxHunger`／`saturation`）。用途：
-   *  驗「進食後的飽食度值」。 */
+   *  **用途**：B4 Task 12 的**批末真實瀏覽器驗收**（repo 外的 Playwright 探針）
+   *  需要讀「進食後的飽食度值」→ 欄位名沿用 `player/survival.ts` 的 `Vitals`
+   *  （`hp`／`maxHp`／`hunger`／`maxHunger`／`saturation`；血量欄位是 `hp`）。
+   *
+   *  **純唯讀**：回傳當下 `vitals` 的一份**新**快照（不修改任何遊戲狀態、不產生
+   *  副作用）。 */
   vitalsState: () => {
     hp: number;
     maxHp: number;
@@ -2390,7 +2397,8 @@ window.__wecraft = {
       z: m.pos.z,
       hp: m.hp,
     })),
-  // 敵對生物的逐隻狀態（血量／燃燒／座標）→ 驗「屋簷下不掉血」「20 格外不射箭」
+  // 敵對生物的逐隻狀態（血量／燃燒／座標）→ 供 repo 外的驗收探針讀：
+  // 驗「屋簷下不掉血」「20 格外不射箭」。**純唯讀**（只映射出新陣列）。
   mobStates: () =>
     mobs.map((m) => ({
       id: m.id,
@@ -2401,7 +2409,8 @@ window.__wecraft = {
       hp: m.hp,
       burn: m.burn,
     })),
-  // 玩家的生命／飢餓／飽食度（創造模式 → null）
+  // 玩家的生命／飢餓／飽食度（創造模式 → null）→ 供驗收探針讀「進食後的飽食度」。
+  // **純唯讀**（只複製出一份新物件）。
   vitalsState: () =>
     vitals
       ? {
