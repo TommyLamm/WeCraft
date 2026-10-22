@@ -48,20 +48,33 @@ export function spawnBlockDrop(
 
 // ---- Survival mining (Task 5): vanilla break-time formula + harvest gates ----
 
-/** Tool tiers that exist as items (wooden/stone/iron pickaxe + axe). `level` is
- *  the harvest tier (0/1/2), `speed` the vanilla mining multiplier (2/4/6).
+/** Every tool that exists as an item, by family (pickaxe/axe/shovel ×
+ *  wood/stone/iron/gold/diamond). `level` is the harvest tier (0/1/2/3),
+ *  `speed` the vanilla mining multiplier (2/4/6 for the metal tiers plus
+ *  gold 12 and diamond 8).
  *  Swords are deliberately absent — a sword is not a tool: it never speeds
- *  mining up and never satisfies a `requiredTool`. Shovels are absent too
- *  (`ItemId` has none yet), so shovel-fast blocks always mine at speed 1. */
+ *  mining up and never satisfies a `requiredTool`. Shovels are present since
+ *  B5 (wood/stone/iron/gold/diamond), so shovel-fast blocks finally mine fast.
+ *  Gold is harvest tier 0 despite its speed 12: a golden pickaxe cannot
+ *  harvest gold or diamond ore (vanilla). */
 const TOOL_INFO: Readonly<
   Partial<Record<ItemId, { kind: ToolKind; level: number; speed: number }>>
 > = {
   wooden_pickaxe: { kind: 'pickaxe', level: 0, speed: 2 },
   stone_pickaxe: { kind: 'pickaxe', level: 1, speed: 4 },
   iron_pickaxe: { kind: 'pickaxe', level: 2, speed: 6 },
+  golden_pickaxe: { kind: 'pickaxe', level: 0, speed: 12 },
+  diamond_pickaxe: { kind: 'pickaxe', level: 3, speed: 8 },
   wooden_axe: { kind: 'axe', level: 0, speed: 2 },
   stone_axe: { kind: 'axe', level: 1, speed: 4 },
   iron_axe: { kind: 'axe', level: 2, speed: 6 },
+  golden_axe: { kind: 'axe', level: 0, speed: 12 },
+  diamond_axe: { kind: 'axe', level: 3, speed: 8 },
+  wooden_shovel: { kind: 'shovel', level: 0, speed: 2 },
+  stone_shovel: { kind: 'shovel', level: 1, speed: 4 },
+  iron_shovel: { kind: 'shovel', level: 2, speed: 6 },
+  golden_shovel: { kind: 'shovel', level: 0, speed: 12 },
+  diamond_shovel: { kind: 'shovel', level: 3, speed: 8 },
 };
 
 /** Can `held` (a hotbar stack; null = bare hand) harvest `blockId`?
@@ -112,32 +125,25 @@ export function getBreakTime(blockId: number, held: ItemStack | null): number {
 
 // ---- Melee combat (Task 9) ----
 
+/** Vanilla Java 1.20+ attack damage by item (wood/stone/iron/gold/diamond):
+ *  pickaxes 2/3/4/2/5, axes 7/9/9/7/9, shovels 2.5/3.5/4.5/2.5/5.5,
+ *  swords 4/5/6/4/7. Anything not listed is not a weapon (1). */
+const DAMAGE_TABLE: Readonly<Partial<Record<ItemId, number>>> = {
+  wooden_pickaxe: 2, stone_pickaxe: 3, iron_pickaxe: 4, golden_pickaxe: 2, diamond_pickaxe: 5,
+  wooden_axe: 7, stone_axe: 9, iron_axe: 9, golden_axe: 7, diamond_axe: 9,
+  wooden_shovel: 2.5, stone_shovel: 3.5, iron_shovel: 4.5, golden_shovel: 2.5, diamond_shovel: 5.5,
+  wooden_sword: 4, stone_sword: 5, iron_sword: 6, golden_sword: 4, diamond_sword: 7,
+};
+
 /** Melee damage dealt per hit with `heldItem` (a hotbar item id; null = bare
- *  hand): swords 4 (wooden) / 5 (stone) / 6 (iron), pickaxes 2, axes 3. Bare hand (and
- *  apple/stick/blocks): the plan's damage table says 2, this ships 1 — the
- *  Task 9 call was Minecraft parity (fist = 1), recorded here honestly since
- *  the plan text still reads 2 (the plan doc itself is orchestrator-owned and
- *  was not edited). Pure and item-only like `toolSpeed`; combat applies in
- *  both game modes (mobs exist regardless). */
+ *  hand), from `DAMAGE_TABLE` (B5 aligned it with vanilla; the old table's
+ *  "all pickaxes 2, all axes 3" was non-vanilla). Bare hand (and
+ *  apple/stick/blocks): Minecraft parity, fist = 1. Pure and item-only like
+ *  `toolSpeed`; combat applies in both game modes (mobs exist regardless). */
 export function toolDamage(heldItem: ItemId | null): number {
-  switch (heldItem) {
-    case 'wooden_sword':
-      return 4;
-    case 'stone_sword':
-      return 5;
-    case 'iron_sword':
-      return 6;
-    case 'wooden_axe':
-    case 'stone_axe':
-    case 'iron_axe':
-      return 3;
-    case 'wooden_pickaxe':
-    case 'stone_pickaxe':
-    case 'iron_pickaxe':
-      return 2;
-    default:
-      return 1;
-  }
+  if (!heldItem) return 1; // 徒手 1（原版）
+  const d = DAMAGE_TABLE[heldItem];
+  return d === undefined ? 1 : d;
 }
 
 /** Settled mob hitbox for the ray test: centred on `pos` in X/Z (±0.35),

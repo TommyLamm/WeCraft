@@ -53,6 +53,16 @@ describe('getBreakTime (Task 5: hardness × (harvestable ? 1.5 : 5) ÷ tool spee
     expect(getBreakTime(BLOCK.GLASS, null)).toBeCloseTo(0.45, 10);
   });
 
+  it('a wrong-tier tool pays the x5 penalty and drops nothing', () => {
+    // 金礦硬度 3.0：鐵鎬（6×）可收穫 → 3.0 × 1.5 / 6 = 0.75s
+    expect(getBreakTime(BLOCK.GOLD_ORE, { item: 'iron_pickaxe', count: 1 })).toBeCloseTo(0.75, 6);
+    // 石鎬不可收穫 → 3.0 × 5 / 4 = 3.75s
+    expect(getBreakTime(BLOCK.GOLD_ORE, { item: 'stone_pickaxe', count: 1 })).toBeCloseTo(3.75, 6);
+    // 鑽鎬 8× → 3.0 × 1.5 / 8 = 0.5625s；金鎬（12×，但等級 0 不可收穫）→ 3.0 × 5 / 12 = 1.25s
+    expect(getBreakTime(BLOCK.DIAMOND_ORE, { item: 'diamond_pickaxe', count: 1 })).toBeCloseTo(0.5625, 6);
+    expect(getBreakTime(BLOCK.DIAMOND_ORE, { item: 'golden_pickaxe', count: 1 })).toBeCloseTo(1.25, 6);
+  });
+
   it('bedrock and water are unbreakable with and without tools', () => {
     expect(getBreakTime(BLOCK.BEDROCK, null)).toBe(Infinity);
     expect(getBreakTime(BLOCK.BEDROCK, ironPick)).toBe(Infinity);
@@ -85,6 +95,19 @@ describe('canHarvest (Task 5 pickaxe tier gate — Task 6 drop gate)', () => {
     expect(canHarvest(BLOCK.LOG, null)).toBe(true);
     expect(canHarvest(BLOCK.LEAVES, null)).toBe(true);
     expect(canHarvest(BLOCK.GLASS, null)).toBe(true);
+  });
+
+  it('the harvest tiers follow the vanilla table', () => {
+    expect(canHarvest(BLOCK.GOLD_ORE, { item: 'iron_pickaxe', count: 1 })).toBe(true);
+    expect(canHarvest(BLOCK.GOLD_ORE, { item: 'diamond_pickaxe', count: 1 })).toBe(true);
+    expect(canHarvest(BLOCK.GOLD_ORE, { item: 'stone_pickaxe', count: 1 })).toBe(false);
+    expect(canHarvest(BLOCK.GOLD_ORE, { item: 'golden_pickaxe', count: 1 })).toBe(false);
+    expect(canHarvest(BLOCK.DIAMOND_ORE, { item: 'iron_pickaxe', count: 1 })).toBe(true);
+    expect(canHarvest(BLOCK.DIAMOND_ORE, { item: 'stone_pickaxe', count: 1 })).toBe(false);
+    // 既有門檻不得被破壞
+    expect(canHarvest(BLOCK.IRON_ORE, { item: 'stone_pickaxe', count: 1 })).toBe(true);
+    expect(canHarvest(BLOCK.IRON_ORE, { item: 'wooden_pickaxe', count: 1 })).toBe(false);
+    expect(canHarvest(BLOCK.STONE, { item: 'wooden_pickaxe', count: 1 })).toBe(true);
   });
 });
 
@@ -205,10 +228,34 @@ describe('toolSpeed (Task 5 vanilla tool tiers: wood 2 / stone 4 / iron 6)', () 
     expect(toolSpeed(BLOCK.STONE, held('dirt'))).toBe(1);
   });
 
-  it('shovel-fast blocks have no shovel item yet → 1× with anything', () => {
-    expect(toolSpeed(BLOCK.DIRT, held('iron_pickaxe'))).toBe(1);
-    expect(toolSpeed(BLOCK.SAND, held('iron_axe'))).toBe(1);
-    expect(toolSpeed(BLOCK.GRASS, null)).toBe(1);
+  it('tool speed covers every tier including gold and diamond', () => {
+    // 鎬 × 石頭（石頭的 requiredTool.kind = 'pickaxe'）
+    const picks: Array<[ItemId, number]> = [
+      ['wooden_pickaxe', 2], ['stone_pickaxe', 4], ['iron_pickaxe', 6], ['golden_pickaxe', 12], ['diamond_pickaxe', 8],
+    ];
+    for (const [item, speed] of picks) {
+      expect(toolSpeed(BLOCK.STONE, { item, count: 1 })).toBe(speed);
+    }
+    // 斧 × 原木（原木的 fastTool = 'axe'）
+    const axes: Array<[ItemId, number]> = [
+      ['wooden_axe', 2], ['stone_axe', 4], ['iron_axe', 6], ['golden_axe', 12], ['diamond_axe', 8],
+    ];
+    for (const [item, speed] of axes) {
+      expect(toolSpeed(BLOCK.LOG, { item, count: 1 })).toBe(speed);
+    }
+    // 鏟 × 泥土（泥土的 fastTool = 'shovel'）
+    const shovels: Array<[ItemId, number]> = [
+      ['wooden_shovel', 2], ['stone_shovel', 4], ['iron_shovel', 6], ['golden_shovel', 12], ['diamond_shovel', 8],
+    ];
+    for (const [item, speed] of shovels) {
+      expect(toolSpeed(BLOCK.DIRT, { item, count: 1 })).toBe(speed);
+    }
+  });
+
+  it('shovels finally mine the soil blocks fast', () => {
+    expect(toolSpeed(BLOCK.DIRT, { item: 'wooden_shovel', count: 1 })).toBe(2);
+    expect(toolSpeed(BLOCK.SAND, { item: 'iron_shovel', count: 1 })).toBe(6);
+    expect(getBreakTime(BLOCK.DIRT, { item: 'iron_shovel', count: 1 })).toBeCloseTo(0.5 * 1.5 / 6, 6);
   });
 
   it('unbreakable blocks report 1× (the gating lives in the break time, not here)', () => {
@@ -532,22 +579,36 @@ describe('toolDamage (Task 9 melee damage table)', () => {
     expect(toolDamage(null)).toBe(1);
   });
 
-  it('swords: wooden 4, stone 5, iron 6 (one tier step each)', () => {
+  it('sword damage matches vanilla', () => {
     expect(toolDamage('wooden_sword')).toBe(4);
     expect(toolDamage('stone_sword')).toBe(5);
     expect(toolDamage('iron_sword')).toBe(6);
+    expect(toolDamage('golden_sword')).toBe(4);
+    expect(toolDamage('diamond_sword')).toBe(7);
   });
 
-  it('pickaxes deal 2 (all tiers, iron included)', () => {
+  it('pickaxe damage matches vanilla', () => {
     expect(toolDamage('wooden_pickaxe')).toBe(2);
-    expect(toolDamage('stone_pickaxe')).toBe(2);
-    expect(toolDamage('iron_pickaxe')).toBe(2);
+    expect(toolDamage('stone_pickaxe')).toBe(3);
+    expect(toolDamage('iron_pickaxe')).toBe(4);
+    expect(toolDamage('golden_pickaxe')).toBe(2);
+    expect(toolDamage('diamond_pickaxe')).toBe(5);
   });
 
-  it('axes deal 3 (all tiers, iron included)', () => {
-    expect(toolDamage('wooden_axe')).toBe(3);
-    expect(toolDamage('stone_axe')).toBe(3);
-    expect(toolDamage('iron_axe')).toBe(3);
+  it('axe damage matches vanilla', () => {
+    expect(toolDamage('wooden_axe')).toBe(7);
+    expect(toolDamage('stone_axe')).toBe(9);
+    expect(toolDamage('iron_axe')).toBe(9);
+    expect(toolDamage('golden_axe')).toBe(7);
+    expect(toolDamage('diamond_axe')).toBe(9);
+  });
+
+  it('shovel damage matches vanilla', () => {
+    expect(toolDamage('wooden_shovel')).toBe(2.5);
+    expect(toolDamage('stone_shovel')).toBe(3.5);
+    expect(toolDamage('iron_shovel')).toBe(4.5);
+    expect(toolDamage('golden_shovel')).toBe(2.5);
+    expect(toolDamage('diamond_shovel')).toBe(5.5);
   });
 
   it('non-weapons (apple, stick, blocks) fall back to 1', () => {
