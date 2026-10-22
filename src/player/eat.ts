@@ -7,6 +7,8 @@ import type { Vitals } from './survival';
  *  - `canEat`：**滿飢餓不可進食**（`hunger >= maxHunger` → false）。
  *  - `EatProgress`：按住進食的計時（原版 32 tick ＝ 1.6 秒）；放開、換物品
  *    或不允許進食 → 進度歸零。
+ *  - `eatTick`：把「右鍵目前是否仍按住」與進度綁在一起的每幀入口（本批自有的
+ *    純邏輯；旗標欄位由 B2 擁有 → 本模組只消費 `held` 參數）。
  *
  *  與原版的差異（Task 12 的 README〈與原版的差異〉要列出，本批不做）：
  *  1. 腐肉 80% 機率給「飢餓」狀態效果 —— 本作沒有狀態效果系統，不實作。
@@ -81,8 +83,8 @@ export interface EatResult {
  *  （miss → same ref，`spawnBlockDrop` 慣例）。
  *  數量 ≥ 2 → 減 1（新的陣列 ＋ 新的 stack）；數量 1 或非正／非有限 → 清空
  *  格子（不留下污染過的 stack）。
- *  註：`src/main.ts` 的右鍵脈衝進食路徑目前仍用 `APPLE_FOOD`／`APPLE_SAT`
- *  套用食物值 —— Task 9 會整段改寫成「按住 1.6 秒」並依 `foodFor()` 取值。 */
+ *  註：`src/main.ts` 的進食路徑在 Task 9 改成「按住右鍵 1.6 秒」並依
+ *  `foodFor()` 取食物值（不再寫死蘋果的 4／2.4）。 */
 export function eatFromSlot(
   slots: ReadonlyArray<ItemStack | null>,
   index: number,
@@ -136,4 +138,42 @@ export class EatProgress {
     }
     return 'eating';
   }
+}
+
+/** 每幀推進進食狀態（純邏輯；本批自有的進食規則入口）。
+ *
+ *  `held` ＝ 右鍵目前是否仍按住（由呼叫端從 `input.state.placeHeld` 讀入 ——
+ *  **那個旗標欄位由 B2（0.5.0）擁有，本模組不碰輸入層**）。
+ *  - 放開右鍵 → 進度歸零（回 `'idle'`）；
+ *  - 按住且允許進食 → 累積（`'eating'`）；
+ *  - 累積滿 `EAT_TIME_SEC`（1.6 秒）→ 回 `'eaten'`（**呼叫端才扣物品**）。
+ *
+ *  **為什麼「按住」的語意放在這裡（而不是輸入層）**：這樣「按住右鍵才吃東西」
+ *  這條規則可以被單元測試釘死（`eatTick` 是純函式），而 B2 擁有的輸入層一行
+ *  都不用改 —— B2 先合併或 B4 先合併都不會撞號。
+ *
+ *  **脈衝與按住是兩件事**：`input.state.place` 是「右鍵被按下過一次」的單擊脈衝
+ *  （放置方塊、開工作台靠它）；`input.state.placeHeld` 是「右鍵目前還按著」。
+ *  進食用 `placeHeld` 累積時間，放置仍用脈衝 —— 兩者不互相吃掉。
+ *
+ *  `allowed` 由呼叫端用 `canEat(vitals, item)` 判定（**滿飢餓不可進食**：
+ *  為 false 時 `EatProgress.update()` 會歸零並回 `'idle'` → 不開始進食、
+ *  也不消耗物品）。
+ *
+ *  **IEEE-754 邊界**：`EatProgress.update()` 的比較維持 `elapsed >= EAT_TIME_SEC`
+ *  （不變）。`EAT_TIME_SEC` 是最接近 1.6 的那個 double（1.6000000000000000888…）
+ *  → 「整整 1.6 秒」累積出來的值恰好就是它，`>=` 成立 → 吃掉；而
+ *  「1.59 + 0.005 + 0.005」在浮點下是 1.5999999999999998668（**嚴格小於**那個
+ *  門檻）→ 那一刻其實還沒滿 1.6 秒。**這是浮點的偽像、不是規則** → 測試用
+ *  0.01 跨過門檻，門檻本身由「整整 1.6 秒」那條案例釘死。 */
+export function eatTick(
+  progress: EatProgress,
+  opts: { held: boolean; item: ItemId | null; allowed: boolean; dtSec: number },
+): 'idle' | 'eating' | 'eaten' {
+  if (!opts.held) {
+    // 放開右鍵 → 進度歸零（重新按住要從零開始累積）。
+    progress.reset();
+    return 'idle';
+  }
+  return progress.update(opts.dtSec, opts.item, opts.allowed);
 }

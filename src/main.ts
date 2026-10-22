@@ -70,8 +70,17 @@ import {
   hitMobId,
   attackMob,
 } from './player/interact';
-// Task 8: apple eating — pure slot consumption; vitals/sound/toast stay in main
-import { APPLE_FOOD, APPLE_SAT, eatFromSlot } from './player/eat';
+// B4 Task 9：進食 —— 規則（按住右鍵 1.6 秒、食物值表、扣物品）都在
+// `player/eat.ts` 的純邏輯裡；vitals／音效／成就留在 main 這層組裝根。
+// **食用的食物值一律來自 `foodFor()`**（食物值表的單一真值）→ 不寫死蘋果。
+import {
+  EAT_TIME_SEC,
+  EatProgress,
+  canEat,
+  eatFromSlot,
+  eatTick,
+  foodFor,
+} from './player/eat';
 // B2.2／B2.5：按住連放／連丟的節拍（純邏輯，不碰 DOM／Three、不自持時鐘）。
 // **本模組只負責「按住之後的重複」**：第一次觸發（第一次右鍵／第一次按 Q）由
 // main 的完整使用流程與 Q 脈衝負責 —— 節拍層自己不會觸發第一次動作。
@@ -139,6 +148,8 @@ import { createCrafting, type CraftingParams } from './ui/crafting';
 import { createFurnace } from './ui/furnace';
 import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
+// B4 Task 9：進食進度條（可選的視覺回饋；**規則不依賴它**）。
+import { createEatProgress } from './ui/eat-progress';
 // B3 Task 8：「地形已改變」一次性提示（**toast** 路徑，與 B1.4 的模態確認框
 // `menus.showConfirm` 分開——這裡只 import 提示模組，不碰 menus）。
 import { pushWorldgenNotice } from './ui/worldgen-notice';
@@ -291,6 +302,8 @@ const deathScreen = createDeathScreen(uiRoot);
 const toasts = createToasts(uiRoot);
 // Task 9: red hurt vignette — flashed by applyMobEvent on every landed hit
 const hurtFlash = createHurtFlash(uiRoot);
+// B4 Task 9：進食進度條（按住右鍵吃東西時的視覺回饋；規則不依賴它）
+const eatProgressUi = createEatProgress(uiRoot);
 // Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
 // built lazily on the first gesture); every game sound below routes through it.
 const audio = createGameAudio();
@@ -338,6 +351,12 @@ function resetViewMode(): void {
 }
 let itemNameTimer: ReturnType<typeof setTimeout> | undefined;
 const dig = new DigProgress();
+
+// ---- B4.3 進食狀態（Task 9 接線）----
+// 進度的規則本體在 `player/eat.ts`（純邏輯：`eatTick` 把「右鍵是否仍按住」與
+// 進度綁在一起）；這裡只持有**跨幀的進度狀態**並在每幀餵上下文。
+// **旗標欄位 `input.state.placeHeld` 由 B2（0.5.0）擁有 —— 這裡只讀它。**
+const eatProgress = new EatProgress();
 
 // ---- B2.1 疾跑狀態（Task 9 接線）----
 // 規則本體在 player/sprint.ts（純邏輯，不碰 DOM／Three）；這裡只持有「本幀的
@@ -675,6 +694,16 @@ function tryPlaceBlock(target: RayHit): void {
   audio.play('place', materialGroup(placeId), {
     pos: { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
   });
+}
+
+/** B4 Task 9：手上拿的是不是**食物**（＝食物值表裡有值的物品）。
+ *
+ *  判準一律走 `foodFor()`（食物值表的單一真值）→ 不認得的食物就是「不是食物」
+ *  （方塊、工具、空手……）。右手拿食物時右鍵＝進食（不放置），這是原版的
+ *  優先序。 */
+function heldIsFood(): boolean {
+  const held = hotbar[selected];
+  return held !== null && foodFor(held.item) !== null;
 }
 
 /** B2.5：丟棄選取格（Q）。`wholeStack` ＝整疊丟棄（Ctrl+Q），否則只丟 1 個。
@@ -1950,6 +1979,7 @@ function resetWorld(): void {
   resetSessionEntities();
   clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
   hazardState = createHazardState(); // B3 Task 6: 仙人掌的接觸計時不跨世界沿用
+  eatProgress.reset(); // B4 Task 9: 進食進度不跨局沿用（重新按住要從零開始）
 }
 
 function startGame(): void {
@@ -3001,42 +3031,73 @@ gs.renderer.setAnimationLoop(() => {
           // Task 6: interacting with a furnace ALWAYS opens its panel (both
           // modes) — never place a block onto the furnace itself.
           openFurnaceAt(hit.x, hit.y, hit.z);
-        } else {
-          // Task 8: eat one apple — raycast miss OR a non-interactive face
-          // while holding an apple. eatFromSlot no-ops (ate false) for any
-          // other held item, so blocks/tools fall through to placing below.
-          // Full hunger still eats (overflow waste, Minecraft parity); the
-          // single setVitals path emits vitals-changed when hunger visibly
-          // moves and carries saturation silently otherwise (Task 9 gate).
-          // `v` is a const snapshot so the null guard below narrows for tsc.
-          const v = currentMode === 'survival' ? vitals : null;
-          const eaten = v !== null ? eatFromSlot(hotbar, selected) : null;
-          if (v !== null && eaten?.ate) {
-            inventory.setSlot(selected, eaten.slots[selected] ?? null);
-            setVitals(eat(v, APPLE_FOOD, APPLE_SAT));
-            hud.setHotbar(hotbar, selected);
-            // apple has no block form — reuse the soft place thud, no new timbre
-            audio.play('place', 'grass', { pos: player.position });
-            applyAdvancement({ type: 'ate', item: 'apple', mode: currentMode });
-          } else if (hit) {
-            viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
-            // B2.2（Task 10）：「放方塊」已抽成 tryPlaceBlock() —— 首次使用路徑與
-            // 連放路徑共用同一份實作（見下方連放段）。
-            tryPlaceBlock(hit);
-          }
+        } else if (currentMode === 'survival' && vitals !== null && heldIsFood()) {
+          // B4 Task 9：手上拿食物時右鍵＝**進食**（不放置）。
+          // 這裡**不吃** —— 只把進度歸零，等下面的每幀 `eatTick()` 依
+          // `input.state.placeHeld` 累積到 1.6 秒才真的吃下去。
+          // （舊的「右鍵脈衝即吃」整段已刪除：快速點一下右鍵就吃掉東西，
+          //  等於沒有「按住 1.6 秒」這條規則。）
+          eatProgress.reset();
+        } else if (hit) {
+          viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
+          // B2.2（Task 10）：「放方塊」已抽成 tryPlaceBlock() —— 首次使用路徑與
+          // 連放路徑共用同一份實作（見下方連放段）。
+          tryPlaceBlock(hit);
         }
       }
 
       // ---- B2.2 放置連放（Task 10 接線）----
       // **第一次右鍵 vs 之後的連放**：上面那段 `wantPlace` 是「完整使用」（開工作台／
-      // 開熔爐／吃蘋果／放方塊），**只有它會開介面、吃東西**；連放只重複
-      // `tryPlaceBlock()`（放方塊）—— 不重複開介面、不重複進食。
+      // 開熔爐／放方塊），**只有它會開介面**；連放只重複 `tryPlaceBlock()`
+      // （放方塊）—— 不重複開介面。**進食不走這條路**（進食是「按住 1.6 秒」，
+      // 由下面的 `eatTick` 推進）。
       // 節拍：`stepRepeat` 只負責「按住之後的重複」，第一次觸發由上面的完整流程
       // 負責；按住需累積滿 0.2 秒（PLACE_REPEAT_SEC ＝ 4 tick）才發火。
       // 滑鼠解鎖／視窗失焦 → `input.state.placeHeld` 歸 false → 節拍歸零（放開即停）。
       const placeStep = stepRepeat(placeRepeat, input.state.placeHeld, dt, PLACE_REPEAT_SEC);
       placeRepeat = placeStep.state;
       if (placeStep.fired && hit) tryPlaceBlock(hit); // 沒瞄到方塊就不放
+
+      // ---- B4.3 進食：按住右鍵 1.6 秒才吃 ----
+      // **規則本體在 `player/eat.ts` 的 `eatTick()`（純邏輯，可單元測試）**；
+      // 這裡只負責把每幀的上下文餵進去：
+      //  - `held` ＝ `input.state.placeHeld`（**B2 擁有的旗標，本批只讀**）；
+      //  - `item` ＝ 手上拿的東西；`allowed` ＝ 生存模式 ＋ 沒吃飽（`canEat`）
+      //    → **滿飢餓不可進食**（不開始進食、也不消耗物品）。
+      // 放開右鍵 → `eatTick` 自行歸零並回 'idle'（進度條也跟著收掉）。
+      const eatStack = hotbar[selected];
+      const eatItem = eatStack ? eatStack.item : null;
+      // `v` 是 const 快照 → 下面的 null 守門對 tsc 有型別效果（與既有寫法一致）。
+      const eatVitals = currentMode === 'survival' ? vitals : null;
+      const eatAllowed =
+        eatVitals !== null && eatItem !== null && canEat(eatVitals, eatItem);
+      const eatState = eatTick(eatProgress, {
+        held: input.state.placeHeld, // ← B2（0.5.0）擁有的欄位，本批只讀
+        item: eatItem,
+        allowed: eatAllowed,
+        dtSec: dt,
+      });
+      // 進度條（可選的視覺回饋；規則不依賴它）。
+      if (eatState === 'eating' && eatProgress.elapsed > 0) {
+        eatProgressUi.show(eatProgress.elapsed / EAT_TIME_SEC);
+      } else {
+        eatProgressUi.hide();
+      }
+      if (eatState === 'eaten' && eatVitals !== null && eatItem !== null) {
+        // 吃東西的**食物值一律來自 `foodFor()`**（食物值表的單一真值）→
+        // 不寫死蘋果的 4／2.4。
+        const def = foodFor(eatItem);
+        const eaten = eatFromSlot(hotbar, selected);
+        if (eaten.ate && def !== null) {
+          inventory.setSlot(selected, eaten.slots[selected] ?? null);
+          setVitals(eat(eatVitals, def.food, def.saturation));
+          hud.setHotbar(hotbar, selected);
+          // 食物沒有方塊形式 —— 沿用放置的軟 thud，不新增音色。
+          audio.play('place', 'grass', { pos: player.position });
+          // `tasty` 只在吃蘋果時解鎖（advancements.ts 的既有規則不變）。
+          applyAdvancement({ type: 'ate', item: eatItem, mode: currentMode });
+        }
+      }
 
       // ---- B2.5 Q 丟棄（Task 10 接線）----
       // 單次：Q 丟 1 個、Ctrl+Q 丟整疊（wiki Controls「Control+Q drops the whole

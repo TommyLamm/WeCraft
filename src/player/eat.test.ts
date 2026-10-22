@@ -7,6 +7,7 @@ import {
   EatProgress,
   canEat,
   eatFromSlot,
+  eatTick,
   foodFor,
 } from './eat';
 import { createVitals, eat } from './survival';
@@ -186,6 +187,69 @@ describe('EatProgress', () => {
   it('non-finite dt is treated as 0', () => {
     const p = new EatProgress();
     expect(p.update(Number.NaN, 'apple', true)).toBe('eating');
+    expect(p.elapsed).toBe(0);
+  });
+});
+
+// ---- B4 Task 9：按住右鍵 1.6 秒才吃（脈衝與按住分開）--------------------
+// `eatTick` 是本批自有的**純邏輯**：把「右鍵目前是否仍按住」與進度綁在一起。
+// 旗標欄位（`InputState.placeHeld`）由 B2 擁有，本模組不碰輸入層 —— 只消費
+// 呼叫端讀進來的 `held`。
+describe('eatTick', () => {
+  it('holding the right button accumulates the eat progress', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.0 })).toBe('eating');
+    expect(p.elapsed).toBeCloseTo(1.0, 6);
+  });
+
+  it('releasing the right button resets the progress', () => {
+    const p = new EatProgress();
+    eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.0 });
+    expect(eatTick(p, { held: false, item: 'apple', allowed: true, dtSec: 0.016 })).toBe('idle');
+    expect(p.elapsed).toBe(0);
+  });
+
+  it('a full hold of 1.6 s completes the eat', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.6 })).toBe('eaten');
+  });
+
+  it('a short hold never completes the eat', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.59 })).toBe('eating');
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 0.005 })).toBe('eating');
+    // 累計 1.595 < 1.6 → 還沒吃完。
+    //
+    // **最後一步用 0.01 而不是 0.005**（與 Task 2 的既有案例同一處修正）：IEEE-754
+    // 下 1.59 + 0.005 + 0.005 = 1.5999999999999998668（浮點誤差，仍 < 1.6）→ 用
+    // 0.005 會讓最後一步**不**回 'eaten'，那是浮點的偽像、不是規則。**規則的邊界
+    // 由上一則案例釘死**（整整 1.6 秒 → 'eaten'），這裡只釘「不夠久就不吃」。
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 0.01 })).toBe('eaten');
+  });
+
+  it('not holding never eats even with a valid food', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: false, item: 'apple', allowed: true, dtSec: 5 })).toBe('idle');
+    expect(p.elapsed).toBe(0);
+  });
+
+  it('a disallowed item never eats even while holding', () => {
+    // 滿飢餓（`canEat` 為 false）→ 不開始進食、也不累積進度。
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: 'apple', allowed: false, dtSec: 1.0 })).toBe('idle');
+    expect(p.elapsed).toBe(0);
+  });
+
+  it('switching the held item restarts the progress', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.0 })).toBe('eating');
+    expect(eatTick(p, { held: true, item: 'raw_beef', allowed: true, dtSec: 0.1 })).toBe('eating');
+    expect(p.elapsed).toBeCloseTo(0.1, 5);
+  });
+
+  it('a null item never eats even while holding', () => {
+    const p = new EatProgress();
+    expect(eatTick(p, { held: true, item: null, allowed: true, dtSec: 1.0 })).toBe('idle');
     expect(p.elapsed).toBe(0);
   });
 });

@@ -439,6 +439,26 @@
   image-rendering: pixelated;
 }
 
+/* 進食進度條（B4 Task 9）：按住右鍵吃東西時，畫面下方的橫條顯示「按住多久了」。
+   由 ui/eat-progress.ts 掛／收（**規則不依賴它**）；放在熱鍵欄上方、vitals 條
+   下面。pointer-events 關掉 → 不擋滑鼠事件。 */
+.eat-progress {
+  position: fixed;
+  bottom: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 182px;
+  height: 8px;
+  background: #555;
+  border: 2px solid #000;
+  pointer-events: none;
+}
+.eat-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #d89040;
+}
+
 /* Hurt feedback (Task 9): red vignette flashed on every landed mob hit by
    ui/hurt.ts (one node, 300 ms). Passive — pointer-events stay off — and below
    the death screen (10) / toasts (20) in the stack. */
