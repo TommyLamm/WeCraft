@@ -24,8 +24,15 @@
 
 // 物理常數直接沿用 `mobs.ts` 的既有值（單一真值來源，不另立一套）：
 // `MOB_GRAVITY`（重力 32）、`JUMP_IMPULSE`（跳上 1 格台階的衝量 8）、
-// `KNOCKBACK_SPEED`（擊退衝量 6）。
-import { MOB_GRAVITY, JUMP_IMPULSE, KNOCKBACK_SPEED } from './mobs';
+// `KNOCKBACK_SPEED`（擊退衝量 6）、`KNOCKBACK_DECAY_PER_SEC`（衰減 0.1/秒）、
+// `KNOCKBACK_MIN`（衰減到這個值以下就歸零）。
+import {
+  MOB_GRAVITY,
+  JUMP_IMPULSE,
+  KNOCKBACK_SPEED,
+  KNOCKBACK_DECAY_PER_SEC,
+  KNOCKBACK_MIN,
+} from './mobs';
 import { rayAabbEntry } from './raycast';
 
 // ---- 定義表 -------------------------------------------------------------
@@ -80,16 +87,22 @@ export const PANIC_SEC = 5;
 export const PASSIVE_WANDER_TURN_MIN = 2;
 export const PASSIVE_WANDER_TURN_MAX = 4;
 
-/**
- * 擊退強度＝`mobs.ts` 的 `KNOCKBACK_SPEED`（6）× 本係數。
- *
- * **為什麼是 0.6**：被動生物的體型小、又沒有敵對生物那種「撞飛」的演出 → 擊退
- * 只需要「明顯被推開、但不會被推出視野」的程度。
- */
-export const PASSIVE_KNOCKBACK_FACTOR = 0.6;
+// 擊退的強度、衰減與歸零門檻**全部沿用 `mobs.ts` 的既有常數**
+// （`KNOCKBACK_SPEED` = 6、`KNOCKBACK_DECAY_PER_SEC` = 0.1、`KNOCKBACK_MIN` = 0.1，
+// 見檔頭的 import）→ 這裡不另訂一份。擊退衝量放在獨立於 `vel` 的
+// {@link PassiveMob.kbVel} 欄位裡（與 `mobs.ts` 的 `Mob.kbVel` 同一個做法）：
+// AI 每幀都會把 `vel` 的水平速度換成自己的目標值 → 寫在 `vel` 上的衝量下一幀就
+// 被抹掉（那樣的「擊退」是**觀察不到的死碼**）。
 
-/** 前方探測的前導距離（≈ 身體半寬）：目的地格在這個距離之前就先被檢查，
- *  生物不會先穿進牆裡才停下來（與 `mobs.ts` 的 `PROBE_LEAD` 同值）。 */
+/**
+ * 前方探測的**最小**前導距離（格）。
+ *
+ * **探測距離必須蓋到身體前端**（半寬 `width / 2`）：探測只走到中心前方
+ * `PROBE_LEAD`、而牛的半寬是 0.45 → 前端比探測點更遠 → 生物會先走進牆裡約
+ * 0.15 格。所以實際的探測距離是 `max(PROBE_LEAD, 半寬)`（見 `stepPassiveMob`）。
+ * 這裡保留 0.3 作為**下限**（沿用 `mobs.ts` 的 `PROBE_LEAD` 值）：比身體前端
+ * 還多探一點點 → 生物停下來時不會貼著牆面。
+ */
 const PROBE_LEAD = 0.3;
 
 // ---- 實體 ----------------------------------------------------------------
@@ -113,6 +126,10 @@ export interface PassiveMob {
   /** 受驚剩餘秒數（> 0 = 正在逃跑）與逃跑方向（弧度）。 */
   panicTimer: number;
   panicDir: number;
+  /** 擊退衝量（水平、格/秒），**獨立於 `vel`** —— AI 每幀會把 `vel` 的水平速度
+   *  換成自己的目標值，所以衝量必須另存一個欄位（與 `mobs.ts` 的 `Mob.kbVel`
+   *  同一個做法）。以 `0.1^dt` 衰減，低於 `KNOCKBACK_MIN` 就歸零。 */
+  kbVel: { x: number; z: number };
 }
 
 /** `stepPassiveMob` 的上下文：玩家位置、注入的世界查詢、這一幀的 dt、可注入的
@@ -160,6 +177,7 @@ export function createPassiveMob(
       rng() * (PASSIVE_WANDER_TURN_MAX - PASSIVE_WANDER_TURN_MIN),
     panicTimer: 0,
     panicDir: 0,
+    kbVel: { x: 0, z: 0 },
   };
 }
 
@@ -171,30 +189,58 @@ export function isPassiveDead(m: PassiveMob): boolean {
 /**
  * 施加傷害：回傳一隻**新的**被動生物，血量夾在 0（不會是負數）。
  *
- * - **NaN／非有限的傷害 → 完全 no-op**（連 panic 都不觸發；repo 的 NaN 防護慣例）。
+ * **形狀沿用 `mobs.ts` 的 `damageMob(m, dmg, knockbackDir?)`**：
+ * - `knockbackDir`（任何水平向量；3D 的也吃得下，y 會被忽略）＝**生物要被推開的
+ *   方向**（＝背離攻擊者）。方向長度 0 或非有限 → 不施加衝量。
+ * - 擊退衝量加到 {@link PassiveMob.kbVel}（`KNOCKBACK_SPEED` × 正規化後的方向），
+ *   由 `stepPassiveMob` 逐幀衰減並推動位置。
+ *
+ * 其他規則：
+ * - **NaN／非有限的傷害 → 不扣血**（repo 的 NaN 防護慣例）。
  * - **負數／0 的傷害 → 不扣血、也不 panic**（「沒有受傷就沒有反應」）。
  * - **真的受傷 → panic**：{@link PANIC_SEC} 秒的逃跑時間，`panicDir` ＝**背離
- *   攻擊者**的方向（`from` 存在時用 `atan2(m.pos.x - from.x, m.pos.z - from.z)`，
- *   否則用「原本的漫遊方向 + π」＝往回跑）。 */
+ *   攻擊者**的方向（有 `knockbackDir` 時就是它的方向；沒有就用「原本的漫遊方向
+ *   + π」＝往回跑）。
+ * - **永遠回傳新物件**（與 `damageMob` 同一個慣例；不在任何分支回同一個參考）。 */
 export function damagePassiveMob(
   m: PassiveMob,
   dmg: number,
-  from?: { x: number; z: number },
+  knockbackDir?: { x: number; y?: number; z: number },
 ): PassiveMob {
-  if (!Number.isFinite(dmg)) return m; // NaN／Infinity → 完全 no-op
-  if (!(dmg > 0)) return { ...m }; // 負數／0 → 不扣血也不 panic
-  const hp = Math.max(0, m.hp - dmg);
-  const panicDir = from
-    ? Math.atan2(m.pos.x - from.x, m.pos.z - from.z)
-    : m.wanderDir + Math.PI;
-  return { ...m, hp, panicTimer: PANIC_SEC, panicDir };
+  const hurt = Number.isFinite(dmg) && dmg > 0;
+  const hp = hurt ? Math.max(0, m.hp - dmg) : m.hp;
+
+  // ---- 擊退：與 `mobs.ts` 的 `damageMob` 同一段數學 ----
+  const kbVel = { x: m.kbVel.x, z: m.kbVel.z };
+  const len = knockbackDir ? Math.hypot(knockbackDir.x, knockbackDir.z) : 0;
+  const hasDir = Number.isFinite(len) && len > 0;
+  if (knockbackDir && hasDir) {
+    kbVel.x += (knockbackDir.x / len) * KNOCKBACK_SPEED;
+    kbVel.z += (knockbackDir.z / len) * KNOCKBACK_SPEED;
+  }
+
+  // ---- 驚慌：受傷才開始；方向＝擊退的方向（＝背離攻擊者） ----
+  const panicTimer = hurt ? PANIC_SEC : m.panicTimer;
+  let panicDir = m.panicDir;
+  if (hurt) {
+    panicDir =
+      knockbackDir && hasDir
+        ? Math.atan2(knockbackDir.x, knockbackDir.z)
+        : m.wanderDir + Math.PI;
+  }
+
+  return { ...m, hp, kbVel, panicTimer, panicDir };
 }
 
 /**
  * 一幀的 AI + 物理（回傳**新的**生物，不改輸入）。
  *
  * 順序：NaN 防護 dt → panic 計時 → 方向與速度（panic／漫遊）→ 前方探測（擋住就
- * 停下、1 格台階跳上去）→ 重力（水中漂浮）→ 積分 → 落地吸附 → 朝向。
+ * 停下、1 格台階跳上去）→ 重力（水中漂浮）→ **擊退推位＋衰減** → 積分 → 落地
+ * 吸附 → 朝向。
+ *
+ * **擊退**的那一段數學**逐行照抄 `mobs.ts` 的 `stepMob`**（推一下位置 → 以
+ * `0.1^dt` 衰減 → 低於 `KNOCKBACK_MIN` 歸零 → 目的地格是實心就不推）。
  */
 export function stepPassiveMob(m: PassiveMob, ctx: PassiveCtx): PassiveMob {
   const step = Number.isFinite(ctx.dt) && ctx.dt > 0 ? ctx.dt : 0;
@@ -203,6 +249,7 @@ export function stepPassiveMob(m: PassiveMob, ctx: PassiveCtx): PassiveMob {
 
   const pos = { x: m.pos.x, y: m.pos.y, z: m.pos.z };
   const vel = { x: m.vel.x, y: m.vel.y, z: m.vel.z };
+  const kbVel = { x: m.kbVel.x, z: m.kbVel.z };
   let wanderDir = m.wanderDir;
   let wanderTimer = m.wanderTimer - step;
   const panicTimer = Math.max(0, m.panicTimer - step);
@@ -243,7 +290,9 @@ export function stepPassiveMob(m: PassiveMob, ctx: PassiveCtx): PassiveMob {
   const hSpeed = Math.hypot(desX, desZ);
   let stepUp = false;
   if (hSpeed > 0) {
-    const lead = hSpeed * step + PROBE_LEAD;
+    // **探測距離要蓋到身體前端**（半寬 `width / 2`）：只探 `PROBE_LEAD`（0.3）
+    // 而牛的半寬 0.45 → 前端比探測點更遠 → 生物會先走進牆裡約 0.15 格。
+    const lead = hSpeed * step + Math.max(PROBE_LEAD, def.width / 2);
     const nx = Math.floor(pos.x + (desX / hSpeed) * lead);
     const nz = Math.floor(pos.z + (desZ / hSpeed) * lead);
     const feetBlocked = ctx.isSolidAt(nx, Math.floor(pos.y + 0.1), nz);
@@ -277,6 +326,26 @@ export function stepPassiveMob(m: PassiveMob, ctx: PassiveCtx): PassiveMob {
   vel.x = desX;
   vel.z = desZ;
 
+  // ---- 擊退：推一下位置，然後以 0.1^dt 衰減（`mobs.ts` 的 `stepMob` 同一段數學）----
+  // 衝量**疊加在 AI 的水平速度之上**（不是取代）→ 被砍的那一下真的會被推開。
+  if (kbVel.x !== 0 || kbVel.z !== 0) {
+    const kbX = pos.x + kbVel.x * step;
+    const kbZ = pos.z + kbVel.z * step;
+    // embed guard: skip the step when the destination cell is solid — a hit
+    // near a wall must not push the mob permanently inside the geometry.
+    if (!ctx.isSolidAt(Math.floor(kbX), Math.floor(pos.y), Math.floor(kbZ))) {
+      pos.x = kbX;
+      pos.z = kbZ;
+    }
+    const decay = Math.pow(KNOCKBACK_DECAY_PER_SEC, step);
+    kbVel.x *= decay;
+    kbVel.z *= decay;
+    if (Math.hypot(kbVel.x, kbVel.z) < KNOCKBACK_MIN) {
+      kbVel.x = 0;
+      kbVel.z = 0;
+    }
+  }
+
   // ---- 積分 ----
   const prevY = pos.y;
   pos.x += vel.x * step;
@@ -299,7 +368,7 @@ export function stepPassiveMob(m: PassiveMob, ctx: PassiveCtx): PassiveMob {
   let yaw = m.yaw;
   if (Math.hypot(vel.x, vel.z) > 0.01) yaw = Math.atan2(vel.x, vel.z);
 
-  return { ...m, pos, vel, yaw, wanderDir, wanderTimer, panicTimer };
+  return { ...m, pos, vel, kbVel, yaw, wanderDir, wanderTimer, panicTimer };
 }
 
 /** 步進整個名單（回傳**新的**陣列；輸入沒被改）。 */
@@ -366,13 +435,10 @@ export interface PassiveAttackResult {
  * 一次近戰揮擊：找出準星下最近的那隻被動生物（`reach` 內），扣血並沿著**水平
  * 視線方向**給一個擊退。
  *
- * - **panic 的方向**來自「攻擊者的位置」＝瞄準原點（玩家的眼睛）→ 被打到就往
- *   反方向逃。
- * - **擊退**：`KNOCKBACK_SPEED`（6，與 `mobs.ts` 同一個常數）×
- *   {@link PASSIVE_KNOCKBACK_FACTOR}（0.6）＝ 3.6 格/秒，沿著水平視線方向推。
- *   （`PassiveMob` 沒有 `mobs.ts` 那個獨立的 `kbVel` 欄位 → 擊退寫在 `vel` 上；
- *   AI 每幀會把水平速度換成自己的目標值，所以「被推開」的實際效果主要由
- *   **panic 逃跑**負責，這裡的衝量是額外的 flavored 推力。）
+ * - **擊退方向**＝`knockDir`（玩家的視線方向 → 生物被推離玩家）。衝量寫進
+ *   {@link PassiveMob.kbVel}（`KNOCKBACK_SPEED`，與 `mobs.ts` 同一個常數）→
+ *   由 `stepPassiveMob` 逐幀衰減並**推動位置**（疊加在 AI 的水平速度之上）。
+ * - **panic 的方向**＝同一個擊退方向（＝背離攻擊者）→ 被打到就往反方向逃。
  * - 沒打中 → 回傳**同一個陣列參考**與 `hitId: null`（與 `attackMob` 同一個慣例）。
  */
 export function attackPassiveMob(
@@ -389,14 +455,9 @@ export function attackPassiveMob(
   const next = mobs.map((m) => {
     if (applied || m.id !== hitId) return m; // 其他生物保留原參考
     applied = true;
-    const hurt = damagePassiveMob(m, damage, { x: eyePos.x, z: eyePos.z });
-    const len = Math.hypot(knockDir.x, knockDir.z);
-    if (!Number.isFinite(len) || len === 0) return hurt;
-    const k = (KNOCKBACK_SPEED * PASSIVE_KNOCKBACK_FACTOR) / len;
-    return {
-      ...hurt,
-      vel: { x: hurt.vel.x + knockDir.x * k, y: hurt.vel.y, z: hurt.vel.z + knockDir.z * k },
-    };
+    // 傷害＋擊退＋驚慌：一次完成（`damagePassiveMob` 與 `mobs.ts` 的 `damageMob`
+    // 同一個形狀：第三個參數是「被推開的方向」）。
+    return damagePassiveMob(m, damage, knockDir);
   });
   return { mobs: next, hitId };
 }

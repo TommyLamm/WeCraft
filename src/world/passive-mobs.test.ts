@@ -122,19 +122,40 @@ describe('stepPassiveMob (漫遊／panic／水中漂浮)', () => {
 
   it('a panicked mob flees away from the attacker', () => {
     const m = passive('cow', { pos: { x: 0, y: 0, z: 0 } });
-    const hurt = damagePassiveMob(m, 1, { x: 10, z: 0 });
+    // 第三個參數是「被推開的方向」（`damageMob` 的形狀）→ 攻擊者在 x = 10，
+    // 生物被推向 -x（背離攻擊者）。
+    const hurt = damagePassiveMob(m, 1, { x: -1, z: 0 });
     expect(hurt.panicTimer).toBe(5);
     const out = stepPassiveMob(hurt, ctxOf({ dt: 0.5, playerPos: { x: 10, y: 0, z: 0 } }));
     expect(out.pos.x).toBeLessThan(hurt.pos.x); // 遠離 x = 10 的攻擊者
   });
 
   it('a panicking mob runs at the panic speed', () => {
-    const m = passive('cow', { pos: { x: 0, y: 0, z: 0 } });
-    const hurt = damagePassiveMob(m, 1, { x: 10, z: 0 });
-    const out = stepPassiveMob(hurt, ctxOf({ dt: 0.5, playerPos: { x: 10, y: 0, z: 0 } }));
+    // wanderDir = 0 → 沒有給擊退方向時 panicDir = 0 + π = π → 往 -z 逃（方向確定）
+    const m = passive('cow', { pos: { x: 0, y: 0, z: 0 }, wanderDir: 0, wanderTimer: 10 });
+    // 沒有給擊退方向 → panicDir = 漫遊方向 + π = π → 往 -z 逃（也沒有擊退衝量）
+    const hurt = damagePassiveMob(m, 1);
+    const out = stepPassiveMob(hurt, ctxOf({ dt: 0.5, playerPos: { x: 0, y: 0, z: 20 } }));
     // 1.5 格/秒 × 1.4（panic 倍率）× 0.5 秒 = 1.05 格
-    expect(out.pos.x).toBeCloseTo(-1.05, 5);
+    expect(out.pos.z).toBeCloseTo(-1.05, 5);
     expect(PANIC_SPEED_MULTIPLIER).toBe(1.4);
+  });
+
+  it('a panicking mob does not re-wander', () => {
+    // panic 期間**不重新漫遊**：方向不變、計時器也不會被漫遊邏輯重設成新的 2–4 秒。
+    const m = passive('cow', {
+      pos: { x: 0, y: 0, z: 0 },
+      wanderDir: 0.5,
+      wanderTimer: 10,
+      panicTimer: 5,
+      panicDir: Math.PI,
+    });
+    let out = m;
+    for (let i = 0; i < 4; i++) out = stepPassiveMob(out, ctxOf({ dt: 0.5, rng: () => 0.9 }));
+    expect(out.wanderDir).toBe(0.5); // 方向沒被換掉
+    expect(out.wanderTimer).toBeLessThan(10); // 沒有被重設（只是繼續倒數 → 8）
+    expect(out.wanderTimer).toBeCloseTo(8, 5);
+    expect(out.panicTimer).toBe(3); // 5 秒的 panic 過了 2 秒
   });
 
   it('a damaged passive mob has less hp', () => {
@@ -142,6 +163,14 @@ describe('stepPassiveMob (漫遊／panic／水中漂浮)', () => {
     expect(damagePassiveMob(m, 2).hp).toBe(m.hp - 2);
     expect(damagePassiveMob(m, -1).hp).toBe(m.hp); // 負數傷害不生效
     expect(damagePassiveMob(m, Number.NaN).hp).toBe(m.hp); // NaN 防護
+  });
+
+  it('damagePassiveMob always returns a new object', () => {
+    // 與 `mobs.ts` 的 `damageMob` 一致：任何分支都回傳新物件（不回同一個參考）。
+    const m = passive('pig');
+    expect(damagePassiveMob(m, 1)).not.toBe(m);
+    expect(damagePassiveMob(m, -1)).not.toBe(m);
+    expect(damagePassiveMob(m, Number.NaN)).not.toBe(m);
   });
 
   it('a passive mob floats in water instead of sinking', () => {
@@ -172,6 +201,23 @@ describe('stepPassiveMob (漫遊／panic／水中漂浮)', () => {
     const m = passive('cow', { pos: { x: 0, y: 0, z: 0 }, wanderDir: Math.PI / 2, wanderTimer: 10 });
     const out = stepPassiveMob(m, ctxOf({ dt: 0.5, isSolidAt }));
     expect(out.pos.x).toBe(0);
+  });
+
+  it('a mob does not walk its body into a wall', () => {
+    // **探測距離要蓋到身體前端**：牛的半寬 0.45，若只探 0.3 → 身體會插進牆裡
+    // 最多 0.15 格（審查 M-4）。停下來時身體前端最多碰到牆面（x = 1）。
+    // 起點掃描：插進去的深度跟「起點落在格子的哪裡」有關 → 多掃幾個起點。
+    const isSolidAt = (x: number, y: number, _z: number): boolean => y < 0 || x >= 1;
+    for (let start = 0; start <= 0.5; start += 0.05) {
+      const m = passive('cow', {
+        pos: { x: start, y: 0, z: 0 },
+        wanderDir: Math.PI / 2,
+        wanderTimer: 10,
+      });
+      let out = m;
+      for (let i = 0; i < 30; i++) out = stepPassiveMob(out, ctxOf({ dt: 0.1, isSolidAt }));
+      expect(out.pos.x + out.width / 2).toBeLessThanOrEqual(1 + 1e-9);
+    }
   });
 
   it('a falling passive mob does not take fall damage', () => {
@@ -234,14 +280,60 @@ describe('hitPassiveMobId / attackPassiveMob（玩家的瞄準與揮擊）', () 
     expect(hitPassiveMobId([], { x: 0, y: 0.3, z: 5 }, { x: 0, y: 0, z: -1 }, 10)).toBeNull();
   });
 
+  it('the nearest passive mob along the ray wins', () => {
+    const near = passive('cow', { pos: { x: 0, y: 0, z: -2 } });
+    const far = passive('cow', { pos: { x: 0, y: 0, z: -5 } });
+    const eye = { x: 0, y: 0.5, z: 0 };
+    const dir = { x: 0, y: 0, z: -1 };
+    // 名單順序不影響結果 → 一定是「沿著射線最近的那隻」贏
+    expect(hitPassiveMobId([near, far], eye, dir, 10)).toBe(near.id);
+    expect(hitPassiveMobId([far, near], eye, dir, 10)).toBe(near.id);
+  });
+
   it('attacking reduces hp and reports the hit', () => {
     const pig = passive('pig', { pos: { x: 0, y: 0, z: 0 } });
     const res = attackPassiveMob([pig], { x: 0, y: 0.5, z: 2 }, { x: 0, y: 0, z: -1 }, 4, 3, { x: 0, z: -1 });
     expect(res.hitId).toBe(pig.id);
     expect(res.mobs[0].hp).toBe(pig.hp - 3);
-    // 擊退：沿著水平視線方向推 KNOCKBACK_SPEED（6）× 0.6 = 3.6 格/秒
-    expect(res.mobs[0].vel.z).toBeCloseTo(-3.6, 5);
-    expect(res.mobs[0].vel.x).toBeCloseTo(0, 5);
+    // 擊退：沿著水平視線方向推 `KNOCKBACK_SPEED`（6，`mobs.ts` 的既有常數）
+    expect(res.mobs[0].kbVel.z).toBeCloseTo(-6, 5);
+    expect(res.mobs[0].kbVel.x).toBeCloseTo(0, 5);
+  });
+
+  it('the knockback pushes the mob further than an identical mob without it', () => {
+    // **對照組**：兩隻牛起始位置／方向／受傷完全相同，只有「有沒有擊退衝量」不同。
+    //   A：給了擊退方向 {0, -1} → kbVel = (0, -6)、panicDir = π（往 -z 逃）
+    //   B：沒給擊退方向     → kbVel = (0, 0)、panicDir = 漫遊方向 + π = π（同樣往 -z 逃）
+    // → AI 的行為完全一致，位移差**只可能**來自擊退（審查 I-1 的回歸釘子）。
+    const start = passive('cow', { pos: { x: 0, y: 0, z: 0 }, wanderDir: 0, wanderTimer: 10 });
+    const knocked = damagePassiveMob(start, 1, { x: 0, z: -1 });
+    const plain = damagePassiveMob(start, 1);
+    expect(knocked.kbVel.z).toBeCloseTo(-6, 5);
+    expect(plain.kbVel.z).toBe(0);
+    expect(knocked.panicDir).toBeCloseTo(plain.panicDir, 10); // 逃跑方向相同
+    let a = knocked;
+    let b = plain;
+    for (let i = 0; i < 10; i++) {
+      a = stepPassiveMob(a, ctxOf({ dt: 0.1, playerPos: { x: 0, y: 0, z: 20 } }));
+      b = stepPassiveMob(b, ctxOf({ dt: 0.1, playerPos: { x: 0, y: 0, z: 20 } }));
+    }
+    // 被擊退的那隻被推得更遠（實測約 2.6 格）→ 門檻 0.5 格：抓得到「擊退被覆寫」
+    // 的回歸（那個回歸會讓差值變成 0），又不會因為一點點數值誤差就紅。
+    expect(a.pos.z).toBeLessThan(b.pos.z);
+    expect(Math.abs(a.pos.z - b.pos.z)).toBeGreaterThan(0.5);
+  });
+
+  it('the knockback impulse decays and clears', () => {
+    const m = passive('cow', { pos: { x: 0, y: 0, z: 0 } });
+    const hurt = damagePassiveMob(m, 1, { x: 0, z: -1 });
+    expect(hurt.kbVel.z).toBeCloseTo(-6, 5);
+    // `mobs.ts` 的衰減：0.1^dt（dt = 1 → ×0.1）
+    const one = stepPassiveMob(hurt, ctxOf({ dt: 1 }));
+    expect(one.kbVel.z).toBeCloseTo(-0.6, 5);
+    // 再一步 → 0.06 < KNOCKBACK_MIN（0.1）→ 歸零
+    const two = stepPassiveMob(one, ctxOf({ dt: 1 }));
+    expect(two.kbVel.z).toBe(0);
+    expect(two.kbVel.x).toBe(0);
   });
 
   it('a miss returns the same array ref with hitId null', () => {
