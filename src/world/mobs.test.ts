@@ -18,6 +18,7 @@ import {
   MAX_MOBS,
   CHASE_RANGE,
   WANDER_RANGE,
+  SKELETON_SHOOT_RANGE,
   ZOMBIE_CHASE_SPEED,
   SKELETON_CHASE_SPEED,
   SUN_BURN_SEC,
@@ -299,9 +300,28 @@ describe('stepMob — skeleton keep-distance', () => {
 
   it('does not shoot out of range', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
-    // 超出追擊／射擊範圍（CHASE_RANGE = 35）→ 不射擊
+    // 超出射箭範圍（SKELETON_SHOOT_RANGE = 15）→ 不射箭
     const { events } = stepMob(m, ctxOf({ x: 40, y: 0, z: 0 }, 0.1));
     expect(events).toHaveLength(0);
+  });
+
+  it('shoots within the 15-block shooting range', () => {
+    // 射箭範圍 15 格（wiki 查證的原版值）內 → 射箭
+    const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
+    const { events } = stepMob(m, ctxOf({ x: 10, y: 0, z: 0 }, 0.1));
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('shoot');
+  });
+
+  it('does not shoot beyond 15 blocks but keeps chasing the player', () => {
+    // 20 格：介於射箭範圍（15）與追擊範圍（35）之間 → **不射箭、但仍然追**。
+    // （追擊 35 ≠ 射箭 15：原版是兩個獨立的量，見 Skeleton 條目。）
+    const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
+    const player = { x: 20, y: 0, z: 0 };
+    const { mob: out, events } = stepMob(m, ctxOf(player, 0.1));
+    expect(events).toHaveLength(0); // 射程外 → 不射
+    expect(out.state).toBe('chase'); // 但仍在追（追擊範圍是 35）
+    expect(out.target).toEqual(player);
   });
 });
 
@@ -391,6 +411,31 @@ describe('B4.4 追擊範圍與生成距離', () => {
     const { mob: out } = stepMob(m, ctxOf({ x: 45.5, y: 0, z: 0.5 }, 0.1));
     expect(out.state).toBe('wander');
     expect(out.target).toBeNull();
+  });
+});
+
+// ---- B4.4 射箭範圍 ↔ 追擊範圍（兩個獨立的量）---------------------------
+// 原版 Skeleton 條目（wiki，2026-10-22 查證）：「When within **15 blocks** of a target,
+// with a clear line of sight, a skeleton starts shooting arrows…」→ **射箭距離 15 格**；
+// 而追擊／偵測是 `follow_range` = **35 格**（Zombie 條目）→ 原版兩者**互相獨立**。
+// 本作先前把射箭條件綁在 `CHASE_RANGE` 上（原本 16 剛好接近 15、看不出問題），35 之後
+// 就變成「從 35 格外射箭」→ 這是耦合缺陷，拆開。
+
+describe('B4.4 射箭範圍與追擊範圍', () => {
+  it('the shooting range is strictly smaller than the chase range', () => {
+    // 不變式釘子：射箭 15 < 追擊 35（原版的關係）→ 擋住未來有人把兩者又綁在一起
+    expect(SKELETON_SHOOT_RANGE).toBeLessThan(CHASE_RANGE);
+    expect(SKELETON_SHOOT_RANGE).toBe(15);
+    expect(CHASE_RANGE).toBe(35);
+  });
+
+  it('a zombie at 20 blocks still chases the player (the chase range stays 35)', () => {
+    // 確認這次修正**沒有**把追擊範圍連帶改小：殭屍在 20 格（射箭範圍之外）仍然追。
+    const m = mob();
+    const player = { x: 20.5, y: 0, z: 0.5 };
+    const { mob: out } = stepMob(m, ctxOf(player, 0.1));
+    expect(out.state).toBe('chase');
+    expect(out.target).toEqual(player);
   });
 });
 

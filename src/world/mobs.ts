@@ -47,6 +47,22 @@ export const ZOMBIE_ATTACK_DAMAGE = 3;
 export const ZOMBIE_ATTACK_COOLDOWN = 1.0;
 /** Skeleton volley gate — reuses `attackCooldown` (settled in the plan). */
 export const SKELETON_SHOOT_COOLDOWN = 2.0;
+/** XZ distance (blocks) within which a skeleton starts shooting arrows.
+ *
+ *  **15 = 原版的射箭距離**（wiki，2026-10-22 查證，Skeleton 條目）：「When within
+ *  **15 blocks** of a target, with a clear line of sight, a skeleton starts shooting
+ *  arrows, once every 3 seconds on Easy and Normal difficulties or once every 2
+ *  seconds on Hard difficulty.」
+ *
+ *  **與追擊範圍（{@link CHASE_RANGE} = 35，`follow_range`）是原版兩個獨立的量**：
+ *  原版_detection 是 35、射箭只有 15 —— 骨骸會追著玩家走，但只有靠近到 15 格內才開弓。
+ *  本作先前把射箭條件綁在 `CHASE_RANGE` 上（那時 `CHASE_RANGE` 是 16、剛好接近 15，
+ *  看不出問題），追擊範圍調成 35 之後就變成「從 35 格外射箭」→ 這裡拆開。
+ *
+ *  **刻意簡化（列進 Task 12 的 README 差異清單）**：原版離開 15 格後會「弓箭上膛等待」，
+ *  玩家一回到射程內就立刻射；**本作沒有實作「上膛等待」** —— 離開射程只是不射，
+ *  cooldown 照常走完。 */
+export const SKELETON_SHOOT_RANGE = 15;
 /** Line-of-sight sampling: a solid cell anywhere along the eye→eye segment
  *  blocks the swipe/shot. 0.5 < the 1-block wall thickness, so terrain can't
  *  slip between samples. */
@@ -344,7 +360,7 @@ export function stepMob(m: Mob, ctx: MobCtx): { mob: Mob; events: MobEvent[] } {
     const from = { x: pos.x, y: pos.y + EYE_OFFSET, z: pos.z };
     const to = { x: p.x, y: p.y + EYE_OFFSET, z: p.z };
     if (
-      distXZ <= CHASE_RANGE &&
+      distXZ <= SKELETON_SHOOT_RANGE &&
       attackCooldown <= 0 &&
       hasLineOfSight(from, to, ctx.isSolidAt)
     ) {
