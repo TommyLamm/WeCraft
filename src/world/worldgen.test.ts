@@ -7,8 +7,10 @@ import { WORLDGEN_VERSION, needsWorldgenNotice, readWorldgenVersion } from './wo
  * 這是純模組（不依賴 DOM／IndexedDB／Three），所以測試不需要任何環境準備。
  */
 describe('worldgen version', () => {
-  it('the worldgen version is 1', () => {
-    expect(WORLDGEN_VERSION).toBe(1);
+  it('the worldgen version is 2', () => {
+    // B5 Task 6：新增礫石與礦脈深度帶 → 地形外觀改變 → 版本升 2
+    //（舊存檔載入時會跳一次「地形已改變」提示）。
+    expect(WORLDGEN_VERSION).toBe(2);
   });
 
   it('a missing version needs the notice', () => {

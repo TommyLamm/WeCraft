@@ -1,7 +1,8 @@
-import { Noise, hash2 } from '../core/noise';
+import { Noise } from '../core/noise';
 import { BLOCK } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 import { SEA_LEVEL, surfaceHeight, temperature, moisture } from './terrain-noise';
+import { placeOres } from './ores';
 import { plantTrees } from './trees';
 import { plantDecorations } from './decorations';
 
@@ -195,12 +196,6 @@ export function generateChunk(cx: number, cz: number, seed: number): Uint8Array 
           id = BLOCK.WATER;
         }
 
-        if (id === BLOCK.STONE && y < h - 6) {
-          const ore = hash2(wx * 31 + y, wz * 17 - y, seed);
-          if (y < 16 && ore % 400 === 0) id = BLOCK.IRON_ORE;
-          else if (ore % 120 === 0) id = BLOCK.COAL_ORE;
-        }
-
         if (y > 3 && y < h - 2 && id !== BLOCK.BEDROCK && id !== BLOCK.WATER) {
           const cave = caveN.noise3(wx * 0.05, y * 0.07, wz * 0.05);
           if (cave > 0.62) id = BLOCK.AIR;
@@ -210,6 +205,11 @@ export function generateChunk(cx: number, cz: number, seed: number): Uint8Array 
       }
     }
   }
+
+  // B5 Task 6：礦脈在**洞穴切挖之後**才放。`placeOres` 只取代石頭 →
+  // 洞穴（空氣）裡不會長礦，與舊版「先放礦、再切洞穴」的最終地圖等價，
+  // 但不必把放礦塞回上面的單一迴圈（B3 的 generateChunk 結構不動）。
+  placeOres(data, cx, cz, seed);
 
   plantTrees(data, cx, cz, seed);
   // B3 Task 6：地表裝飾（花／草叢／仙人掌／冰）。

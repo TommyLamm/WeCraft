@@ -313,9 +313,12 @@ describe('generateChunk', () => {
     expect(caveCells).toBeGreaterThan(0);
   });
 
-  it('contains coal and iron ore', () => {
+  it('contains coal, iron, gold, diamond and gravel', () => {
     let coalLow = 0;
     let iron = 0;
+    let gold = 0;
+    let diamond = 0;
+    let gravel = 0;
     for (let cx = 0; cx < 4; cx++) {
       for (let cz = 0; cz < 4; cz++) {
         const c = generateChunk(cx, cz, 1337);
@@ -325,15 +328,24 @@ describe('generateChunk', () => {
             const y = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
             if (y < 64) coalLow++;
           } else if (id === BLOCK.IRON_ORE) {
-            const y = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
-            expect(y).toBeLessThan(16);
             iron++;
+          } else if (id === BLOCK.GOLD_ORE) {
+            gold++;
+          } else if (id === BLOCK.DIAMOND_ORE) {
+            diamond++;
+          } else if (id === BLOCK.GRAVEL) {
+            gravel++;
           }
         }
       }
     }
+    // 鐵礦不再限制在 y < 16（B5 Task 6 把鐵礦帶對齊原版的 Y=−64..72 →
+    // 本作 0..67），其餘斷言保留。
     expect(coalLow).toBeGreaterThan(0);
     expect(iron).toBeGreaterThan(0);
+    expect(gold).toBeGreaterThan(0);
+    expect(diamond).toBeGreaterThan(0);
+    expect(gravel).toBeGreaterThan(0);
   });
 });
 
