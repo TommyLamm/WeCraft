@@ -19,12 +19,15 @@ export const SMELT_TIME_SEC = 10 as const;
 /** Smeltable input item → output item. Both iron inputs smelt to iron_ingot:
  *  `raw_iron` is what iron_ore blocks drop now (MC 1.17+ parity); legacy
  *  `iron_ore` items from pre-B1 saves still smelt. coal_ore is deliberately
- *  absent: it drops coal directly (see dropItemFor).
+ *  absent: it drops coal directly (see dropItemFor). 金礦與生金都熔成金錠
+ *  （原版）；鑽石不可熔煉。
  *  四種生肉（B4.3）也能熔成熟肉：雞→燒雞、豬→豬排、羊→羊排、牛→牛排
  *  （原版 id 就是 'steak'，不是 'cooked_beef'）。 */
 export const SMELT_RECIPES: Readonly<Record<string, ItemId>> = {
   iron_ore: 'iron_ingot',
   raw_iron: 'iron_ingot',
+  gold_ore: 'gold_ingot',
+  raw_gold: 'gold_ingot',
   sand: 'glass',
   raw_chicken: 'cooked_chicken',
   raw_porkchop: 'cooked_porkchop',
@@ -34,12 +37,16 @@ export const SMELT_RECIPES: Readonly<Record<string, ItemId>> = {
 
 /** Burnable fuel item → smelts completable per 1 item ignited. **可為小數**：
  *  值＝原版的「燃燒秒數 ÷ SMELT_TIME_SEC(10)」（煤 80 秒＝8、原木 15 秒＝1.5、
- *  板材 15 秒＝1.5、木棍 5 秒＝0.5）。 */
+ *  板材 15 秒＝1.5、木棍 5 秒＝0.5）。雲杉／白樺與橡木同值（B5）。 */
 export const FUEL_VALUES: Readonly<Record<string, number>> = {
   coal: 8,
   oak_log: 1.5,
   oak_planks: 1.5,
   stick: 0.5,
+  spruce_log: 1.5,
+  birch_log: 1.5,
+  spruce_planks: 1.5,
+  birch_planks: 1.5,
 };
 
 export interface FurnaceState {

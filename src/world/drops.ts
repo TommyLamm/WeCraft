@@ -59,20 +59,25 @@ export interface DropEntity {
  *  - coal_ore → `coal` (its BLOCK_PAIRS item is the ore block itself);
  *  - iron_ore → `raw_iron` (the raw ore item, MC 1.17+ style — it smelts to
  *    iron_ingot; the block never drops itself);
+ *  - gold_ore → `raw_gold` (原版金礦掉生金；生金與金礦都能熔成金錠)
+ *  - diamond_ore → `diamond` (原版鑽石礦掉 1 顆鑽石)
  *  - stone → `cobblestone` (without this override no cobblestone is
  *    obtainable: terrain generates no COBBLE blocks, so stone tools, the
  *    furnace recipe and the stone_age advancement were unreachable);
  *  - grass → `dirt` (vanilla: the grass block itself needs silk touch);
- *  - leaves/glass/snow → null (silk-touch-only drops; no shears/silk touch
+ *  - leaves/glass/snow/ice → null (silk-touch-only drops; no shears/silk touch
  *    in this game); the B3 spruce/birch leaves behave exactly like oak leaves.
- *  - ice → null (原版要絲絨觸碰才掉；本作沒有絲絨 → 不掉)。
  *  - 花／草／仙人掌走既有的 itemFromBlock fallback → 掉自身（B5 已定的刻意
- *    偏離：原版花與草掉的是種子／麥粒，不是花本身）。
+ *    偏離：原版花與草掉的是種子／麥粒，不是花本身；本作要讓 B3 的裝飾
+ *    可再生、可重新種回）。
+ *  - 礫石與雲杉／白樺板材同樣走 fallback → 掉自身。
  *  Null also when the block has no item form at all (air, water) → nothing
  *  spawns. */
 export function dropItemFor(blockId: number): ItemId | null {
   if (blockId === BLOCK.COAL_ORE) return 'coal';
   if (blockId === BLOCK.IRON_ORE) return 'raw_iron';
+  if (blockId === BLOCK.GOLD_ORE) return 'raw_gold';
+  if (blockId === BLOCK.DIAMOND_ORE) return 'diamond';
   if (blockId === BLOCK.STONE) return 'cobblestone';
   if (blockId === BLOCK.GRASS) return 'dirt';
   if (

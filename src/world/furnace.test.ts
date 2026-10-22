@@ -23,11 +23,13 @@ function burning(overrides: Partial<FurnaceState> = {}): FurnaceState {
 }
 
 describe('furnace tables', () => {
-  it('smelt takes 10 s; iron ore/raw iron→ingot, sand→glass, four raw meats→cooked; coal_ore excluded', () => {
+  it('smelt takes 10 s; iron and gold ores→ingots, sand→glass, four raw meats→cooked; coal_ore excluded', () => {
     expect(SMELT_TIME_SEC).toBe(10);
     expect(SMELT_RECIPES).toEqual({
       iron_ore: 'iron_ingot',
       raw_iron: 'iron_ingot',
+      raw_gold: 'gold_ingot',
+      gold_ore: 'gold_ingot',
       sand: 'glass',
       raw_chicken: 'cooked_chicken',
       raw_porkchop: 'cooked_porkchop',
@@ -35,7 +37,30 @@ describe('furnace tables', () => {
       raw_beef: 'steak',
     });
     expect(SMELT_RECIPES['coal_ore' as keyof typeof SMELT_RECIPES]).toBeUndefined();
-    expect(FUEL_VALUES).toEqual({ coal: 8, oak_log: 1.5, oak_planks: 1.5, stick: 0.5 });
+    expect(FUEL_VALUES).toEqual({
+      coal: 8,
+      oak_log: 1.5,
+      oak_planks: 1.5,
+      stick: 0.5,
+      spruce_log: 1.5,
+      birch_log: 1.5,
+      spruce_planks: 1.5,
+      birch_planks: 1.5,
+    });
+  });
+
+  it('raw gold and gold ore smelt into a gold ingot', () => {
+    expect(SMELT_RECIPES.raw_gold).toBe('gold_ingot');
+    expect(SMELT_RECIPES.gold_ore).toBe('gold_ingot');
+    // 原版鑽石不能熔煉
+    expect(SMELT_RECIPES.diamond).toBeUndefined();
+  });
+
+  it('the new logs and planks are fuel (same 1.5 as oak)', () => {
+    expect(FUEL_VALUES.spruce_log).toBe(1.5);
+    expect(FUEL_VALUES.birch_log).toBe(1.5);
+    expect(FUEL_VALUES.spruce_planks).toBe(1.5);
+    expect(FUEL_VALUES.birch_planks).toBe(1.5);
   });
 
   it('smelts raw_iron into an iron ingot', () => {

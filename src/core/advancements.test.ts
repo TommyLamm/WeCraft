@@ -118,6 +118,41 @@ describe('checkAdvancements', () => {
     }
   });
 
+  // ---- B5 Task 5：金／鑽石進度 ----
+
+  it('obtaining gold or a diamond unlocks the new advancements', () => {
+    for (const item of ['raw_gold', 'gold_ingot'] as const) {
+      const r = checkAdvancements(emptyAdvancements(), { type: 'obtain', item, mode: 'survival' });
+      expect(r.unlocked).toEqual(['gold_age']);
+      expect(r.state.done.gold_age).toBe(true);
+    }
+    const d = checkAdvancements(emptyAdvancements(), {
+      type: 'obtain',
+      item: 'diamond',
+      mode: 'survival',
+    });
+    expect(d.unlocked).toEqual(['diamond_age']);
+    expect(d.state.done.diamond_age).toBe(true);
+  });
+
+  it('gold and diamond tools unlock their tool advancements', () => {
+    for (const item of ['golden_pickaxe', 'golden_axe', 'golden_sword', 'golden_shovel'] as const) {
+      const r = checkAdvancements(emptyAdvancements(), { type: 'obtain', item, mode: 'survival' });
+      expect(r.unlocked).toEqual(['golden_tool']);
+    }
+    for (const item of ['diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel'] as const) {
+      const r = checkAdvancements(emptyAdvancements(), { type: 'obtain', item, mode: 'survival' });
+      expect(r.unlocked).toEqual(['diamond_tool']);
+    }
+  });
+
+  it('spruce and birch logs count as getting wood', () => {
+    for (const item of ['spruce_log', 'birch_log'] as const) {
+      const r = checkAdvancements(emptyAdvancements(), { type: 'obtain', item, mode: 'survival' });
+      expect(r.unlocked).toEqual(['getting_wood']);
+    }
+  });
+
   it('does not unlock an already-done advancement again', () => {
     const first = checkAdvancements(emptyAdvancements(), {
       type: 'obtain',

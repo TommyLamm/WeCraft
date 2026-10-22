@@ -447,6 +447,18 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.IRON_ORE)).toBe('raw_iron');
   });
 
+  // B5 Task 5：原版金礦掉生金、鑽石礦掉 1 顆鑽石（都不是礦石方塊本體）
+  it('gold ore drops raw gold and diamond ore drops a diamond', () => {
+    expect(dropItemFor(BLOCK.GOLD_ORE)).toBe('raw_gold');
+    expect(dropItemFor(BLOCK.DIAMOND_ORE)).toBe('diamond');
+  });
+
+  it('gravel drops gravel; ice drops nothing (silk touch only)', () => {
+    expect(dropItemFor(BLOCK.GRAVEL)).toBe('gravel');
+    // 冰需要絲綢觸碰才掉（本作沒有絲綢觸碰）→ 掉自身以外的規則已在下方 B3 測試釘死
+    expect(dropItemFor(BLOCK.ICE)).toBeNull();
+  });
+
   it('stone drops cobblestone (Minecraft parity — the only cobble source)', () => {
     expect(dropItemFor(BLOCK.STONE)).toBe('cobblestone');
   });
@@ -472,10 +484,12 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.WATER)).toBeNull();
   });
 
-  // B3 Task 3：本批釘死雲杉／白樺的掉落規則（原木掉自身、葉子不掉）
+  // B3 Task 3／B5 Task 5：雲杉／白樺的掉落規則（原木與板材掉自身、葉子不掉）
   it('the new wood blocks drop themselves; their leaves drop nothing', () => {
     expect(dropItemFor(BLOCK.SPRUCE_LOG)).toBe('spruce_log');
     expect(dropItemFor(BLOCK.BIRCH_LOG)).toBe('birch_log');
+    expect(dropItemFor(BLOCK.SPRUCE_PLANKS)).toBe('spruce_planks');
+    expect(dropItemFor(BLOCK.BIRCH_PLANKS)).toBe('birch_planks');
     expect(dropItemFor(BLOCK.SPRUCE_LEAVES)).toBeNull();
     expect(dropItemFor(BLOCK.BIRCH_LEAVES)).toBeNull();
   });

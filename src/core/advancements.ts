@@ -15,6 +15,10 @@ export type AdvancementId =
   | 'stone_age'
   | 'coal_miner'
   | 'iron_age'
+  | 'gold_age'
+  | 'diamond_age'
+  | 'golden_tool'
+  | 'diamond_tool'
   | 'hot_stuff'
   | 'pasture'
   | 'tasty'
@@ -39,6 +43,10 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   { id: 'stone_age', title: '鵝卵石', description: '取得鵝卵石', icon: 'cobblestone' },
   { id: 'coal_miner', title: '煤炭開採', description: '取得煤炭', icon: 'coal' },
   { id: 'iron_age', title: '鐵礦', description: '取得鐵礦', icon: 'iron_ore' },
+  { id: 'gold_age', title: '黃金時代', description: '取得金錠', icon: 'gold_ingot' },
+  { id: 'diamond_age', title: '鑽石時代', description: '取得鑽石', icon: 'diamond' },
+  { id: 'golden_tool', title: '金製工具', description: '合成一把金製工具', icon: 'golden_pickaxe' },
+  { id: 'diamond_tool', title: '鑽製工具', description: '合成一把鑽製工具', icon: 'diamond_pickaxe' },
   { id: 'hot_stuff', title: '燃燒吧', description: '從熔爐取出冶煉成品', icon: 'furnace' },
   { id: 'pasture', title: '牧場', description: '取得生肉或羊毛', icon: 'raw_beef' },
   { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
@@ -64,14 +72,18 @@ export type AdvancementEvent =
   | { type: 'ate'; item: ItemId; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
-/** Obtain → advancement map (Task 11 brief ＋ B4 Task 1)：20 個 item 觸發、9 個進度 id。
- *  wood/stone/iron tools share one id per tier; `stone_sword` only triggers
- *  stone_tool here — monster_hunter needs the kill event. Both iron inputs map
- *  to iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
- *  stays for legacy saves/creative.
+/** Obtain → advancement map (Task 11 brief ＋ B4 Task 1 ＋ B5 Task 5)：33 個 item
+ *  觸發、13 個進度 id。wood/stone/iron tools share one id per tier; the B5
+ *  golden/diamond tools do the same. `stone_sword` only triggers stone_tool
+ *  here — monster_hunter needs the kill event. Both iron inputs map to
+ *  iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
+ *  stays for legacy saves/creative. Likewise raw_gold/gold_ingot → gold_age
+ *  and diamond → diamond_age; spruce/birch logs extend getting_wood.
  *  B4 Task 1：加 5 個觸發（生肉／羊毛 → pasture，見下）。 */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
+  spruce_log: 'getting_wood',
+  birch_log: 'getting_wood',
   crafting_table: 'crafting_table',
   wooden_pickaxe: 'wooden_tool',
   wooden_axe: 'wooden_tool',
@@ -82,10 +94,21 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   iron_pickaxe: 'iron_tool',
   iron_axe: 'iron_tool',
   iron_sword: 'iron_tool',
+  golden_pickaxe: 'golden_tool',
+  golden_axe: 'golden_tool',
+  golden_sword: 'golden_tool',
+  golden_shovel: 'golden_tool',
+  diamond_pickaxe: 'diamond_tool',
+  diamond_axe: 'diamond_tool',
+  diamond_sword: 'diamond_tool',
+  diamond_shovel: 'diamond_tool',
   cobblestone: 'stone_age',
   coal: 'coal_miner',
   iron_ore: 'iron_age',
   raw_iron: 'iron_age',
+  raw_gold: 'gold_age',
+  gold_ingot: 'gold_age',
+  diamond: 'diamond_age',
   // B4 Task 1：牧場——取得任一種生肉或羊毛（熟肉不解鎖：牧場是「開始養」的訊號）
   raw_chicken: 'pasture',
   raw_porkchop: 'pasture',
