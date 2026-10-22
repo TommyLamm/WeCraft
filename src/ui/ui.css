@@ -440,11 +440,29 @@
 }
 
 /* 進食進度條（B4 Task 9）：按住右鍵吃東西時，畫面下方的橫條顯示「按住多久了」。
-   由 ui/eat-progress.ts 掛／收（**規則不依賴它**）；放在熱鍵欄上方、vitals 條
-   下面。pointer-events 關掉 → 不擋滑鼠事件。 */
+   由 ui/eat-progress.ts 掛／收（**規則不依賴它**）。pointer-events 關掉 → 不擋
+   滑鼠事件。
+
+   **位置（bottom: 104px）—— 刻意放在「物品名提示」上方**：
+   畫面下緣由下往上的帶狀（同一個 viewport 座標系）：
+
+     | 8..66px   | `.ui-hotbar`      | 熱鍵欄（48px 的格子 ＋ 內距 ＋ 邊框） |
+     | 52..68px  | `.vitals`         | 血量／飢餓條（16px 的圖示）           |
+     | 70..89px  | `.ui-item-name`   | 物品名提示（16px 字級 → 行高約 19px）  |
+     | 104..116px| `.eat-progress`   | 進度條（本項，8px ＋ 2px 邊框）       |
+
+   **不可與 `.ui-item-name` 重疊**：切換物品後物品名提示會出現 1.2 秒，而那正是
+   玩家可能正在按住右鍵進食的時候 → 兩者都在畫面中央下緣、同一條垂直線上。
+   原本的 `bottom: 88px` 正好壓到物品名提示的字尾（88 < 89）→ 往上挪到 104px，
+   與物品名提示之間留 15px 的空隙。
+
+   **定位：刻意用 `position: fixed`（不是同層熱鍵欄／物品名的 `absolute`）**：
+   進度條要固定在**畫面**中央下緣，不受任何容器（含 `#ui-root`）的定位影響；
+   `.vitals` 也是同一族（viewport 錨定）。熱鍵欄／物品名用 `absolute` 是因為它們
+   本來就只活在 `#ui-root` 裡；進度條的錨點是「畫面」，所以用 `fixed`。 */
 .eat-progress {
   position: fixed;
-  bottom: 88px;
+  bottom: 104px;
   left: 50%;
   transform: translateX(-50%);
   width: 182px;

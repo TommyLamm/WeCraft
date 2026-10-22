@@ -1364,6 +1364,12 @@ function setState(next: GameState): void {
   if (state === 'playing' && next !== 'playing') {
     attackedThisFrame = false;
     resetCameraFov();
+    // B4 Task 9：離開 playing → **收掉進度條的 DOM 節點**。進度條平常是靠
+    // playing 分支裡每幀的 `hide()` 收掉的；離開後那個分支不再跑 → 節點會留在
+    // 畫面上（一條不會再動的進度條，掛在暫停選單／死亡畫面／標題底下）。
+    // 同時歸零進度（回來要重新按住 → 從零開始累積）。
+    eatProgressUi.hide();
+    eatProgress.reset();
   }
   state = next;
   menus.hideAll();

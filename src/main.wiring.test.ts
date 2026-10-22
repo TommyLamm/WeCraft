@@ -232,6 +232,16 @@ function countOf(needle: string): number {
   return n;
 }
 
+/** 某個錨點（形如 `if (wantPlace) {`）之後那個大括號所包住的**本體**。
+ *
+ *  與 `playingBranchBody()` 同一手法（都是「用完整錨點 → 抓配對大括號」），
+ *  只是換成任意錨點 → 同一支檔案裡可以再釘別的分支（例如右鍵脈衝分支）。 */
+function blockAfter(marker: string): string {
+  const at = mainSource.indexOf(marker);
+  if (at === -1) throw new Error(`main.ts 裡找不到 ${marker}——請更新這支釘子`);
+  return braceMatchedBody(at + marker.length - 1);
+}
+
 describe('接線釘子的工具（剔除註解）', () => {
   it('the comment stripping keeps the code tokens identical', () => {
     // 保守實作的最後一道保險：剔除註解只該動到註解本身。
@@ -444,5 +454,50 @@ describe('main.ts 接線（B4 Task 5：白天燃燒＋生怪光照閘門）', ()
     expect(body).toContain('light: clockLight(clock.t)');
     expect(body).not.toContain('isNight');
     expect(countOf('isNight:')).toBe(0);
+  });
+});
+
+// ---- B4 Task 9 接線：進食＝按住右鍵 1.6 秒（脈衝即吃的舊路徑已刪除）-------
+// 這批把「右鍵脈衝即吃」整段刪掉、換成每幀的 `eatTick` 路徑 —— 屬於**結構性
+// 改變** → 用釘子守住（「舊路徑回來了」＝ 右鍵點一下就吃掉東西）。
+describe('main.ts 接線（B4 Task 9：按住右鍵 1.6 秒才吃）', () => {
+  it('the eating path runs through the per-frame eatTick', () => {
+    const playing = playingBranchBody();
+    // 進食的規則本體是 `player/eat.ts` 的 `eatTick()`（純邏輯）→ 每幀推進。
+    expect(playing).toContain('eatTick(');
+    expect(countOf('eatTick(')).toBe(1); // 全檔只有這一條進食路徑
+    // `held` 帶的是 B2（0.5.0）擁有的 `input.state.placeHeld`（右鍵「還按著」）
+    // —— 不是單擊脈衝 `state.place`。
+    expect(playing).toContain('held: input.state.placeHeld');
+    // 營養值來自食物值表（`foodFor`）→ 不寫死蘋果的 4／2.4。
+    expect(playing).toContain('foodFor(eatItem)');
+  });
+
+  it('the old right-click pulse eating path is gone', () => {
+    // 舊路徑：右鍵**脈衝**（`wantPlace`）→ 立刻 `eatFromSlot` → 套用寫死的
+    // 蘋果營養值（`APPLE_FOOD`／`APPLE_SAT`）→ 成就事件寫死 `item: 'apple'`。
+    // **整段刪除**後：扣物品的呼叫只剩新路徑那一處。
+    expect(countOf('eatFromSlot(')).toBe(1);
+    // 右鍵脈衝分支裡不得再有扣物品的呼叫（＝舊路徑回來了就會紅）。
+    const pulse = blockAfter('if (wantPlace) {');
+    expect(pulse).not.toContain('eatFromSlot(');
+    // 脈衝分支只負責「進入進食模式」（歸零進度），不吃東西。
+    expect(pulse).toContain('eatProgress.reset()');
+    // 舊的寫死營養值 / 寫死 'apple' 的成就事件都不在了。
+    expect(mainSource).not.toContain('APPLE_FOOD');
+    expect(mainSource).not.toContain('APPLE_SAT');
+    expect(mainSource).not.toContain("item: 'apple'");
+  });
+
+  it('leaving the playing state hides the eat progress bar', () => {
+    // 進度條的 DOM 節點平常是靠 playing 分支裡**每幀**的 `hide()` 收掉的 →
+    // 離開 playing（暫停／死亡／標題）後那個分支不再跑 → 必須在 `setState`
+    // 裡收掉，否則畫面上會留著一條不會再動的進度條。
+    const body = functionBody('setState');
+    const leaving = body.indexOf("state === 'playing' && next !== 'playing'");
+    const hide = body.indexOf('eatProgressUi.hide()');
+    expect(leaving).toBeGreaterThan(-1);
+    expect(hide).toBeGreaterThan(leaving); // 在「離開 playing」的那個分支裡
+    expect(hide).toBeLessThan(body.indexOf('state = next;')); // 且在狀態換掉之前
   });
 });
