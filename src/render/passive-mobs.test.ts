@@ -138,6 +138,7 @@ describe('createPassiveMobRenderer', () => {
   });
 
   it('the rendered height follows the definition height (cow > sheep > pig > chicken)', () => {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
     const heights: Partial<Record<PassiveKind, number>> = {};
     for (const kind of KINDS) {
       const { scene, renderer } = setup();
@@ -145,7 +146,18 @@ describe('createPassiveMobRenderer', () => {
       const box = renderedBox(scene.children[0] as THREE.Group);
       heights[kind] = box.max.y - box.min.y;
       renderer.dispose();
+
+      // **渲染器確實吃的是定義表的尺寸**：與「用 `PASSIVE_DEFS` 直接建出的模型」
+      // 比對 → 這條和下一條（尺寸真的由參數推導）合起來＝「改定義表就會改畫面」。
+      const model = buildPassiveMobModel(kind, PASSIVE_DEFS[kind], geo);
+      const modelBox = renderedBox(model.group);
+      expect(box.max.y).toBeCloseTo(modelBox.max.y, 6);
+      expect(box.max.x).toBeCloseTo(modelBox.max.x, 6);
+      expect(box.min.y).toBeCloseTo(modelBox.min.y, 6);
+      for (const m of model.materials) m.dispose();
     }
+    geo.dispose();
+
     expect(heights.cow!).toBeGreaterThan(heights.sheep!);
     expect(heights.sheep!).toBeGreaterThan(heights.pig!);
     expect(heights.pig!).toBeGreaterThan(heights.chicken!);
