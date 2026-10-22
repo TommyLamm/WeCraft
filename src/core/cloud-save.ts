@@ -6,6 +6,8 @@
 // field (old payloads without one are still valid and derive it on accept).
 // B3 Task 7：同一套路再來一次——`worldgenVersion` 是 format 1 之下的**附加**
 // optional 欄位（格式號本身**不變**）。
+// B4 Task 10：再來一次——`passiveMobs` 也是 format 1 之下的**附加** optional
+// 欄位（格式號**不變**，`game.json` 的 `cloudSave` 一字不動）。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import type { ItemStack } from './items';
@@ -13,6 +15,12 @@ import { sanitizeAdvancements, type AdvancementState } from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
 import { WORLDGEN_VERSION, readWorldgenVersion } from '../world/worldgen';
+import {
+  normalizePassiveMobs,
+  serializePassiveMobs,
+  type PassiveMobRecord,
+} from '../world/passive-save';
+import type { PassiveMob } from '../world/passive-mobs';
 
 /** Payload schema version. Must match game.json `writeFormat` (Task 5). */
 export const CLOUD_FORMAT_VERSION = 1 as const;
@@ -52,6 +60,10 @@ export interface CloudData {
    *  判準，所以接受路徑**不得**自動補值（補了就看不出是舊存檔、也永遠不會跳
    *  「地形已改變」提示）。 */
   worldgenVersion?: number;
+  /** B4 Task 10 附加欄位（format 1 不變）：場上有哪些被動生物、在哪、血量多少、
+   *  面朝哪裡。舊 payload 沒有這個鍵 → 那是「舊存檔」→ 接受路徑給**空陣列**
+   * （＝沒有生物），**不是**壞 payload。 */
+  passiveMobs?: PassiveMobRecord[];
 }
 
 export interface CloudBuildSource {
@@ -65,6 +77,9 @@ export interface CloudBuildSource {
   settings: Settings;
   /** Live per-mode stash — copied into the payload (fresh arrays/objects). */
   stash: ModeStash;
+  /** Live passive mobs (B4 Task 10) — copied into the payload as
+   *  `{ kind, x, y, z, hp, yaw }` records. **必填**（沒有生物也要明寫空陣列）。 */
+  passiveMobs: readonly PassiveMob[];
 }
 
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
@@ -110,6 +125,9 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
       survivalVitals: { ...src.stash.survivalVitals },
     },
     worldgenVersion: WORLDGEN_VERSION,
+    // B4 Task 10：被動生物的持久化記錄（種類／座標／血量／朝向）。`vel`／
+    // `kbVel` 是暫態 → 不寫進 payload。
+    passiveMobs: serializePassiveMobs(src.passiveMobs),
   };
 }
 
@@ -162,6 +180,9 @@ export function validateCloudData(x: unknown): x is CloudData {
   if (r.worldgenVersion !== undefined && readWorldgenVersion(r.worldgenVersion) === undefined) {
     return false;
   }
+  // B4 Task 10：附加欄位 `passiveMobs` 若存在，必須是陣列（逐筆的內容交給
+  // `normalizePassiveMobs` 處理 → 不在這裡收緊）。不存在則仍然合法（舊 payload）。
+  if (r.passiveMobs !== undefined && !Array.isArray(r.passiveMobs)) return false;
   return true;
 }
 
@@ -176,7 +197,9 @@ export function validateCloudData(x: unknown): x is CloudData {
  *  as strings — the main-side inventory model discards them.
  *  B3 Task 7：附加欄位 `worldgenVersion` **原樣帶回、絕不在這裡補值**——payload
  *  沒有這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）。帶著髒值的情況
- *  `validateCloudData` 已經整筆拒收了。 */
+ *  `validateCloudData` 已經整筆拒收了。
+ *  B4 Task 10：附加欄位 `passiveMobs` **一律回傳**（正規化後的陣列）——payload
+ *  沒有這個鍵 → 空陣列（沒有生物）；單筆壞掉 → 只丟那一筆，不整包拒絕。 */
 export function acceptCloudData(x: unknown): CloudData | null {
   if (!validateCloudData(x)) return null;
   const clamped = clampSettings({ ...DEFAULT_SETTINGS, ...x.settings });
@@ -204,6 +227,9 @@ export function acceptCloudData(x: unknown): CloudData | null {
       clouds: clamped.clouds,
     },
     ...(worldgenVersion === undefined ? {} : { worldgenVersion }),
+    // B4 Task 10：附加欄位 `passiveMobs` **一律回傳**（正規化後的陣列）——舊
+    // payload 沒有這個鍵 → 空陣列（沒有生物）；單筆壞掉 → 只丟那一筆。
+    passiveMobs: normalizePassiveMobs(x.passiveMobs),
   };
 }
 

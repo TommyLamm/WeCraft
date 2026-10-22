@@ -15,6 +15,7 @@ import { starterSlots, type ItemStack } from './items';
 import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
 import { WORLDGEN_VERSION } from '../world/worldgen';
+import { createPassiveMob } from '../world/passive-mobs';
 
 function validSettings(): Settings {
   return {
@@ -65,6 +66,9 @@ describe('cloud-save', () => {
       advancements,
       settings,
       stash: createModeStash(),
+      // B4 Task 10：`CloudBuildSource.passiveMobs` 是**必填**欄位（沒有生物也
+      // 要明寫空陣列）→ 少了它 typecheck 直接紅。
+      passiveMobs: [],
     });
     // Mutate every live input after the build.
     pos[0] = 999;
@@ -90,6 +94,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     expect(built.pos).toEqual([0, 0, 0]);
     expect(built.yaw).toBe(0);
@@ -103,6 +108,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     expect(inf.pos).toEqual([1, 2, 3]);
     expect(inf.yaw).toBe(0);
@@ -125,6 +131,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash,
+      passiveMobs: [],
     });
     // Mutate every live input after the build.
     stash.survival[0] = { item: 'apple', count: 1 };
@@ -162,6 +169,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     expect(built.worldgenVersion).toBe(WORLDGEN_VERSION);
   });
@@ -185,6 +193,77 @@ describe('cloud-save', () => {
     // 原樣保留（不得被改寫成當前版本——改了就看不出是舊生成器的存檔）
   });
 
+  /**
+   * B4 Task 10：被動生物的持久化記錄 —— 雲端 **維持 format 1**，只多一個附加
+   * 欄位 `passiveMobs`（與 B1.3 的 `stash`／B3 的 `worldgenVersion` 同一套路）。
+   */
+  it('an old format-1 payload without passiveMobs still validates', () => {
+    // 舊的 format-1 payload 沒有這個欄位 → 仍然合法（不覆蓋、不強制）
+    expect(validateCloudData(rawValid())).toBe(true);
+    const accepted = acceptCloudData(rawValid());
+    expect(accepted).not.toBeNull();
+    // 沒有就不生生物 → 空陣列（不是錯誤）
+    expect(accepted!.passiveMobs).toEqual([]);
+  });
+
+  it('buildCloudData copies the passive mobs', () => {
+    const cow = { ...createPassiveMob('cow', { x: 1, y: 2, z: 3 }), hp: 7, yaw: 0.5 };
+    const built = buildCloudData({
+      seed: 1,
+      pos: [0, 64, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [],
+      advancements: { done: {}, nightSeen: false },
+      settings: validSettings(),
+      stash: createModeStash(),
+      passiveMobs: [cow],
+    });
+    expect(built.passiveMobs).toEqual([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 7, yaw: 0.5 }]);
+    // 深拷貝 → 改回傳的 payload 不得影響場上的生物
+    built.passiveMobs![0].hp = 1;
+    expect(cow.hp).toBe(7);
+  });
+
+  it('acceptCloudData drops corrupt passive records', () => {
+    const raw = rawValid();
+    raw.passiveMobs = [
+      { kind: 'cow', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+      { kind: 'dragon', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+      { kind: 'pig', x: Number.NaN, y: 2, z: 3, hp: 10, yaw: 0 },
+      { kind: 'pig', x: 1, y: 2, z: 3, hp: 0, yaw: 0 },
+    ];
+    const accepted = acceptCloudData(raw);
+    expect(accepted?.passiveMobs).toHaveLength(1);
+    expect(accepted?.passiveMobs?.[0]?.kind).toBe('cow');
+  });
+
+  it('validateCloudData rejects a non-array passive list', () => {
+    expect(validateCloudData({ ...rawValid(), passiveMobs: 'nope' })).toBe(false);
+    expect(validateCloudData({ ...rawValid(), passiveMobs: null })).toBe(false);
+  });
+
+  it('a cloud payload with 12 passive mobs stays far under the 64 KiB cap', () => {
+    const passiveMobs = Array.from({ length: 12 }, (_, i) =>
+      createPassiveMob('cow', { x: i * 1.5, y: 64, z: -i * 2.25 }),
+    );
+    const data = buildCloudData({
+      seed: 1337,
+      pos: [0, 64, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [],
+      advancements: { done: {}, nightSeen: false },
+      settings: validSettings(),
+      stash: createModeStash(),
+      passiveMobs,
+    });
+    expect(data.passiveMobs).toHaveLength(12);
+    expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
+  });
+
   it('byteSizeOf: small payload is under 1 KiB', () => {
     const data = buildCloudData({
       seed: 1337,
@@ -196,6 +275,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     expect(byteSizeOf(data)).toBeLessThan(1024);
   });
@@ -213,6 +293,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
   });
@@ -228,6 +309,7 @@ describe('cloud-save', () => {
       advancements: { done: {}, nightSeen: false },
       settings: validSettings(),
       stash: createModeStash(),
+      passiveMobs: [],
     });
     const withExtra = { ...base, extraPayload: 'x'.repeat(70 * 1024) } as CloudData;
     expect(byteSizeOf(withExtra)).toBeGreaterThan(CLOUD_MAX_BYTES);

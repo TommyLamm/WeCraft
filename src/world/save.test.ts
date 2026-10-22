@@ -15,6 +15,7 @@ import { emptyAdvancements } from '../core/advancements';
 import { createModeStash, type ModeStash } from '../core/mode-stash';
 import { starterSlots, type ItemStack } from '../core/items';
 import { WORLDGEN_VERSION } from './worldgen';
+import { createPassiveMob } from './passive-mobs';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
@@ -67,6 +68,9 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
     // 生成的。fixture 必須帶著它，否則 round-trip 的 deep-equal 會失敗
     //（讀回來的舊記錄不會被自動補值 → 見下面的舊存檔案例）。
     worldgenVersion: WORLDGEN_VERSION,
+    // B4 Task 10：附加欄位（payload 版本仍是 3）——被動生物的持久化記錄。
+    // fixture 帶著空陣列 → round-trip 的 deep-equal 才成立。
+    passiveMobs: [],
     ...patch,
   };
 }
@@ -225,6 +229,9 @@ describe('saveGame / loadGame', () => {
         creative: starterSlots('creative'),
         survivalVitals: createVitals(), // v1 vitals were null → fresh defaults
       },
+      // B4 Task 10：loadGame **一律**回傳 `passiveMobs`（正規化後）→ 舊的 v1
+      // 記錄沒有這個欄位 → 空陣列（舊存檔＝沒有生物，不是錯誤）。
+      passiveMobs: [],
     });
     expect(loaded!.version).toBe(3);
   });
@@ -241,6 +248,8 @@ describe('saveGame / loadGame', () => {
         creative: slots({ item: 'oak_planks', count: 12 }),
         survivalVitals: createVitals(), // creative record → no survival vitals to carry
       },
+      // B4 Task 10：同上——舊記錄缺欄位 → 空陣列。
+      passiveMobs: [],
     });
     expect(loaded!.version).toBe(3);
   });
@@ -406,6 +415,86 @@ describe('saveGame / loadGame', () => {
   });
 });
 
+/**
+ * B4 Task 10：被動生物的持久化 —— 本機 payload **維持 v3**，只多一個附加欄位
+ * `passiveMobs`。
+ *
+ * **舊存檔缺欄位 ≠ 壞檔**：v3 舊記錄沒有 `passiveMobs` → 載入得空陣列（＝沒有
+ * 生物），不整包拒絕、不報錯。
+ */
+describe('B4 Task 10：被動生物跨存檔（本機 payload v3 的附加欄位）', () => {
+  beforeEach(deleteSaveDb);
+
+  it('a v3 record without passiveMobs loads with an empty list', async () => {
+    const noMobs = makePayload() as Partial<SavePayload>;
+    delete noMobs.passiveMobs;
+    await putRawRecord(noMobs);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    // 舊存檔 → 沒有生物（空陣列），**不是**「讀不到存檔」
+    expect(loaded!.passiveMobs).toEqual([]);
+  });
+
+  it('passive mobs round-trip through IndexedDB', async () => {
+    await saveGame(
+      makePayload({
+        passiveMobs: [
+          { kind: 'cow', x: 1.5, y: 64, z: -3.25, hp: 7, yaw: 0.5 },
+          { kind: 'chicken', x: 8.25, y: 65, z: 2, hp: 4, yaw: 1.5 },
+        ],
+      }),
+    );
+    const loaded = await loadGame();
+    expect(loaded?.passiveMobs).toHaveLength(2);
+    expect(loaded?.passiveMobs?.[0]).toEqual({
+      kind: 'cow',
+      x: 1.5,
+      y: 64,
+      z: -3.25,
+      hp: 7,
+      yaw: 0.5,
+    });
+    expect(loaded?.passiveMobs?.[1]?.kind).toBe('chicken');
+  });
+
+  it('a corrupt passive list does not invalidate the whole save', async () => {
+    for (const junk of ['nope', 42, { kind: 'cow' }, [null, 7]]) {
+      await putRawRecord({ ...makePayload(), passiveMobs: junk });
+      const loaded = await loadGame();
+      expect(loaded).not.toBeNull();
+      expect(loaded?.passiveMobs).toEqual([]);
+      // 其餘欄位照樣有效（玩家位置、背包都在）
+      expect(loaded?.player.pos).toEqual([1.5, 64, -3.25]);
+      expect(loaded?.player.inventory).toEqual([
+        { item: 'stone', count: 32 },
+        null,
+        { item: 'wooden_pickaxe', count: 1 },
+      ]);
+    }
+  });
+
+  it('a record with a corrupt passive entry keeps the valid ones', async () => {
+    await putRawRecord({
+      ...makePayload(),
+      passiveMobs: [
+        { kind: 'cow', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+        { kind: 'dragon', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+        { kind: 'pig', x: Number.NaN, y: 2, z: 3, hp: 10, yaw: 0 },
+      ],
+    });
+    const loaded = await loadGame();
+    expect(loaded?.passiveMobs).toHaveLength(1);
+    expect(loaded?.passiveMobs?.[0]?.kind).toBe('cow');
+  });
+
+  it('isValidSavePayload does not care about the passive list (normalization owns it)', () => {
+    // 基本結構檢查**不**收緊這個附加欄位（與 `stash`／`advancements` 同款）
+    const base = makePayload();
+    expect(isValidSavePayload({ ...base, passiveMobs: 'nope' })).toBe(true);
+    expect(isValidSavePayload({ ...base, passiveMobs: undefined })).toBe(true);
+  });
+});
+
 /** Task 14 review #2: IndexedDB records can be written by an older/broken
  *  build — loadGame must validate the SHAPE before handing a payload to
  *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
@@ -519,6 +608,9 @@ describe('collectSavePayload', () => {
       clockT: 0.42,
       advancements,
       stash: createModeStash(),
+      // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
+      // 明寫空陣列）→ 少了它 typecheck 直接紅。
+      passiveMobs: [],
       savedAt: 123,
     });
     expect(payload.version).toBe(3);
@@ -543,9 +635,31 @@ describe('collectSavePayload', () => {
       clockT: 0,
       advancements: emptyAdvancements(),
       stash: createModeStash(),
+      // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
+      // 明寫空陣列）→ 少了它 typecheck 直接紅。
+      passiveMobs: [],
       savedAt: 0,
     });
     expect(payload.worldgenVersion).toBe(WORLDGEN_VERSION);
+  });
+
+  /** B4 Task 10：被動生物的持久化記錄進 payload（種類／座標／血量／朝向）。 */
+  it('collectSavePayload copies the passive mobs', () => {
+    const cow = { ...createPassiveMob('cow', { x: 1, y: 2, z: 3 }), hp: 7, yaw: 0.5 };
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      vitals: null,
+      clockT: 0,
+      advancements: emptyAdvancements(),
+      stash: createModeStash(),
+      passiveMobs: [cow],
+      savedAt: 0,
+    });
+    expect(payload.passiveMobs).toEqual([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 7, yaw: 0.5 }]);
+    // 深拷貝 → 改 payload 不得影響場上的生物
+    payload.passiveMobs![0].hp = 1;
+    expect(cow.hp).toBe(7);
   });
 
   it('copies the player sub-object and advancements — no aliasing', () => {
@@ -564,6 +678,9 @@ describe('collectSavePayload', () => {
       clockT: 0,
       advancements,
       stash: createModeStash(),
+      // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
+      // 明寫空陣列）→ 少了它 typecheck 直接紅。
+      passiveMobs: [],
       savedAt: 0,
     });
     // fresh pos array — mutating the source must not touch the payload
@@ -600,6 +717,9 @@ describe('collectSavePayload', () => {
       clockT: 0.1,
       advancements: emptyAdvancements(),
       stash: createModeStash(),
+      // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
+      // 明寫空陣列）→ 少了它 typecheck 直接紅。
+      passiveMobs: [],
     });
     const after = Date.now();
     expect(payload.player.mode).toBe('creative');
@@ -626,6 +746,8 @@ describe('collectSavePayload', () => {
       clockT: 0,
       advancements: emptyAdvancements(),
       stash,
+      // B4 Task 10：同上——必填的來源欄位。
+      passiveMobs: [],
       savedAt: 0,
     });
     // fresh arrays, stacks and vitals — never the live objects

@@ -14,6 +14,12 @@ import {
   type AdvancementState,
 } from '../core/advancements';
 import { WORLDGEN_VERSION, readWorldgenVersion } from './worldgen';
+import {
+  normalizePassiveMobs,
+  serializePassiveMobs,
+  type PassiveMobRecord,
+} from './passive-save';
+import type { PassiveMob } from './passive-mobs';
 
 /** Pre-v2 payload shape (Task 11): kept for the migration path so records
  *  written by earlier builds still validate and load. */
@@ -53,6 +59,14 @@ export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	 *  `loadGame` **不得**自動補值（補了就看不出是舊存檔、也永遠不會跳「地形已改變」
 	 *  提示）。 */
 	worldgenVersion?: number;
+	/** B4 Task 10 附加欄位——payload 版本**維持 3**，這只是多出來的一個鍵，舊版
+	 *  程式讀到不認識的欄位會直接忽略。它記錄「場上有哪些被動生物、在哪、血量
+	 *  多少、面朝哪裡」。B4 之前的記錄**沒有**這個鍵 → 那就是「舊存檔」→ 載入
+	 *  得到**空陣列**（＝沒有生物），**不是**壞檔。
+	 *
+	 *  **型別上是選填、執行期上 `loadGame` 一律會給**（正規化後的陣列）→ 呼叫端
+	 *  不必寫「有沒有這個鍵」的分支。 */
+	passiveMobs?: PassiveMobRecord[];
 }
 
 /** The shape written to / read from the single local slot. */
@@ -75,6 +89,10 @@ export interface SaveSources {
 	/** Live per-mode stash (B1.3) — copied into the payload: a fresh array per
 	 *  side, a fresh object per stack and a fresh vitals object. */
 	stash: ModeStash;
+	/** Live passive mobs (B4 Task 10) — copied into the payload as
+	 *  `{ kind, x, y, z, hp, yaw }` records. **必填**（沒有生物也要明寫空陣列）
+	 *  → 少了它 typecheck 直接紅，呼叫端不會漏掉「被動生物要存檔」這件事。 */
+	passiveMobs: readonly PassiveMob[];
 	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
 	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
 	 *  value only matters for tests / pre-save inspection. */
@@ -112,6 +130,9 @@ export function collectSavePayload(args: SaveSources): SavePayload {
 			survivalVitals: { ...args.stash.survivalVitals },
 		},
 		worldgenVersion: WORLDGEN_VERSION,
+		// B4 Task 10：被動生物的持久化記錄（種類／座標／血量／朝向）。
+		// `vel`／`kbVel` 是暫態 → 不寫進存檔。
+		passiveMobs: serializePassiveMobs(args.passiveMobs),
 	};
 }
 
@@ -128,6 +149,9 @@ export function collectSavePayload(args: SaveSources): SavePayload {
  *  skip, item ids and counts by the inventory model / sanitizeSlots. Neither
  *  v2 `advancements` nor v3 `stash` is part of this base check: `loadGame`
  *  sanitizes both (sanitizeAdvancements / normalizeModeStash) before returning.
+ *  B4 Task 10：附加欄位 `passiveMobs` 同樣**不在**這個檢查裡（交給載入路徑的
+ *  `normalizePassiveMobs` 逐筆處理）——髒值不會讓整筆記錄被拒收，只是那一筆
+ *  生物被丟棄。
  *  B3 Task 7：附加欄位 `worldgenVersion` **不在**這個檢查裡——基本結構檢查完全不動
  *  （既不放寬也不收緊）：沒有這個欄位的舊 v1/v2/v3 記錄照樣通過；帶著髒值（`'x'`）
  *  的記錄也照樣被讀出來（讀取端會把該鍵剝除，而不是整筆拒收）。
@@ -224,6 +248,8 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  Vitals written before `exhaustion` existed (or otherwise malformed) run
  *  through survival.ts `normalizeVitals` — for the live player AND for the
  *  stash's survival snapshot — so the live model always sees the full shape.
+ *  B4 Task 10——附加欄位 `passiveMobs` **一律回傳**（正規化後的陣列；舊記錄缺
+ *  欄位 → `[]`＝沒有生物，不報錯；單筆壞掉 → 只丟那一筆，不整包拒絕）。
  *  B3 Task 7——附加欄位 `worldgenVersion` **原樣帶回、絕不在這裡補值**：記錄沒有
  *  這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）；記錄上是有限數字 →
  *  原樣保留；記錄上是髒值（例如字串 `'x'`——基本結構檢查刻意不看這個附加欄位）
@@ -272,9 +298,18 @@ export async function loadGame(): Promise<SavePayload | null> {
 			// → 再交給 `readWorldgenVersion` 於執行期擋一次。
 			const { worldgenVersion: rawVersion, ...migratedClean } = migrated;
 			const worldgenVersion = readWorldgenVersion(rawVersion);
+			// B4 Task 10：附加欄位 `passiveMobs` —— **一律回傳**（正規化後的陣列）。
+			// 1) 舊記錄沒有這個鍵 → 空陣列（＝沒有生物），**不是**壞檔、不報錯。
+			// 2) 記錄上有髒值（整包不是陣列／單筆壞掉）→ 逐筆丟棄壞的、留著好的，
+			//    **不整包拒絕**（一筆壞紀錄不該讓整份存檔變成「無存檔」）。
+			// 3) 上限 12（與生成端同一個常數）→ 超過只保留前 12 筆。
+			// 讀取端在這裡**補值**（與 `worldgenVersion` 刻意不補相反）：這個欄位
+			// 沒有「是不是舊存檔」的判準用途 → 一律給空陣列最省事，呼叫端也不必
+			// 寫「有沒有這個鍵」的分支。
 			return {
 				...migratedClean,
 				...(worldgenVersion === undefined ? {} : { worldgenVersion }),
+				passiveMobs: normalizePassiveMobs((value as Partial<SavePayload>).passiveMobs),
 			};
 		} finally {
 			db.close();

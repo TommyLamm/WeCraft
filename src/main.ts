@@ -120,6 +120,7 @@ import {
   SPAWN_INTERVAL_SEC,
   DESPAWN_DISTANCE,
   type Mob,
+  type MobKind,
   type Arrow,
   type MobEvent,
 } from './world/mobs';
@@ -138,6 +139,9 @@ import {
   type PassiveMob,
   type PassiveKind,
 } from './world/passive-mobs';
+// B4 Task 10：被動生物的持久化（附加欄位 `passiveMobs`；本機 payload 維持 v3、
+// 雲端維持 format 1 —— 兩邊都只是多蓋一個可選的鍵）。
+import { normalizePassiveMobs, restorePassiveMobs } from './world/passive-save';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
@@ -230,6 +234,33 @@ interface WecraftDebug {
     z: number;
     hp: number;
   }>;
+  /** **敵對**生物的逐隻狀態（id／種類／座標／血量／白天燃燒剩餘秒數）。
+   *
+   *  **純唯讀**：只是把當下的 `mobs` 映射成一份新陣列（不修改任何遊戲狀態、
+   *  不產生副作用）。用途：驗「屋簷下的殭屍不掉血」（看 `hp`／`burn`）與
+   *  「20 格外的骷髏不射箭」（看 `pos`）。 */
+  mobStates: () => Array<{
+    id: number;
+    kind: MobKind;
+    x: number;
+    y: number;
+    z: number;
+    hp: number;
+    /** 白天日照下的燃燒剩餘秒數（> 0 = 正在燃燒）。 */
+    burn: number;
+  }>;
+  /** 玩家的生命／飢餓／飽食度現況（創造模式 → `null`，沒有飢餓條）。
+   *
+   *  **純唯讀**：回傳當下 `vitals` 的一份新快照。欄位名沿用 `player/survival.ts`
+   *  的 `Vitals`（`hp`／`maxHp`／`hunger`／`maxHunger`／`saturation`）。用途：
+   *  驗「進食後的飽食度值」。 */
+  vitalsState: () => {
+    hp: number;
+    maxHp: number;
+    hunger: number;
+    maxHunger: number;
+    saturation: number;
+  } | null;
 }
 
 declare global {
@@ -1597,6 +1628,7 @@ function sessionSavePayload(): SavePayload | null {
     clockT: clock.t,
     advancements,
     stash: modeStash, // B1.3: the other mode's hotbar + survival vitals
+    passiveMobs, // B4 Task 10: 被動生物（種類／座標／血量／朝向）跨存檔
   });
 }
 
@@ -1641,6 +1673,10 @@ function applyCloudData(data: CloudData): void {
   terrain = new TerrainWorkerClient(settings.seed);
   resetWorld();
   resetSessionEntities(); // entities are never persisted — drop stale ones
+  // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
+  // 從雲端進度還原。舊的 format-1 payload 沒有這個欄位 → 空陣列（沒有生物）。
+  // `restorePassiveMobs` 會把暫態的 `vel`／`kbVel` 補成零（否則下一幀 TypeError）。
+  passiveMobs = restorePassiveMobs(normalizePassiveMobs(data.passiveMobs));
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -1717,6 +1753,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       advancements,
       settings,
       stash: modeStash,
+      passiveMobs, // B4 Task 10: 被動生物隨雲端進度一起旅行
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');
@@ -1947,10 +1984,15 @@ function quitToTitle(): void {
  * arrows are NOT persisted (plan: they respawn naturally), so a session
  * restart must never inherit the previous session's. Called by resetWorld
  * (New Game) and continueGame (stale in-page predecessors). No
- * mobs-changed/drops-changed emit — nothing on the bus consumes them yet. */
+ * mobs-changed/drops-changed emit — nothing on the bus consumes them yet.
+ *
+ * **B4 Task 10 的例外**：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→
+ * 這裡清空之後，由 `continueGame`／`applyCloudData` 從存檔／雲端進度**還原**
+ * （見那兩個函式裡的 `restorePassiveMobs`）。**新遊戲**（`startGame` →
+ * `resetWorld` → 這裡）則是真的清空（沒有存檔可還原）。 */
 function resetSessionEntities(): void {
   mobs = [];
-  passiveMobs = [];
+  passiveMobs = []; // B4 Task 10：清空後由 continueGame／applyCloudData 從存檔還原
   drops = [];
   arrows = [];
 }
@@ -2060,6 +2102,10 @@ function continueGame(payload: SavePayload): void {
   // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are
   // deliberately NOT cleared here: Continue applies onto the existing world.
   resetSessionEntities();
+  // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
+  // 從存檔還原。舊的 v3 記錄沒有這個欄位 → 空陣列（沒有生物，不報錯）。
+  // `restorePassiveMobs` 會把暫態的 `vel`／`kbVel` 補成零（否則下一幀 TypeError）。
+  passiveMobs = restorePassiveMobs(normalizePassiveMobs(payload.passiveMobs));
   clearFurnaces(); // Task 6: furnace states are session-only (conditional toast inside)
 
   const [px, py, pz] = payload.player.pos;
@@ -2344,6 +2390,28 @@ window.__wecraft = {
       z: m.pos.z,
       hp: m.hp,
     })),
+  // 敵對生物的逐隻狀態（血量／燃燒／座標）→ 驗「屋簷下不掉血」「20 格外不射箭」
+  mobStates: () =>
+    mobs.map((m) => ({
+      id: m.id,
+      kind: m.kind,
+      x: m.pos.x,
+      y: m.pos.y,
+      z: m.pos.z,
+      hp: m.hp,
+      burn: m.burn,
+    })),
+  // 玩家的生命／飢餓／飽食度（創造模式 → null）
+  vitalsState: () =>
+    vitals
+      ? {
+          hp: vitals.hp,
+          maxHp: vitals.maxHp,
+          hunger: vitals.hunger,
+          maxHunger: vitals.maxHunger,
+          saturation: vitals.saturation,
+        }
+      : null,
 };
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,

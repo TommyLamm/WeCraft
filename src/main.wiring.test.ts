@@ -501,3 +501,48 @@ describe('main.ts 接線（B4 Task 9：按住右鍵 1.6 秒才吃）', () => {
     expect(hide).toBeLessThan(body.indexOf('state = next;')); // 且在狀態換掉之前
   });
 });
+
+// ---- B4 Task 10 接線：被動生物跨存檔（附加欄位 `passiveMobs`）---------------
+// 這批把「被動生物每場重來」改成「被動生物跟著存檔走」→ 屬於**行為改變** →
+// 用釘子守住（「接線被拆掉」＝ 存／讀之間生物會無聲消失）。
+describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
+  it('the save path carries the passive mobs into the payload', () => {
+    // 本機存檔：`sessionSavePayload` → `collectSavePayload` 必須帶 `passiveMobs`。
+    const body = functionBody('sessionSavePayload');
+    expect(body).toContain('passiveMobs');
+  });
+
+  it('the cloud checkpoint path carries the passive mobs into the payload', () => {
+    const body = functionBody('saveCloudNow');
+    expect(body).toContain('buildCloudData(');
+    expect(body).toContain('passiveMobs');
+  });
+
+  it('the continue path restores the passive mobs from the payload', () => {
+    const body = functionBody('continueGame');
+    expect(body).toContain('restorePassiveMobs(');
+    expect(body).toContain('normalizePassiveMobs(');
+    // 還原必須發生在「清掉舊生物」之後（否則會被清掉）。
+    const clearAt = body.indexOf('resetSessionEntities()');
+    const restoreAt = body.indexOf('restorePassiveMobs(');
+    expect(clearAt).toBeGreaterThan(-1);
+    expect(restoreAt).toBeGreaterThan(clearAt);
+  });
+
+  it('the cloud apply path restores the passive mobs from the payload', () => {
+    const body = functionBody('applyCloudData');
+    expect(body).toContain('restorePassiveMobs(');
+    expect(body).toContain('normalizePassiveMobs(');
+    const clearAt = body.indexOf('resetSessionEntities()');
+    const restoreAt = body.indexOf('restorePassiveMobs(');
+    expect(clearAt).toBeGreaterThan(-1);
+    expect(restoreAt).toBeGreaterThan(clearAt);
+  });
+
+  it('a new game restores nothing (the roster starts empty)', () => {
+    const body = functionBody('startGame');
+    expect(body).not.toContain('restorePassiveMobs(');
+    // 新遊戲走的是 resetWorld → resetSessionEntities（真的清空）。
+    expect(functionBody('resetSessionEntities')).toContain('passiveMobs = []');
+  });
+});
