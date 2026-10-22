@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { matchRecipe, consumeGrid, emptyGrid, RECIPES, type Recipe } from './recipes';
+import { matchRecipe, findRecipe, consumeGrid, emptyGrid, RECIPES, type Recipe } from './recipes';
 import type { ItemId, ItemStack } from './items';
 
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 13). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 31). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,22 +13,40 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 13 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(13);
+  it('holds exactly the 31 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(31);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
+        'spruce_log_to_planks',
+        'birch_log_to_planks',
         'planks_to_stick',
         'planks_to_table',
         'wooden_pickaxe',
         'wooden_axe',
+        'wooden_axe_mirrored',
         'wooden_sword',
+        'wooden_shovel',
         'stone_pickaxe',
         'stone_axe',
+        'stone_axe_mirrored',
         'stone_sword',
+        'stone_shovel',
         'iron_pickaxe',
         'iron_axe',
+        'iron_axe_mirrored',
         'iron_sword',
+        'iron_shovel',
+        'golden_pickaxe',
+        'golden_axe',
+        'golden_axe_mirrored',
+        'golden_sword',
+        'golden_shovel',
+        'diamond_pickaxe',
+        'diamond_axe',
+        'diamond_axe_mirrored',
+        'diamond_sword',
+        'diamond_shovel',
         'furnace',
       ].sort(),
     );
@@ -36,10 +54,38 @@ describe('recipe table', () => {
 
   it('result counts: planks 4, stick 4, table 1, tools 1, furnace 1', () => {
     expect(recipe('log_to_planks').result).toEqual({ item: 'oak_planks', count: 4 });
+    expect(recipe('spruce_log_to_planks').result).toEqual({ item: 'spruce_planks', count: 4 });
+    expect(recipe('birch_log_to_planks').result).toEqual({ item: 'birch_planks', count: 4 });
     expect(recipe('planks_to_stick').result).toEqual({ item: 'stick', count: 4 });
     expect(recipe('planks_to_table').result).toEqual({ item: 'crafting_table', count: 1 });
     expect(recipe('furnace').result).toEqual({ item: 'furnace', count: 1 });
-    for (const id of ['wooden_pickaxe', 'wooden_axe', 'wooden_sword', 'stone_pickaxe', 'stone_axe', 'stone_sword', 'iron_pickaxe', 'iron_axe', 'iron_sword']) {
+    for (const id of [
+      'wooden_pickaxe',
+      'wooden_axe',
+      'wooden_axe_mirrored',
+      'wooden_sword',
+      'wooden_shovel',
+      'stone_pickaxe',
+      'stone_axe',
+      'stone_axe_mirrored',
+      'stone_sword',
+      'stone_shovel',
+      'iron_pickaxe',
+      'iron_axe',
+      'iron_axe_mirrored',
+      'iron_sword',
+      'iron_shovel',
+      'golden_pickaxe',
+      'golden_axe',
+      'golden_axe_mirrored',
+      'golden_sword',
+      'golden_shovel',
+      'diamond_pickaxe',
+      'diamond_axe',
+      'diamond_axe_mirrored',
+      'diamond_sword',
+      'diamond_shovel',
+    ]) {
       expect(recipe(id).result.count).toBe(1);
     }
   });
@@ -69,6 +115,15 @@ describe('matchRecipe — shapeless', () => {
 
   it('stray item anywhere fails', () => {
     expect(matchRecipe([s('oak_log'), s('oak_planks'), null, null], 2)).toBeNull();
+  });
+
+  it('each wood type has its own planks recipe', () => {
+    // Grids must be size² (2×2) — the log sits alone in one cell.
+    expect(matchRecipe([s('spruce_log'), null, null, null], 2)).toEqual({ item: 'spruce_planks', count: 4 });
+    expect(matchRecipe([s('birch_log'), null, null, null], 2)).toEqual({ item: 'birch_planks', count: 4 });
+    expect(matchRecipe([s('oak_log'), null, null, null], 2)).toEqual({ item: 'oak_planks', count: 4 });
+    // A spruce log must NOT turn into oak planks (shapeless inputs are exact ids).
+    expect(matchRecipe([s('spruce_log'), null, null, null], 2)).not.toEqual({ item: 'oak_planks', count: 4 });
   });
 });
 
@@ -116,6 +171,18 @@ describe('matchRecipe — shaped', () => {
     expect(matchRecipe(g, 3)).toEqual({ item: 'wooden_pickaxe', count: 1 });
   });
 
+  it('wooden tools accept any planks', () => {
+    for (const plank of ['oak_planks', 'spruce_planks', 'birch_planks'] as const) {
+      const grid: Array<ItemStack | null> = [
+        { item: plank, count: 1 }, { item: plank, count: 1 }, { item: plank, count: 1 },
+        null, { item: 'stick', count: 1 }, null,
+        null, { item: 'stick', count: 1 }, null,
+      ];
+      expect(grid).toHaveLength(9);
+      expect(matchRecipe(grid, 3)).toEqual({ item: 'wooden_pickaxe', count: 1 });
+    }
+  });
+
   it('wooden_axe matches wherever it sits (left- and right-aligned = offset match)', () => {
     // left-aligned: XX / XS / .S
     const left = [
@@ -131,6 +198,44 @@ describe('matchRecipe — shaped', () => {
       null, null, s('stick'),
     ];
     expect(matchRecipe(right, 3)).toEqual({ item: 'wooden_axe', count: 1 });
+  });
+
+  it('an axe can be crafted in either mirrored orientation', () => {
+    // Left axe: CC / CS / .S → cells (0,0)(0,1)(1,0)(1,1)(2,1)
+    const left: Array<ItemStack | null> = [
+      { item: 'cobblestone', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'cobblestone', count: 1 }, { item: 'stick', count: 1 }, null,
+      null, { item: 'stick', count: 1 }, null,
+    ];
+    // Right axe: CC / SC / S. → cells (0,0)(0,1)(1,0)(1,1)(2,0)
+    const right: Array<ItemStack | null> = [
+      { item: 'cobblestone', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'stick', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'stick', count: 1 }, null, null,
+    ];
+    expect(left).toHaveLength(9);
+    expect(right).toHaveLength(9);
+    expect(matchRecipe(left, 3)).toEqual({ item: 'stone_axe', count: 1 });
+    expect(matchRecipe(right, 3)).toEqual({ item: 'stone_axe', count: 1 });
+  });
+
+  it('the mirrored axe layout is NOT matched by the original recipe id', () => {
+    // Guards against bbox offset making the two layouts one recipe: the
+    // right-handed layout must only be found under the mirrored id.
+    const leftGrid: Array<ItemStack | null> = [
+      { item: 'cobblestone', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'cobblestone', count: 1 }, { item: 'stick', count: 1 }, null,
+      null, { item: 'stick', count: 1 }, null,
+    ];
+    const rightGrid: Array<ItemStack | null> = [
+      { item: 'cobblestone', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'stick', count: 1 }, { item: 'cobblestone', count: 1 }, null,
+      { item: 'stick', count: 1 }, null, null,
+    ];
+    expect(leftGrid).toHaveLength(9);
+    expect(rightGrid).toHaveLength(9);
+    expect(findRecipe(leftGrid, 3)?.id).toBe('stone_axe');
+    expect(findRecipe(rightGrid, 3)?.id).toBe('stone_axe_mirrored');
   });
 
   it('wooden_sword: one column of plank/plank/stick, any column', () => {
@@ -197,6 +302,40 @@ describe('matchRecipe — shaped', () => {
       null, null, s('stick'),
     ];
     expect(matchRecipe(sword, 3)).toEqual({ item: 'iron_sword', count: 1 });
+  });
+
+  it('shovels craft from one material and two sticks', () => {
+    // Shovel shape: X / S / S → cells (0,0)(1,0)(2,0)
+    const shovelGrid = (m: ItemId): Array<ItemStack | null> => [
+      { item: m, count: 1 }, null, null,
+      { item: 'stick', count: 1 }, null, null,
+      { item: 'stick', count: 1 }, null, null,
+    ];
+    const stone = shovelGrid('cobblestone');
+    const golden = shovelGrid('gold_ingot');
+    const diamond = shovelGrid('diamond');
+    for (const g of [stone, golden, diamond]) expect(g).toHaveLength(9);
+    expect(matchRecipe(stone, 3)).toEqual({ item: 'stone_shovel', count: 1 });
+    expect(matchRecipe(golden, 3)).toEqual({ item: 'golden_shovel', count: 1 });
+    expect(matchRecipe(diamond, 3)).toEqual({ item: 'diamond_shovel', count: 1 });
+  });
+
+  it('gold and diamond tools craft from their ingot and the diamond', () => {
+    const goldenPickaxe: Array<ItemStack | null> = [
+      { item: 'gold_ingot', count: 1 }, { item: 'gold_ingot', count: 1 }, { item: 'gold_ingot', count: 1 },
+      null, { item: 'stick', count: 1 }, null,
+      null, { item: 'stick', count: 1 }, null,
+    ];
+    // Sword: D / D / S → cells (0,0)(1,0)(2,0)
+    const diamondSword: Array<ItemStack | null> = [
+      { item: 'diamond', count: 1 }, null, null,
+      { item: 'diamond', count: 1 }, null, null,
+      { item: 'stick', count: 1 }, null, null,
+    ];
+    expect(goldenPickaxe).toHaveLength(9);
+    expect(diamondSword).toHaveLength(9);
+    expect(matchRecipe(goldenPickaxe, 3)).toEqual({ item: 'golden_pickaxe', count: 1 });
+    expect(matchRecipe(diamondSword, 3)).toEqual({ item: 'diamond_sword', count: 1 });
   });
 
   it('furnace: 8 cobblestone ring (3×3, empty centre)', () => {

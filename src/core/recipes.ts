@@ -1,24 +1,28 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (Task 11, settled: exactly these 13 recipes) ----
+// ---- Recipe table (13 settled recipes + B5 expansion: exactly 31) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
-// (left → right): an ItemId marks a required item, `null` marks a cell that
-// must be EMPTY inside the pattern's bounding box (Minecraft's `.`).
+// (left → right): an ItemId marks a required item, a list of ids accepts any
+// one of them ("any of", used for the plank slots), and `null` marks a cell
+// that must be EMPTY inside the pattern's bounding box (Minecraft's `.`).
 // Typed item-id rows were chosen over packed pattern strings because item ids
 // are multi-char (`oak_planks`) — a string encoding would need a legend and a
 // parser for no benefit.
 //
 // Shapeless recipes list their inputs as a multiset; cell position and cell
 // stack grouping are ignored, but the totals must be EXACT (settled: no extra
-// items anywhere in the grid).
+// items anywhere in the grid). Their inputs are exact ids: one spruce log
+// makes spruce planks only — wood species never substitute for each other.
+// Shaped recipes accept any listed id per cell; today only the plank slots do.
 
-export type PatternCell = ItemId | null;
+export type PatternCell = ItemId | ReadonlyArray<ItemId> | null;
 
 export interface ShapedRecipe {
   id: string;
   kind: 'shaped';
-  /** Rows top→bottom, cells left→right; `null` = must-be-empty cell. */
+  /** Rows top→bottom, cells left→right; `null` = must-be-empty cell, an id
+   *  list = any one of those ids. */
   pattern: ReadonlyArray<ReadonlyArray<PatternCell>>;
   /** Result stack handed to the player per craft. */
   result: ItemStack;
@@ -34,15 +38,31 @@ export interface ShapelessRecipe {
 
 export type Recipe = ShapedRecipe | ShapelessRecipe;
 
-const P: PatternCell = 'oak_planks';
+/** Any plank species — Minecraft tool/table recipes accept mixed planks. */
+const ANY_PLANKS: PatternCell = ['oak_planks', 'spruce_planks', 'birch_planks'];
+const P: PatternCell = ANY_PLANKS;
 const S: PatternCell = 'stick';
 const C: PatternCell = 'cobblestone';
 const I: PatternCell = 'iron_ingot';
+const G: PatternCell = 'gold_ingot';
+const D: PatternCell = 'diamond';
 
-/** The settled recipe table — exactly 13 entries, checked by tests. */
+/** The settled recipe table — exactly 31 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
-  // 1 log anywhere → 4 planks (the only shapeless recipe)
+  // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
+  {
+    id: 'spruce_log_to_planks',
+    kind: 'shapeless',
+    inputs: ['spruce_log'],
+    result: { item: 'spruce_planks', count: 4 },
+  },
+  {
+    id: 'birch_log_to_planks',
+    kind: 'shapeless',
+    inputs: ['birch_log'],
+    result: { item: 'birch_planks', count: 4 },
+  },
   // two planks stacked vertically → 4 sticks
   // Deviation, adjudicated KEEP SHAPED (Minecraft parity): the plan's recipe
   // table lists this as shapeless; shipped shaped so a HORIZONTAL pair does
@@ -82,10 +102,26 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     result: { item: 'wooden_axe', count: 1 },
   },
   {
+    id: 'wooden_axe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [P, P],
+      [S, P],
+      [S, null],
+    ],
+    result: { item: 'wooden_axe', count: 1 },
+  },
+  {
     id: 'wooden_sword',
     kind: 'shaped',
     pattern: [[P], [P], [S]],
     result: { item: 'wooden_sword', count: 1 },
+  },
+  {
+    id: 'wooden_shovel',
+    kind: 'shaped',
+    pattern: [[P], [S], [S]],
+    result: { item: 'wooden_shovel', count: 1 },
   },
   {
     id: 'stone_pickaxe',
@@ -108,10 +144,26 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     result: { item: 'stone_axe', count: 1 },
   },
   {
+    id: 'stone_axe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [C, C],
+      [S, C],
+      [S, null],
+    ],
+    result: { item: 'stone_axe', count: 1 },
+  },
+  {
     id: 'stone_sword',
     kind: 'shaped',
     pattern: [[C], [C], [S]],
     result: { item: 'stone_sword', count: 1 },
+  },
+  {
+    id: 'stone_shovel',
+    kind: 'shaped',
+    pattern: [[C], [S], [S]],
+    result: { item: 'stone_shovel', count: 1 },
   },
   {
     id: 'iron_pickaxe',
@@ -134,10 +186,110 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     result: { item: 'iron_axe', count: 1 },
   },
   {
+    id: 'iron_axe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [I, I],
+      [S, I],
+      [S, null],
+    ],
+    result: { item: 'iron_axe', count: 1 },
+  },
+  {
     id: 'iron_sword',
     kind: 'shaped',
     pattern: [[I], [I], [S]],
     result: { item: 'iron_sword', count: 1 },
+  },
+  {
+    id: 'iron_shovel',
+    kind: 'shaped',
+    pattern: [[I], [S], [S]],
+    result: { item: 'iron_shovel', count: 1 },
+  },
+  {
+    id: 'golden_pickaxe',
+    kind: 'shaped',
+    pattern: [
+      [G, G, G],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'golden_pickaxe', count: 1 },
+  },
+  {
+    id: 'golden_axe',
+    kind: 'shaped',
+    pattern: [
+      [G, G],
+      [G, S],
+      [null, S],
+    ],
+    result: { item: 'golden_axe', count: 1 },
+  },
+  {
+    id: 'golden_axe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [G, G],
+      [S, G],
+      [S, null],
+    ],
+    result: { item: 'golden_axe', count: 1 },
+  },
+  {
+    id: 'golden_sword',
+    kind: 'shaped',
+    pattern: [[G], [G], [S]],
+    result: { item: 'golden_sword', count: 1 },
+  },
+  {
+    id: 'golden_shovel',
+    kind: 'shaped',
+    pattern: [[G], [S], [S]],
+    result: { item: 'golden_shovel', count: 1 },
+  },
+  {
+    id: 'diamond_pickaxe',
+    kind: 'shaped',
+    pattern: [
+      [D, D, D],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'diamond_pickaxe', count: 1 },
+  },
+  {
+    id: 'diamond_axe',
+    kind: 'shaped',
+    pattern: [
+      [D, D],
+      [D, S],
+      [null, S],
+    ],
+    result: { item: 'diamond_axe', count: 1 },
+  },
+  {
+    id: 'diamond_axe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [D, D],
+      [S, D],
+      [S, null],
+    ],
+    result: { item: 'diamond_axe', count: 1 },
+  },
+  {
+    id: 'diamond_sword',
+    kind: 'shaped',
+    pattern: [[D], [D], [S]],
+    result: { item: 'diamond_sword', count: 1 },
+  },
+  {
+    id: 'diamond_shovel',
+    kind: 'shaped',
+    pattern: [[D], [S], [S]],
+    result: { item: 'diamond_shovel', count: 1 },
   },
   // 8 cobblestone ring (empty centre) → furnace
   {
@@ -161,6 +313,15 @@ export function emptyGrid(size: 2 | 3): Array<ItemStack | null> {
  *  (repo NaN-guard norm — spent/garbage stacks read as empty cells). */
 function usable(stack: ItemStack | null | undefined): stack is ItemStack {
   return !!stack && Number.isFinite(stack.count) && stack.count >= 1;
+}
+
+/** Does a pattern cell accept `have`? `null` wants an empty cell; a list
+ *  accepts any listed id (and is never empty-cell). */
+function cellMatches(want: PatternCell, have: ItemId | null): boolean {
+  if (want === null) return have === null;
+  if (have === null) return false;
+  if (typeof want === 'string') return want === have;
+  return want.includes(have);
 }
 
 const idx = (size: number, row: number, col: number): number => row * size + col;
@@ -235,7 +396,7 @@ function matchShaped(
       const gc = gb[1] + (c - pBox[1]);
       const cell = grid[idx(size, gr, gc)];
       const have = usable(cell) ? cell.item : null;
-      if (want !== have) return false;
+      if (!cellMatches(want, have)) return false;
     }
   }
   return true;
@@ -268,10 +429,11 @@ function patternBox(
  *  - the grid must be exactly `size²` cells (anything else → null);
  *  - shapeless: exact multiset equality of the usable cells' items+counts;
  *  - shaped: bounding-box the usable grid cells, translate the pattern's
- *    bounding box onto it and compare every cell exactly — the pattern may
- *    sit anywhere in the grid (2×2 recipes match inside 3×3 via offset),
- *    pattern `null` cells must be grid-empty, and any stray item outside the
- *    pattern bbox grows the grid bbox → no match;
+ *    bounding box onto it and compare every cell exactly (an id matches only
+ *    itself, a list accepts any listed id) — the pattern may sit anywhere in
+ *    the grid (2×2 recipes match inside 3×3 via offset), pattern `null` cells
+ *    must be grid-empty, and any stray item outside the pattern bbox grows
+ *    the grid bbox → no match;
  *  - usable = non-null with a finite count ≥ 1; other stacks read as empty. */
 export function findRecipe(
   grid: ReadonlyArray<ItemStack | null>,
