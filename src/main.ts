@@ -114,6 +114,16 @@ import {
 } from './world/mobs';
 // B4 Task 5：生怪光照判準（判準集中在 spawn-rules，B6 只要換掉 `clockLight`）。
 import { clockLight, isDaylight } from './world/spawn-rules';
+// B4 Task 6：被動生物（雞／豬／羊／牛）的模型與 AI（純邏輯層，渲染是後續任務）。
+// **被動生物與敵對生物是兩套東西**：不會主動攻擊、不會 despawn、不進
+// `mobs-changed`（那是敵對生物的計數事件）。
+import {
+  stepPassiveMobs,
+  isPassiveDead,
+  hitPassiveMobId,
+  attackPassiveMob,
+  type PassiveMob,
+} from './world/passive-mobs';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
@@ -699,6 +709,14 @@ function dropSelected(wholeStack: boolean): void {
 let mobs: Mob[] = [];
 let arrows: Arrow[] = [];
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
+/**
+ * 被動生物（雞／豬／羊／牛；B4 Task 6）。**與敵對生物分開存**：
+ * - 步進規則不同（漫遊／panic／水中漂浮，不追玩家）；
+ * - **不 despawn**（原版被動生物不會自然消失）→ 沒有距離過濾；
+ * - **不進 `mobs-changed`**（那是敵對生物的計數事件）。
+ * 生成規則在後續任務（那之前這裡一直是空的）。
+ */
+let passiveMobs: PassiveMob[] = [];
 
 // ---- 破壞/挖掘粒子（Task 4）----
 // Pure particle sim (world/particles.ts) stepped each playing frame; the
@@ -1132,6 +1150,26 @@ function spawnMobDeathDrops(dead: readonly Mob[]): boolean {
   if (currentMode !== 'survival') return false; // 創造模式不掉落
   let spilled = false;
   for (const d of dropsForDeaths(dead)) {
+    drops = spawnDrop(drops, d.item, d.count, d.pos);
+    spilled = true;
+  }
+  return spilled;
+}
+
+/**
+ * **被動生物死亡 → 掉落**（B4 Task 6）：與敵對生物**共用同一份掉落表**
+ * （`mob-drops.ts` 的 `dropsForDeaths` → `rollMobDrops`，雞掉生雞肉＋羽毛、
+ * 豬掉生豬肉、羊掉生羊肉＋羊毛、牛掉生牛肉＋皮革），**創造模式不掉落**。
+ *
+ * 為什麼不直接呼叫 `rollMobDrops`：`main.ts` 裡掉落表只有 `dropsForDeaths` 這一個
+ * 入口（`main.wiring.test.ts` 的釘子釘的就是這件事）→ 兩種生物共用同一條路徑。
+ * `PassiveKind` 與 `MobDropKind` 的被動分支是同一組字面量 → 不需要轉型。
+ */
+function spawnPassiveDeathDrops(dead: readonly PassiveMob[]): boolean {
+  if (currentMode !== 'survival') return false; // 創造模式不掉落
+  let spilled = false;
+  const table = dead.map((m) => ({ kind: m.kind, pos: m.pos }));
+  for (const d of dropsForDeaths(table)) {
     drops = spawnDrop(drops, d.item, d.count, d.pos);
     spilled = true;
   }
@@ -1838,13 +1876,14 @@ function quitToTitle(): void {
   setState('title');
 }
 
-/** Drop the live entities (review #4): mobs, ground drops and arrows are NOT
- *  persisted (plan: they respawn naturally), so a session restart must never
- *  inherit the previous session's. Called by resetWorld (New Game) and
- *  continueGame (stale in-page predecessors). No mobs-changed/drops-changed
- *  emit — nothing on the bus consumes them yet. */
+/** Drop the live entities (review #4): mobs, passive mobs, ground drops and
+ * arrows are NOT persisted (plan: they respawn naturally), so a session
+ * restart must never inherit the previous session's. Called by resetWorld
+ * (New Game) and continueGame (stale in-page predecessors). No
+ * mobs-changed/drops-changed emit — nothing on the bus consumes them yet. */
 function resetSessionEntities(): void {
   mobs = [];
+  passiveMobs = [];
   drops = [];
   arrows = [];
 }
@@ -2497,6 +2536,8 @@ gs.renderer.setAnimationLoop(() => {
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
     const mobsBefore = mobs.length;
     const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
+    const isWaterAt = (x: number, y: number, z: number): boolean =>
+      world.getBlock(x, y, z) === BLOCK.WATER;
     const stepped = stepMobs(mobs, { playerPos: player.position, isSolidAt, dt });
     mobs = stepped.mobs;
     // **事件的套用不能省略**（`stepped.events` 是殭屍近戰／骷髏射箭的來源）。
@@ -2507,7 +2548,7 @@ gs.renderer.setAnimationLoop(() => {
     const sunCtx = {
       isDaylight: isDaylight(clock.t),
       isSolidAt,
-      isWaterAt: (x: number, y: number, z: number): boolean => world.getBlock(x, y, z) === BLOCK.WATER,
+      isWaterAt,
       dt,
     };
     mobs = mobs.map((m) => stepSunBurn(m, sunCtx));
@@ -2524,6 +2565,23 @@ gs.renderer.setAnimationLoop(() => {
     // 不會重複掉：近戰支與這一支都**同步**把死掉的生物從 `mobs` 移走 → 每一隻死掉的
     // 生物只會被其中一支看到（這一支先跑、近戰支後跑）→ 不會掉兩次。
     if (spilled) bus.emit('drops-changed', {});
+
+    // ---- 被動生物（B4 Task 6）：AI 步進 → 死亡移除（**不 despawn**）----
+    // 與敵對生物同一套物理慣例（重力 32、跳上 1 格台階），但規則不同：漫遊／panic／
+    // 水中漂浮、**不主動攻擊**、**不會自然消失**（沒有距離過濾）。
+    passiveMobs = stepPassiveMobs(passiveMobs, {
+      playerPos: player.position,
+      isSolidAt,
+      isWaterAt,
+      dt,
+    });
+    // 死亡 → 掉落（生存模式）→ 移除屍體；**被動生物不進 `mobs-changed`**
+    // （那是敵對生物的計數事件）。
+    const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
+    if (deadPassive.length > 0) {
+      passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
+      if (spawnPassiveDeathDrops(deadPassive)) bus.emit('drops-changed', {});
+    }
 
     // ---- 生存值（Task 9）：sprint/jump exhaustion + regen/starve tick ----
     // Mob/arrow damage already went through setVitals above (each emits
@@ -2677,15 +2735,19 @@ gs.renderer.setAnimationLoop(() => {
       let attacking = false;
       if (input.state.dig) {
         if (attackCd > 0) {
-          attacking = hitMobId(mobs, rayOrigin, dir, meleeReach) !== null; // query only, no damage
+          // 查詢而已（不造成傷害）：**先敵對、再被動** → 兩者都擋住挖掘。
+          attacking =
+            hitMobId(mobs, rayOrigin, dir, meleeReach) !== null ||
+            hitPassiveMobId(passiveMobs, rayOrigin, dir, meleeReach) !== null;
         } else {
           const heldStack = hotbar[selected];
+          const dmg = toolDamage(heldStack?.item ?? null);
           const atk = attackMob(
             mobs,
             rayOrigin,
             dir,
             meleeReach,
-            toolDamage(heldStack?.item ?? null),
+            dmg,
             dir, // knockback along the look direction (damageMob normalizes XZ)
           );
           viewmodel.startSwing(); // Phase 3 Task 8: every attack attempt swings
@@ -2718,6 +2780,33 @@ gs.renderer.setAnimationLoop(() => {
               // 那一支同一份掉落表，且不會重複生成（這裡把死掉的生物從 `mobs`
               // 移走了 → 死亡移除支看不到牠）。
               if (spawnMobDeathDrops(dead)) bus.emit('drops-changed', {});
+            }
+          } else {
+            // ---- 被動生物（B4 Task 6）：沒打到敵對 → 試試被動生物 ----
+            // **順序：先敵對、再被動**（同一個瞄準只能打中一隻 → 敵對優先）。
+            const patk = attackPassiveMob(
+              passiveMobs,
+              rayOrigin,
+              dir,
+              meleeReach,
+              dmg,
+              dir, // 擊退沿著水平視線方向（attackPassiveMob 只看 XZ）
+            );
+            if (patk.hitId !== null) {
+              attacking = true;
+              passiveMobs = patk.mobs;
+              attackCd = ATTACK_COOLDOWN_SEC;
+              // 被動生物的受擊閃白由後續的渲染任務處理（那時才有被動生物的
+              // renderer）→ 這裡只負責扣血、擊退與掉落。
+              attackedThisFrame = true;
+              if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+              // 死亡 → 掉落（生存模式）→ 移除屍體。
+              // **被動生物不進 `mobs-changed`**（那是敵對生物的計數事件）。
+              const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
+              if (deadPassive.length > 0) {
+                passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
+                if (spawnPassiveDeathDrops(deadPassive)) bus.emit('drops-changed', {});
+              }
             }
           }
         }

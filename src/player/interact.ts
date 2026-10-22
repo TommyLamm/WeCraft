@@ -1,6 +1,8 @@
 import { getBlockDef, BLOCK, isCross, type ToolKind } from '../world/blocks';
 import type { World } from '../world/world';
-import type { RayHit } from '../world/raycast';
+// B4 Task 6：射線／AABB 的幾何運算搬到 `world/raycast.ts`（`rayAabbEntry`），
+// 讓敵對生物與被動生物的命中盒判定共用同一份實作（這裡是**搬移不是改寫**）。
+import { rayAabbEntry, type RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
@@ -143,37 +145,6 @@ export function toolDamage(heldItem: ItemId | null): number {
 const MOB_HALF_WIDTH = 0.35;
 const MOB_HITBOX_HEIGHT = 1.8;
 
-/** Parametric ray vs AABB (slab method): entry `t` of the first intersection
- *  at or after the origin, or null when the box is missed or lies entirely
- *  behind the origin. A ray starting inside the box returns 0 (point-blank
- *  hits register). `dir` must be normalized by the caller — `t` is then
- *  measured in world blocks. */
-function rayBoxEntry(
-  origin: { x: number; y: number; z: number },
-  dir: { x: number; y: number; z: number },
-  min: { x: number; y: number; z: number },
-  max: { x: number; y: number; z: number },
-): number | null {
-  let tMin = -Infinity; // latest slab entry
-  let tMax = Infinity; // earliest slab exit
-  for (const axis of ['x', 'y', 'z'] as const) {
-    const o = origin[axis];
-    const d = dir[axis];
-    if (d === 0) {
-      if (o < min[axis] || o > max[axis]) return null; // parallel: never crosses this slab
-      continue;
-    }
-    let t1 = (min[axis] - o) / d;
-    let t2 = (max[axis] - o) / d;
-    if (t1 > t2) [t1, t2] = [t2, t1]; // enter/exit order regardless of direction
-    if (t1 > tMin) tMin = t1;
-    if (t2 < tMax) tMax = t2;
-    if (tMin > tMax) return null; // slabs don't overlap → no intersection
-  }
-  if (tMax < 0) return null; // box entirely behind the ray origin
-  return Math.max(tMin, 0); // 0 = origin inside the box
-}
-
 /** The id of the NEAREST mob whose hitbox the ray crosses within `reach`
  *  (distance along the normalized look direction), or null on a miss.
  *  Pure: the input list is untouched, and NaN/zero directions or
@@ -198,7 +169,7 @@ export function hitMobId(
   let bestId: number | null = null;
   for (const m of mobs) {
     if (![m.pos.x, m.pos.y, m.pos.z].every(Number.isFinite)) continue;
-    const t = rayBoxEntry(
+    const t = rayAabbEntry(
       eyePos,
       dir,
       { x: m.pos.x - MOB_HALF_WIDTH, y: m.pos.y, z: m.pos.z - MOB_HALF_WIDTH },

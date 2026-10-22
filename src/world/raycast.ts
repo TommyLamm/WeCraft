@@ -40,6 +40,41 @@ export interface RaycastOptions {
   skipOriginBlock?: boolean;
 }
 
+/** Parametric ray vs AABB (slab method): entry `t` of the first intersection
+ *  at or after the origin, or null when the box is missed or lies entirely
+ *  behind the origin. A ray starting inside the box returns 0 (point-blank
+ *  hits register). `dir` must be normalized by the caller — `t` is then
+ *  measured in world blocks.
+ *
+ *  **B4 Task 6：由 `player/interact.ts` 的私有 `rayBoxEntry` 原樣搬來**（行為不變），
+ *  讓「敵對生物的命中盒」與「被動生物的命中盒」共用同一份射線／盒子的幾何運算
+ *  —— 兩邊的判定必須一致（否則玩家瞄準雞與瞄準殭屍會是兩套規則）。 */
+export function rayAabbEntry(
+  origin: { x: number; y: number; z: number },
+  dir: { x: number; y: number; z: number },
+  min: { x: number; y: number; z: number },
+  max: { x: number; y: number; z: number },
+): number | null {
+  let tMin = -Infinity; // latest slab entry
+  let tMax = Infinity; // earliest slab exit
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const o = origin[axis];
+    const d = dir[axis];
+    if (d === 0) {
+      if (o < min[axis] || o > max[axis]) return null; // parallel: never crosses this slab
+      continue;
+    }
+    let t1 = (min[axis] - o) / d;
+    let t2 = (max[axis] - o) / d;
+    if (t1 > t2) [t1, t2] = [t2, t1]; // enter/exit order regardless of direction
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null; // slabs don't overlap → no intersection
+  }
+  if (tMax < 0) return null; // box entirely behind the ray origin
+  return Math.max(tMin, 0); // 0 = origin inside the box
+}
+
 /** DDA raycast. dir is normalized internally; maxDistance is euclidean world units.
  *
  *  **命中判定（B3 Task 5）**：命中的是**可命中**方塊（`world.isTargetable`）
