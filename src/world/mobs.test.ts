@@ -3,6 +3,7 @@ import {
   createMob,
   stepMob,
   stepMobs,
+  stepSunBurn,
   damageMob,
   isDead,
   spawnArrow,
@@ -13,11 +14,18 @@ import {
   xzDistance,
   SPAWN_MIN_DIST,
   SPAWN_MAX_DIST,
+  DESPAWN_DISTANCE,
   MAX_MOBS,
+  ZOMBIE_CHASE_SPEED,
+  SKELETON_CHASE_SPEED,
+  SUN_BURN_SEC,
+  SUN_BURN_DPS,
   type Mob,
   type MobEvent,
   type Arrow,
+  type SunBurnCtx,
 } from './mobs';
+import { clockLight } from './spawn-rules';
 import { BLOCK } from './blocks';
 
 // ---- helpers -------------------------------------------------------------
@@ -40,6 +48,8 @@ function mob(over: Partial<Mob> = {}): Mob {
     wanderTimer: 3,
     target: null,
     kbVel: { x: 0, z: 0 },
+    burn: 0, // 白天燃燒的剩餘秒數（旗標）
+    burnAcc: 0, // 已累積的燃燒傷害秒數
     ...over,
   };
 }
@@ -49,6 +59,15 @@ const ctxOf = (
   dt: number,
   isSolidAt: (x: number, y: number, z: number) => boolean = flatGround,
 ) => ({ playerPos, isSolidAt, dt });
+
+/** 白天燃燒的上下文（**獨立於 `MobCtx`**）：預設「露天 + 日光 + dt = 1」。 */
+const sunCtxOf = (over: Partial<SunBurnCtx> = {}): SunBurnCtx => ({
+  isDaylight: true,
+  isSolidAt: () => false, // 頭頂無實心方塊 → 露天
+  isWaterAt: () => false, // 腳下不是水
+  dt: 1,
+  ...over,
+});
 
 // ---- createMob -----------------------------------------------------------
 
@@ -64,6 +83,8 @@ describe('createMob', () => {
     expect(m.attackCooldown).toBe(0);
     expect(m.target).toBeNull();
     expect(m.kbVel).toEqual({ x: 0, z: 0 });
+    expect(m.burn).toBe(0); // 未著火
+    expect(m.burnAcc).toBe(0);
     expect(Number.isFinite(m.id)).toBe(true);
   });
 
@@ -212,21 +233,28 @@ describe('stepMob — zombie attack', () => {
 // ---- stepMob: skeleton ---------------------------------------------------
 
 describe('stepMob — skeleton keep-distance', () => {
+  it('the skeleton is faster than the zombie', () => {
+    // 原版比例：骷髏 0.25 > 殭屍 0.23（約 1.087 倍）→ 本作 3.2 × 1.087 ≈ 3.5。
+    expect(SKELETON_CHASE_SPEED).toBeGreaterThan(ZOMBIE_CHASE_SPEED);
+    expect(SKELETON_CHASE_SPEED).toBe(3.5);
+    expect(ZOMBIE_CHASE_SPEED).toBe(3.2);
+  });
+
   it('retreats when closer than 7 blocks', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
     const { mob: out } = stepMob(m, ctxOf({ x: 5, y: 0, z: 0 }, 0.5));
     expect(out.state).toBe('retreat');
-    expect(Math.hypot(out.vel.x, out.vel.z)).toBeCloseTo(2.6, 10);
+    expect(Math.hypot(out.vel.x, out.vel.z)).toBeCloseTo(3.5, 10);
     expect(out.vel.x).toBeLessThan(0); // away from the player at +x
-    expect(out.pos.x).toBeCloseTo(-1.3, 10);
+    expect(out.pos.x).toBeCloseTo(-1.75, 10); // 3.5 b/s × 0.5 s
   });
 
   it('approaches when farther than 9 blocks (within 16)', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
     const { mob: out } = stepMob(m, ctxOf({ x: 12, y: 0, z: 0 }, 0.5));
     expect(out.state).toBe('chase');
-    expect(out.vel.x).toBeCloseTo(2.6, 10); // slower than the zombie's 3.2
-    expect(out.pos.x).toBeCloseTo(1.3, 10);
+    expect(out.vel.x).toBeCloseTo(3.5, 10); // faster than the zombie's 3.2
+    expect(out.pos.x).toBeCloseTo(1.75, 10); // 3.5 b/s × 0.5 s
   });
 
   it('stops in the 7–9 band (holds distance ≈ 8)', () => {
@@ -629,19 +657,20 @@ describe('stepArrows', () => {
 // ---- spawn helpers -------------------------------------------------------
 
 describe('findSpawnPos', () => {
-  it('returns a candidate 12–24 blocks from the player (injected rng)', () => {
-    // rng → 0.5: angle π, distance 12 + 0.5·12 = 18
+  it('returns a candidate 24-128 blocks from the player (injected rng)', () => {
+    // rng → 0.5: angle π, distance 24 + 0.5·104 = 76
     const spot = findSpawnPos({ x: 10, y: 64, z: -5 }, () => 0.5);
-    expect(spot.z).toBeCloseTo(-5 - 18, 10); // cos π → −z
-    expect(Math.hypot(spot.x - 10, spot.z + 5)).toBeCloseTo(18, 10);
+    expect(spot.x).toBeCloseTo(10, 10); // sin π → 0
+    expect(spot.z).toBeCloseTo(-81, 10); // cos π → −z（-5 - 76）
+    expect(Math.hypot(spot.x - 10, spot.z + 5)).toBeCloseTo(76, 10);
   });
 
-  it('stays inside the 12–24 band for any rng draw', () => {
+  it('stays inside the 24-128 band for any rng draw', () => {
     for (let i = 0; i < 50; i++) {
       const spot = findSpawnPos({ x: 0, y: 0, z: 0 });
       const d = Math.hypot(spot.x, spot.z);
-      expect(d).toBeGreaterThanOrEqual(12);
-      expect(d).toBeLessThanOrEqual(24);
+      expect(d).toBeGreaterThanOrEqual(24);
+      expect(d).toBeLessThanOrEqual(128);
       expect(Number.isFinite(spot.x)).toBe(true);
       expect(Number.isFinite(spot.z)).toBe(true);
     }
@@ -661,10 +690,10 @@ describe('trySpawnMob', () => {
   /** Flat column: top solid block at y = 5 for every XZ (surface Y → 6). */
   const surface = (_x: number, y: number, _z: number): boolean => y <= 5;
   const ctxOf = (over: Partial<Parameters<typeof trySpawnMob>[2]> = {}) => ({
-    isNight: true,
+    light: clockLight(0.75), // 夜晚（0.75）→ 敵對可生成
     isSolidAt: surface,
     blockIdAt: () => BLOCK.DIRT, // any non-bedrock id
-    rng: () => 0.5, // angle π, distance 18 → spot (≈0, −18); kind → skeleton
+    rng: () => 0.5, // angle π, distance 76 → spot (≈0, −76); kind → skeleton
     ...over,
   });
   const player = { x: 0, y: 0, z: 0 };
@@ -675,14 +704,14 @@ describe('trySpawnMob', () => {
     expect(spawned!.kind).toBe('skeleton');
     expect(spawned!.pos.y).toBe(6); // top solid (5) + 1
     expect(spawned!.pos.x).toBeCloseTo(0, 5); // rng 0.5 → angle π → −z axis
-    expect(spawned!.pos.z).toBeCloseTo(-18, 10);
+    expect(spawned!.pos.z).toBeCloseTo(-76, 10); // 新距離帶 24–128 的中點
     const dist = xzDistance(spawned!.pos, player);
     expect(dist).toBeGreaterThanOrEqual(SPAWN_MIN_DIST);
     expect(dist).toBeLessThanOrEqual(SPAWN_MAX_DIST);
   });
 
   it('never spawns in day', () => {
-    expect(trySpawnMob([], player, ctxOf({ isNight: false }))).toBeNull();
+    expect(trySpawnMob([], player, ctxOf({ light: clockLight(0.25) }))).toBeNull();
   });
 
   it('never spawns once the cap is reached', () => {
@@ -709,5 +738,78 @@ describe('trySpawnMob', () => {
 describe('xzDistance', () => {
   it('measures horizontal distance only', () => {
     expect(xzDistance({ x: 0, y: 99, z: 0 }, { x: 3, y: 0, z: 4 })).toBe(5);
+  });
+});
+
+// ---- B4.4 敵對對齊的常數（生成距離／上限／despawn／燃燒）----------------
+
+describe('B4.4 對齊常數', () => {
+  it('spawns 24-128 blocks out, caps at 12 mobs and despawns past 128', () => {
+    expect(SPAWN_MIN_DIST).toBe(24);
+    expect(SPAWN_MAX_DIST).toBe(128);
+    expect(MAX_MOBS).toBe(12);
+    expect(DESPAWN_DISTANCE).toBe(128);
+  });
+
+  it('the sun-burn constants are the flag value 8 s and 1 hp per second', () => {
+    expect(SUN_BURN_SEC).toBe(8); // 旗標值（不是已查證的 wiki 數字）
+    expect(SUN_BURN_DPS).toBe(1);
+  });
+});
+
+// ---- 白天燃燒（stepSunBurn）--------------------------------------------
+
+describe('stepSunBurn — 白天燃燒', () => {
+  it('a zombie burns in direct sunlight under an open sky', () => {
+    const out = stepSunBurn(mob(), sunCtxOf({ isDaylight: true, dt: 1 }));
+    expect(out.burn).toBeGreaterThan(0); // 正在燃燒
+    expect(out.burn).toBe(SUN_BURN_SEC);
+    expect(out.hp).toBe(19); // 1 秒燃燒 = 1 點血
+    expect(out.burnAcc).toBe(0); // 整秒已結算，餘數歸零
+  });
+
+  it('a zombie under a solid roof does not burn', () => {
+    // 頭頂格（y = 1）有實心方塊 → 太陽照不到 → 不燃、不掉血
+    const out = stepSunBurn(mob(), sunCtxOf({ isSolidAt: (_x, y) => y === 1, dt: 1 }));
+    expect(out.burn).toBe(0);
+    expect(out.hp).toBe(20);
+  });
+
+  it('a zombie in water does not burn', () => {
+    const out = stepSunBurn(mob(), sunCtxOf({ isWaterAt: () => true, dt: 1 }));
+    expect(out.burn).toBe(0);
+    expect(out.hp).toBe(20);
+  });
+
+  it('a zombie at night does not burn', () => {
+    const out = stepSunBurn(mob(), sunCtxOf({ isDaylight: false, dt: 1 }));
+    expect(out.burn).toBe(0);
+    expect(out.hp).toBe(20);
+  });
+
+  it('burning stops when the sun goes down', () => {
+    const lit = stepSunBurn(mob(), sunCtxOf({ dt: 1 }));
+    expect(lit.burn).toBeGreaterThan(0);
+    let cur = lit;
+    for (let i = 0; i < 9; i++) {
+      cur = stepSunBurn(cur, sunCtxOf({ isDaylight: false, dt: 1 }));
+    }
+    expect(cur.burn).toBe(0); // 8 秒的燃燒旗標用完 → 熄火
+    expect(cur.hp).toBe(19); // 熄火後不再掉血
+  });
+
+  it('a skeleton burns in daylight too', () => {
+    const out = stepSunBurn(mob({ kind: 'skeleton', ranged: true }), sunCtxOf({ dt: 1 }));
+    expect(out.burn).toBeGreaterThan(0);
+    expect(out.hp).toBe(19);
+  });
+
+  it('the input mob is never mutated (pure function)', () => {
+    const m = mob();
+    const out = stepSunBurn(m, sunCtxOf({ dt: 1 }));
+    expect(out).not.toBe(m);
+    expect(m.hp).toBe(20);
+    expect(m.burn).toBe(0);
+    expect(m.burnAcc).toBe(0);
   });
 });

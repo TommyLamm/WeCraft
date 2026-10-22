@@ -1,5 +1,6 @@
 import { BLOCK } from './blocks';
 import { CHUNK_HEIGHT } from './chunk';
+import { canSpawnHostile, type SpawnLight } from './spawn-rules';
 
 /** Mob entities & AI: zombie (melee chaser) and skeleton (keep-distance
  *  shooter), plus their arrows (pure — no Three/DOM; the renderer lives in
@@ -11,7 +12,12 @@ import { CHUNK_HEIGHT } from './chunk';
  *  Physics mirrors player physics: gravity 32, direct velocity set, and an
  *  auto step-up — a jump impulse (8) when the forward probe is solid and the
  *  mob is grounded, which walks it over 1-block obstacles. Arrows are a
- *  separate, lazier projectile: gravity 9.8, 30 s lifetime. */
+ *  separate, lazier projectile: gravity 9.8, 30 s lifetime.
+ *
+ *  B4.4（敵對側對齊）：生成距離 24–128 格、上限 12 隻、超過 128 格消失；
+ *  白天在**日光直射**下，不死系會著火（1 點血/秒）→ 白天在露天會被燒死，
+ *  屋簷下（頭頂有實心方塊）或站在水裡則不會。生成判準（光照）集中在
+ *  `world/spawn-rules.ts`（B6 的替換接縫）。 */
 
 // ---- Tuning constants (Task 8) ----
 
@@ -33,9 +39,12 @@ export const LOS_STEP = 0.5;
 /** Skeleton keeps ~8 blocks: retreats below 7, approaches above 9. */
 export const KEEP_MIN = 7;
 export const KEEP_MAX = 9;
-/** Horizontal speeds, blocks/s (settled: skeleton's wander matches the zombie's). */
+/** Horizontal speeds, blocks/s. **只對齊原版的比例，不對齊絕對值**：原版移動速度
+ *  屬性是殭屍 0.23、骷髏 0.25（0.25 / 0.23 ≈ 1.087），本作殭屍維持既有的 3.2
+ *  格/秒，骷髏＝3.2 × 1.087 ≈ 3.5（原版殭屍約 4.6 格/秒 → 本作整體較慢，是
+ *  既有的刻意簡化，寫進 README 差異清單）。 */
 export const ZOMBIE_CHASE_SPEED = 3.2;
-export const SKELETON_CHASE_SPEED = 2.6;
+export const SKELETON_CHASE_SPEED = 3.5;
 export const WANDER_SPEED = 1.5;
 /** Wander turns: fresh random heading with a 2–4 s countdown. */
 export const WANDER_TURN_MIN = 2;
@@ -70,13 +79,22 @@ export const ARROW_MAX_AGE = 30;
 /** 3D radius around the player's eye point that an arrow hit registers in. */
 export const ARROW_HIT_RADIUS = 0.6;
 export const ARROW_DAMAGE = 2;
-/** Night-spawn policy (main.ts uses these): tick every 5 s, cap 8 mobs,
- *  spawn 12–24 blocks out, despawn beyond 48 (no dayburn — distance only). */
+/** Spawn policy (main.ts uses these): tick every 5 s, cap 12 mobs,
+ *  spawn 24–128 blocks out, despawn beyond 128 (原版數值，wiki 2026-10-20 查證：
+ *  敵對生成距離 24–128 格、離玩家超過 128 格立即消失)。 */
 export const SPAWN_INTERVAL_SEC = 5;
-export const MAX_MOBS = 8;
-export const SPAWN_MIN_DIST = 12;
-export const SPAWN_MAX_DIST = 24;
-export const DESPAWN_DISTANCE = 48;
+export const MAX_MOBS = 12;
+export const SPAWN_MIN_DIST = 24;
+export const SPAWN_MAX_DIST = 128;
+export const DESPAWN_DISTANCE = 128;
+/** 白天日照下的燃燒旗標值（秒）：原版 Java 在日光直射時對不死系呼叫
+ *  `setSecondsOnFire(8)`——8 秒是「著火持續時間的旗標值」，**wiki 的 Zombie／Mob
+ *  頁查不到這個數字**（只寫燃燒的抑制條件與「日光直射下著火」）。實作上每幀只要
+ *  仍在日光下就會把 `burn` 重設為 8 → 它其實是「正在燃燒」的旗標，**真正的死亡
+ *  時間由 1 HP/s × 20 HP ≈ 20 秒決定**。 */
+export const SUN_BURN_SEC = 8;
+/** 燃燒中每秒扣 1 點血。 */
+export const SUN_BURN_DPS = 1;
 /** Forward probe lead for the horizontal block test (≈ body half-width): the
  *  destination cell is checked this far ahead so the mob stops before its
  *  box visually clips into the wall. */
@@ -106,6 +124,10 @@ export interface Mob {
   /** Knockback impulse (blocks/s, horizontal), decaying ×0.1^dt — separate
    *  from `vel` because AI overwrites `vel` every step. */
   kbVel: { x: number; z: number };
+  /** 白天日照下的燃燒剩餘秒數（> 0 = 正在燃燒）。只對不死系有意義。 */
+  burn: number;
+  /** 已累積的燃燒傷害秒數（每滿 1 秒扣 1 點血，餘數留在這裡）。 */
+  burnAcc: number;
 }
 
 /** One arrow in flight (plain entity, same file as its shooter). */
@@ -131,6 +153,19 @@ export interface MobCtx {
   dt: number;
 }
 
+/** 白天燃燒的上下文（**獨立於 `MobCtx`**——`stepMob` 不需要日照與水，動到
+ *  `MobCtx` 會連帶影響 `stepMobs` 的所有呼叫端）。 */
+export interface SunBurnCtx {
+  /** 此刻是白天嗎（`spawn-rules.isDaylight(clock.t)`）。 */
+  isDaylight: boolean;
+  /** 該格是不是實心方塊（判斷頭頂有沒有屋簷）。 */
+  isSolidAt: (x: number, y: number, z: number) => boolean;
+  /** 該格是不是水（站在水裡就不會被曬傷）。 */
+  isWaterAt: (x: number, y: number, z: number) => boolean;
+  /** 這一幀的 dt（秒）。 */
+  dt: number;
+}
+
 /** Monotonic id counter for `createMob` (module instance scope — unique
  *  across every spawn within one session, like drops' max+1 pattern). */
 let nextMobId = -1;
@@ -153,6 +188,8 @@ export function createMob(kind: MobKind, pos: { x: number; y: number; z: number 
     wanderTimer: WANDER_TURN_MIN + Math.random() * (WANDER_TURN_MAX - WANDER_TURN_MIN),
     target: null,
     kbVel: { x: 0, z: 0 },
+    burn: 0, // 未著火
+    burnAcc: 0,
   };
 }
 
@@ -400,6 +437,39 @@ export function stepMobs(
   return { mobs: out, events };
 }
 
+/** 白天日照下的燃燒步驟（純函式，回傳**新**的 mob；不動輸入）。
+ *
+ *  規則（spec §B4.4）：
+ *  - 只有**不死系**（殭屍／骷髏）會著火——被動生物不會（Task 6 的被動生物是另一個
+ *    型別，完全不經過這裡）。
+ *  - 只有**日光直射**時才燃燒（夜晚不燃）。
+ *  - 遮蔽判定是**刻意簡化**：頭頂格是實心方塊 → 不燃；腳下格是水 → 不燃；
+ *    **不判斷天氣、不判斷頭盔**。
+ *  - `burn` 是「正在燃燒」的旗標（仍在日光下就每幀重設為 {@link SUN_BURN_SEC}），
+ *    真正的死亡時間由 1 HP/s × 20 HP ≈ 20 秒決定；`burnAcc` 只在燃燒中累積，
+ *    每滿 1 秒扣 {@link SUN_BURN_DPS} 點血，熄火時歸零。 */
+export function stepSunBurn(m: Mob, ctx: SunBurnCtx): Mob {
+  const step = Number.isFinite(ctx.dt) && ctx.dt > 0 ? ctx.dt : 0;
+  const x = Math.floor(m.pos.x);
+  const z = Math.floor(m.pos.z);
+  const head = Math.floor(m.pos.y + 1.9); // 頭頂格（身體高 2 格）
+  const roofed = ctx.isSolidAt(x, head, z);
+  const inWater = ctx.isWaterAt(x, Math.floor(m.pos.y), z);
+  const burning = m.kind === 'zombie' || m.kind === 'skeleton';
+  const exposed = ctx.isDaylight && !roofed && !inWater;
+
+  const burn = exposed ? SUN_BURN_SEC : Math.max(0, m.burn - step);
+  let hp = m.hp;
+  let acc = 0;
+  if (burning && exposed) {
+    acc = m.burnAcc + step;
+    const dealt = Math.floor(acc); // 每整秒 1 點血
+    acc -= dealt;
+    hp = Math.max(0, hp - dealt * SUN_BURN_DPS);
+  }
+  return { ...m, burn, burnAcc: acc, hp };
+}
+
 // ---- arrows ----
 
 /** Append an arrow shot from `from` along `dir` (normalized internally to
@@ -532,19 +602,20 @@ export function surfaceYAt(
   return null;
 }
 
-/** Spawn context: the night gate (main passes `phaseOf(clock.t) === 'night'` —
- *  no per-block light engine this phase, plan 8.5), the injected world reads
- *  (same pattern as `MobCtx.isSolidAt`), and an optional rng so tests can pin
- *  the candidate spot and kind. */
+/** Spawn context: the light gate (main passes `clockLight(clock.t)` — 判準集中在
+ *  `world/spawn-rules.ts`，B6 只要換掉 `clockLight` 就能用真的光照）、the injected
+ *  world reads (same pattern as `MobCtx.isSolidAt`), and an optional rng so tests
+ *  can pin the candidate spot and kind. */
 export interface SpawnCtx {
-  isNight: boolean;
+  /** 生成點的光照（`spawn-rules.SpawnLight`）——敵對生物要求天空光 ≤ 7 且無方塊光。 */
+  light: SpawnLight;
   isSolidAt: (x: number, y: number, z: number) => boolean;
   blockIdAt: (x: number, y: number, z: number) => number;
   rng?: () => number;
 }
 
-/** One spawn attempt — the whole spawnTick branch extracted for tests: night →
- *  cap → candidate XZ 12–24 blocks out (pure `findSpawnPos`) → surface Y →
+/** One spawn attempt — the whole spawnTick branch extracted for tests: light gate
+ *  → cap → candidate XZ 24–128 blocks out (pure `findSpawnPos`) → surface Y →
  *  kind. Returns the new mob, or null when any gate fails (the caller just
  *  skips that cycle; count changes are announced by the caller). */
 export function trySpawnMob(
@@ -552,7 +623,7 @@ export function trySpawnMob(
   playerPos: { x: number; y: number; z: number },
   ctx: SpawnCtx,
 ): Mob | null {
-  if (!ctx.isNight) return null;
+  if (!canSpawnHostile(ctx.light)) return null;
   if (mobs.length >= MAX_MOBS) return null;
   const spot = findSpawnPos(playerPos, ctx.rng);
   const y = surfaceYAt(spot.x, spot.z, ctx.isSolidAt, ctx.blockIdAt);
@@ -560,7 +631,7 @@ export function trySpawnMob(
   return createMob(chooseSpawnKind(ctx.rng), { x: spot.x, y, z: spot.z });
 }
 
-/** Candidate spawn XZ: uniform angle and a distance ∈ [12, 24] blocks from the
+/** Candidate spawn XZ: uniform angle and a distance ∈ [24, 128] blocks from the
  *  player (rng injectable for deterministic tests; defaults to Math.random). */
 export function findSpawnPos(
   playerPos: { x: number; y: number; z: number },

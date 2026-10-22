@@ -417,3 +417,32 @@ describe('main.ts 接線（B4 Task 4 I-2：任何死因都會掉落）', () => {
     expect(at).toBeLessThan(filterAt);
   });
 });
+
+// ---- B4 Task 5：白天燃燒接線＋生怪光照閘門 -------------------------------
+describe('main.ts 接線（B4 Task 5：白天燃燒＋生怪光照閘門）', () => {
+  it('the mob step keeps applying the attack events before the sun-burn step', () => {
+    // **事件不可省略**：只取 `stepped.mobs` 會把 `stepped.events` 整包丟掉 →
+    // 殭屍近戰／骷髏射箭失效、怪物不再攻擊玩家（Task 5 的主要接線風險）。
+    const playing = playingBranchBody();
+    const eventsAt = playing.indexOf('applyMobEvent(ev)');
+    const burnAt = playing.indexOf('stepSunBurn(');
+    expect(eventsAt).toBeGreaterThan(-1);
+    expect(burnAt).toBeGreaterThan(-1);
+    expect(eventsAt).toBeLessThan(burnAt); // 事件先套用，再算白天燃燒
+    expect(countOf('stepSunBurn(')).toBe(1); // 每幀只算一次
+  });
+
+  it('the sun-burn context carries daylight, solidity, water and dt', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('isDaylight(clock.t)'); // 只有白天會著火
+    expect(playing).toContain('BLOCK.WATER'); // 站在水裡不著火
+    expect(playing).toContain('stepSunBurn(m, sunCtx)');
+  });
+
+  it('the spawn tick gates on the light rules (the old night flag is gone)', () => {
+    const body = functionBody('spawnTick');
+    expect(body).toContain('light: clockLight(clock.t)');
+    expect(body).not.toContain('isNight');
+    expect(countOf('isNight:')).toBe(0);
+  });
+});

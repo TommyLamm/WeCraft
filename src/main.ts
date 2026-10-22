@@ -101,6 +101,7 @@ import { dropsForDeaths } from './world/mob-drops';
 import {
   stepMobs,
   stepArrows,
+  stepSunBurn,
   spawnArrow,
   trySpawnMob,
   isDead,
@@ -111,6 +112,8 @@ import {
   type Arrow,
   type MobEvent,
 } from './world/mobs';
+// B4 Task 5：生怪光照判準（判準集中在 spawn-rules，B6 只要換掉 `clockLight`）。
+import { clockLight, isDaylight } from './world/spawn-rules';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
@@ -180,6 +183,8 @@ interface WecraftDebug {
   modified: () => number;
   /** 目前的視角模式（`first`／`back`／`front`）。 */
   viewMode: () => ViewMode;
+  /** 世界上活著的敵對生物數量（B4 Task 5：白天燃燒驗收要看生物數的變化）。 */
+  mobs: () => number;
 }
 
 declare global {
@@ -1058,12 +1063,14 @@ function spawnPoint(): { x: number; y: number; z: number } {
 // ---- Task 8: mob spawning + event application ----
 
 /** Every 5 s while playing: delegate to the pure `trySpawnMob` (world/mobs.ts)
- *  — night gate, cap, candidate XZ 12–24 out, surface Y and kind all live
+ *  — the light gate, cap, candidate XZ 24–128 out, surface Y and kind all live
  *  there; this composition-root wrapper only supplies the world callbacks and
- *  pushes the result. Count changes are announced by the caller. */
+ *  pushes the result. Count changes are announced by the caller.
+ *  **光照判準**（`spawn-rules.ts`）：B4 的 `clockLight` 是「白天／夜晚」的近似
+ *  （B6 換成真的天空光／方塊光查詢，規則本身不變）。 */
 function spawnTick(): void {
   const mob = trySpawnMob(mobs, player.position, {
-    isNight: phaseOf(clock.t) === 'night',
+    light: clockLight(clock.t),
     isSolidAt: (x, y, z) => world.isSolid(x, y, z),
     blockIdAt: (x, y, z) => world.getBlock(x, y, z),
   });
@@ -2216,6 +2223,7 @@ window.__wecraft = {
   drops: () => drops.length,
   modified: () => world.modified.size,
   viewMode: () => viewMode,
+  mobs: () => mobs.length,
 };
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,
@@ -2491,7 +2499,18 @@ gs.renderer.setAnimationLoop(() => {
     const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
     const stepped = stepMobs(mobs, { playerPos: player.position, isSolidAt, dt });
     mobs = stepped.mobs;
+    // **事件的套用不能省略**（`stepped.events` 是殭屍近戰／骷髏射箭的來源）。
     for (const ev of stepped.events) applyMobEvent(ev);
+    // ---- 白天燃燒（B4.4）：AI 與攻擊事件之後才結算傷害 ----
+    // 不死系在**日光直射**下會著火（1 點血/秒）；頭頂有實心方塊（屋簷）或站在
+    // 水裡就不會；夜晚也不會。`stepSunBurn` 是純函式 → 回傳新的 mob 陣列。
+    const sunCtx = {
+      isDaylight: isDaylight(clock.t),
+      isSolidAt,
+      isWaterAt: (x: number, y: number, z: number): boolean => world.getBlock(x, y, z) === BLOCK.WATER,
+      dt,
+    };
+    mobs = mobs.map((m) => stepSunBurn(m, sunCtx));
     const shot = stepArrows(arrows, dt, isSolidAt, player.position);
     arrows = shot.arrows;
     for (const ev of shot.events) applyMobEvent(ev, true);
@@ -2499,7 +2518,7 @@ gs.renderer.setAnimationLoop(() => {
     // 掉掉落表裡的東西 → 在牠們被移出世界**之前**先算掉落。
     const deadNow = mobs.filter((m) => isDead(m));
     const spilled = deadNow.length > 0 && spawnMobDeathDrops(deadNow);
-    // dead mobs despawn past 48 blocks (超距的生物不是死的 → 不掉東西)
+    // dead mobs despawn past 128 blocks (超距的生物不是死的 → 不掉東西)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
     // 近戰當場殺掉的那一批已經在近戰支裡掉過了（那一支會立刻把死掉的生物從
