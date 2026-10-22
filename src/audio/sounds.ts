@@ -57,6 +57,13 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   // B4 Task 1：羊毛是柔軟質地 → 走既有的 'leaves'（高頻沙沙）音色，
   // 不新增 MaterialGroup 成員（羊毛原版也是柔軟的布料聲）。
   [BLOCK.WOOL]: 'leaves',
+  // B5 Task 1：礫石是顆粒質地 → 走 'sand' 的沙沙聲（原版礫石也是顆粒音）；
+  // 金礦／鑽石礦是石頭底 → 'stone'；雲杉／白樺板材 → 'wood'。
+  [BLOCK.GRAVEL]: 'sand',
+  [BLOCK.GOLD_ORE]: 'stone',
+  [BLOCK.DIAMOND_ORE]: 'stone',
+  [BLOCK.SPRUCE_PLANKS]: 'wood',
+  [BLOCK.BIRCH_PLANKS]: 'wood',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

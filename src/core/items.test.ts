@@ -24,6 +24,9 @@ const BLOCK_ITEMS: ItemId[] = [
   'dandelion', 'poppy', 'short_grass', 'cactus', 'ice',
   // B4 Task 1：羊毛的方塊物品形式（隨 BLOCK.WOOL 一起補上 → 羊掉落的羊毛能放回去）
   'wool',
+  // B5 Task 1：本批 4 個新方塊物品（礫石 'gravel' 早就在 union 裡（B1 的 dead id）
+  // → 本批只是把它接上方塊，不新增 id）
+  'gold_ore', 'diamond_ore', 'spruce_planks', 'birch_planks',
 ];
 const TOOL_ITEMS: ItemId[] = [
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
@@ -52,8 +55,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 
 /** 物品總數（**單一真相**）：動工前讀到的現況值 41 ＝ 36 個既有 ＋ B3 Task 4 補的 5 個物品形式，
  *  B4 Task 1 再補 13 個（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）＝ 54。
+ *  B5 Task 1 再補 4 個（本批 5 個新方塊的物品形式；礫石 'gravel' 是 B1 留下的 dead id，
+ *  **不新增** id，只是接上方塊）→ 58。B5 Task 2 的工具／原料再往上加。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 54;
+const TOTAL_ITEM_COUNT = 58;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -103,6 +108,28 @@ describe('items', () => {
     expect(blockFromItem('wool')).toBe(BLOCK.WOOL);
     expect(itemFromBlock(BLOCK.WOOL)).toBe('wool');
     expect(stackFromBlock(BLOCK.WOOL)).toEqual({ item: 'wool', count: 64 });
+  });
+
+  // ---- B5 Task 1：本批 5 個新方塊的物品形式（礫石／金礦／鑽石礦／雲杉板材／白樺板材）----
+  // 為什麼與方塊同一個 commit：上面兩條守門（`every obtainable block item` 與
+  // `every placeable … maps to an item`）會在方塊落地後**立刻**紅 → 方塊與它的
+  // 物品形式必須同時落地（B3 Task 3 的註解也是同一條規則）。
+  it('the B5 blocks have their item forms in both directions', () => {
+    expect(itemFromBlock(BLOCK.GRAVEL)).toBe('gravel');
+    expect(itemFromBlock(BLOCK.GOLD_ORE)).toBe('gold_ore');
+    expect(itemFromBlock(BLOCK.DIAMOND_ORE)).toBe('diamond_ore');
+    expect(itemFromBlock(BLOCK.SPRUCE_PLANKS)).toBe('spruce_planks');
+    expect(itemFromBlock(BLOCK.BIRCH_PLANKS)).toBe('birch_planks');
+    expect(blockFromItem('gravel')).toBe(BLOCK.GRAVEL); // B1 的 dead id 正式接上方塊
+    expect(blockFromItem('gold_ore')).toBe(BLOCK.GOLD_ORE);
+    expect(blockFromItem('diamond_ore')).toBe(BLOCK.DIAMOND_ORE);
+    expect(blockFromItem('spruce_planks')).toBe(BLOCK.SPRUCE_PLANKS);
+    expect(blockFromItem('birch_planks')).toBe(BLOCK.BIRCH_PLANKS);
+    // 方塊物品都可堆疊（64）
+    expect(stackFromBlock(BLOCK.GRAVEL)).toEqual({ item: 'gravel', count: 64 });
+    expect(stackFromBlock(BLOCK.DIAMOND_ORE)).toEqual({ item: 'diamond_ore', count: 64 });
+    expect(maxStack('spruce_planks')).toBe(64);
+    expect(maxStack('gold_ore')).toBe(64);
   });
 
   it('the cooked beef item id is steak (原版命名)', () => {

@@ -41,6 +41,12 @@ describe('materialGroup', () => {
       [BLOCK.ICE]: 'glass',
       // B4 Task 1：羊毛是柔軟質地 → 走既有的 'leaves'（沙沙）音色
       [BLOCK.WOOL]: 'leaves',
+      // B5 Task 1：礫石（顆粒質地 → 沙聲）、金／鑽石礦（石頭聲）、雲杉／白樺板材（木聲）
+      [BLOCK.GRAVEL]: 'sand',
+      [BLOCK.GOLD_ORE]: 'stone',
+      [BLOCK.DIAMOND_ORE]: 'stone',
+      [BLOCK.SPRUCE_PLANKS]: 'wood',
+      [BLOCK.BIRCH_PLANKS]: 'wood',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

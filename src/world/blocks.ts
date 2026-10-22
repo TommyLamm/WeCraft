@@ -1,3 +1,7 @@
+/** Block ids. **The ids may only be appended, never renumbered** — an existing
+ *  world's save stores raw numeric ids in `modified`, so moving an id morphs
+ *  every already-placed block of that type. (Batches claim their ids up front:
+ *  B3 = 17–25, B4 = 26, B5 = 27–31, B6 火把 = 32, B8 箱子 = 33.) */
 export const BLOCK = {
   AIR: 0,
   STONE: 1,
@@ -31,6 +35,13 @@ export const BLOCK = {
   // B4 Task 1：羊毛（跨批編號表：本批 = 26；B5 用 27–31、B6 火把 = 32、B8 箱子 = 33）。
   // 同樣只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓舊存檔變形。
   WOOL: 26,
+  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（跨批編號表：本批 = 27–31）。
+  // 同樣只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓舊存檔變形。
+  GRAVEL: 27,
+  GOLD_ORE: 28,
+  DIAMOND_ORE: 29,
+  SPRUCE_PLANKS: 30,
+  BIRCH_PLANKS: 31,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -79,13 +90,16 @@ const T = {
   CACTUS_SIDE: 30, CACTUS_TOP: 31, ICE: 32,
   // B4 Task 1：羊毛（跨批編號：本批 = 33 → TILE_COUNT = 34；B5 用 34–38）
   WOOL: 33,
+  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（跨批編號：本批 = 34–38 → TILE_COUNT = 39；
+  // 下一批從 39 起）。同樣只能往後追加——tile 索引是「哪一格貼圖」的唯一鑰匙。
+  GRAVEL: 34, GOLD_ORE: 35, DIAMOND_ORE: 36, SPRUCE_PLANKS: 37, BIRCH_PLANKS: 38,
 } as const;
 
-/** Tiles `T` defines (0..TILE_COUNT-1) — `WOOL` is the highest tile.
+/** Tiles `T` defines (0..TILE_COUNT-1) — `BIRCH_PLANKS` is the highest tile.
  *  drawAtlas paints exactly these; the texture array fills every layer past
  *  them with the magenta debug color, so adding a tile to T without drawing it
  *  fails loudly instead of silently sampling magenta in-game. */
-export const TILE_COUNT = T.WOOL + 1;
+export const TILE_COUNT = T.BIRCH_PLANKS + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -140,6 +154,16 @@ const DEFS: Record<number, BlockDef> = {
   // B4 Task 1：羊毛（硬度 0.8 = 原版羊毛硬度；徒手可挖 → 不需要工具）。
   // 羊毛**不進世界生成**（原版羊毛也不自然生成，只來自羊與剪毛）。
   26: { id: 26, name: 'wool', hardness: 0.8, solid: true, transparent: false, shape: 'cube', top: T.WOOL, side: T.WOOL, bottom: T.WOOL, requiredTool: null, fastTool: null },
+  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材。
+  // 硬度與工具的採掘門檻／加速都用原版數值（Java 1.20+）：
+  //  - 礫石 0.6、徒手可挖，鏟加速；
+  //  - 金礦／鑽石礦 3.0，**鐵鎬以上（level 2）才收穫**（石鎬挖得到但不會掉東西），鎬加速；
+  //  - 兩種板材 2.0、徒手可挖，斧加速（與橡木板材同一級）。
+  27: { id: 27, name: 'gravel', hardness: 0.6, solid: true, transparent: false, shape: 'cube', top: T.GRAVEL, side: T.GRAVEL, bottom: T.GRAVEL, requiredTool: null, fastTool: 'shovel' },
+  28: { id: 28, name: 'gold_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.GOLD_ORE, side: T.GOLD_ORE, bottom: T.GOLD_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
+  29: { id: 29, name: 'diamond_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.DIAMOND_ORE, side: T.DIAMOND_ORE, bottom: T.DIAMOND_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
+  30: { id: 30, name: 'spruce_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_PLANKS, side: T.SPRUCE_PLANKS, bottom: T.SPRUCE_PLANKS, requiredTool: null, fastTool: 'axe' },
+  31: { id: 31, name: 'birch_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_PLANKS, side: T.BIRCH_PLANKS, bottom: T.BIRCH_PLANKS, requiredTool: null, fastTool: 'axe' },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -167,6 +191,8 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.DANDELION, BLOCK.POPPY, BLOCK.SHORT_GRASS, BLOCK.CACTUS, BLOCK.ICE,
   // B4 Task 1：羊毛（方塊物品形式在本批補上 → 創造清單自動出現）
   BLOCK.WOOL,
+  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（物品形式隨方塊一起補上 → 創造清單自動出現）
+  BLOCK.GRAVEL, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE, BLOCK.SPRUCE_PLANKS, BLOCK.BIRCH_PLANKS,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

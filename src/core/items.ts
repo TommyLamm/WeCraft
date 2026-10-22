@@ -28,7 +28,13 @@ export type ItemId =
   // 「Steak」，與原版一致；其餘八個生／熟肉 id 轉出來剛好也是原版名稱。
   | 'raw_chicken' | 'cooked_chicken' | 'raw_porkchop' | 'cooked_porkchop'
   | 'raw_mutton' | 'cooked_mutton' | 'raw_beef' | 'steak'
-  | 'leather' | 'feather' | 'rotten_flesh' | 'bone';
+  | 'leather' | 'feather' | 'rotten_flesh' | 'bone'
+  // B5 Task 1：本批 5 個新方塊的物品形式（礫石／金礦／鑽石礦／雲杉板材／白樺板材）。
+  // 為什麼在方塊落地的那個 commit 就補：`itemFromBlock` 的兩條守門（每個 block 都要有
+  // 物品形式、每個 PLACEABLE 都要有物品形式）會在方塊落地後**立刻紅**——方塊與它的
+  // 物品形式必須同時落地（B3 Task 3 也是同一條規則）。'gravel' 本來就在 union 裡
+  // （B1 留下的 dead id），這批只是把它接上方塊 27，不新增 id。
+  | 'gold_ore' | 'diamond_ore' | 'spruce_planks' | 'birch_planks';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -54,18 +60,21 @@ const ITEM_IDS: Record<ItemId, true> = {
   raw_mutton: true, cooked_mutton: true,
   raw_beef: true, steak: true,
   leather: true, feather: true, rotten_flesh: true, bone: true,
+  // B5 Task 1：本批 5 個新方塊的物品形式（4 個新 id；'gravel' 是既有的 dead id）
+  gold_ore: true, diamond_ore: true, spruce_planks: true, birch_planks: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 54 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
- *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛）。 */
+/** 全部 ItemId 的正規清單（目前 58 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+ *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }
 
 // Item ↔ block pairs for blocks that exist RIGHT NOW. chest is in the ItemId
-// union but gains its entry when its block lands; gravel has no block at all.
-// air is never an item; water is a world-only block with no obtainable item
-// form (it is never mined or placed as an item).
+// union but gains its entry when its block lands. air is never an item; water
+// is a world-only block with no obtainable item form (it is never mined or
+// placed as an item). `gravel` was a dead id from B1 until its block landed
+// (B5 Task 1) — that is why the pair is listed here and not earlier.
 const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['grass', BLOCK.GRASS],
   ['dirt', BLOCK.DIRT],
@@ -93,6 +102,12 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['ice', BLOCK.ICE],
   // B4 Task 1：羊毛的方塊物品形式（羊掉羊毛 → 物品必須存在）
   ['wool', BLOCK.WOOL],
+  // B5 Task 1：本批 5 個新方塊的物品形式（與方塊同一個 commit —— 見上方 union 的註解）
+  ['gravel', BLOCK.GRAVEL],
+  ['gold_ore', BLOCK.GOLD_ORE],
+  ['diamond_ore', BLOCK.DIAMOND_ORE],
+  ['spruce_planks', BLOCK.SPRUCE_PLANKS],
+  ['birch_planks', BLOCK.BIRCH_PLANKS],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

@@ -290,6 +290,127 @@ describe('textures', () => {
     expect(base).toBeGreaterThan(0);
     expect(cracks).toBeGreaterThan(0);
   });
+
+  // ---- B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材的圖樣（tile 34–38）----
+  /** 整塊 tile 的平均色與平均亮度（B5 用；不寫死單一像素）。 */
+  function tileStats(atlas: AtlasImage, tile: number) {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const p = tilePixel(atlas, tile, x, y);
+        r += p[0];
+        g += p[1];
+        b += p[2];
+      }
+    const n = TILE_PX * TILE_PX;
+    return { r: r / n, g: g / n, b: b / n, luma: (r + g + b) / (3 * n) };
+  }
+
+  it('gravel tile 34: opaque warm grey with scattered darker/lighter pebbles', () => {
+    const GRAVEL = 34;
+    const atlas = drawAtlas();
+    const { r, g, b, luma } = tileStats(atlas, GRAVEL);
+    // 暖灰褐（brief 的底色 [136,130,122]）不是中性灰：r > g > b
+    expect(r).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(b);
+    expect(r - b).toBeGreaterThan(6);
+    expect(r).toBeGreaterThan(120);
+    expect(r).toBeLessThan(155);
+    // 碎石點：偏離整塊平均亮度 > 22 的像素（底色的 vary ±8 達不到 22）
+    let pebbles = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [pr, pg, pb, pa] = tilePixel(atlas, GRAVEL, x, y);
+        expect(pa, `gravel x=${x} y=${y}`).toBe(255); // 礫石不透明
+        if (Math.abs((pr + pg + pb) / 3 - luma) > 22) pebbles++;
+      }
+    expect(pebbles).toBeGreaterThanOrEqual(20); // 20 顆深淺不一的碎石點
+    expect(pebbles).toBeLessThan(64); // 但底色仍要是主體（不是整片雜訊）
+  });
+
+  it('gold/diamond ore tiles 35/36: stone base with golden / cyan-white blobs', () => {
+    const GOLD_ORE = 35;
+    const DIAMOND_ORE = 36;
+    const atlas = drawAtlas();
+    let gold = 0;
+    let cyan = 0;
+    let stoneBase = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [gr, gg, gb, ga] = tilePixel(atlas, GOLD_ORE, x, y);
+        const [dr, dg, db, da] = tilePixel(atlas, DIAMOND_ORE, x, y);
+        expect(ga, `gold x=${x} y=${y}`).toBe(255);
+        expect(da, `diamond x=${x} y=${y}`).toBe(255);
+        if (gr > 190 && gg > 150 && gb < 130) gold++; // 金黃斑塊 [240,200,60]
+        if (dr < 170 && dg > 190 && db > 190) cyan++; // 青白斑塊 [120,220,225]
+        if (gr === gg && gg === gb) stoneBase++; // 石頭底（r=g=b）
+      }
+    // 5–7 個斑塊（每個至少 4 px）→ 20–128 之間
+    expect(gold).toBeGreaterThanOrEqual(20);
+    expect(gold).toBeLessThan(128);
+    expect(cyan).toBeGreaterThanOrEqual(20);
+    expect(cyan).toBeLessThan(128);
+    // 石頭底仍是主體（斑塊是少數）
+    expect(stoneBase).toBeGreaterThan(150);
+    // 兩種礦不可畫成同一種顏色：金礦的斑塊偏紅、鑽石礦偏青，且互不出現在對方身上
+    let goldCool = 0;
+    let diamondWarm = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [gr, , gb] = tilePixel(atlas, GOLD_ORE, x, y);
+        if (gb - gr > 60) goldCool++;
+        const [dr, , db] = tilePixel(atlas, DIAMOND_ORE, x, y);
+        if (dr - db > 80) diamondWarm++;
+      }
+    expect(goldCool).toBe(0);
+    expect(diamondWarm).toBe(0);
+  });
+
+  it('spruce/birch planks tiles 37/38: opaque wood tones with vertical seams', () => {
+    const OAK_PLANKS = 8;
+    const SPRUCE_PLANKS = 37;
+    const BIRCH_PLANKS = 38;
+    const atlas = drawAtlas();
+    const oak = tileStats(atlas, OAK_PLANKS);
+    const spruce = tileStats(atlas, SPRUCE_PLANKS);
+    const birch = tileStats(atlas, BIRCH_PLANKS);
+    for (const tile of [SPRUCE_PLANKS, BIRCH_PLANKS]) {
+      for (let y = 0; y < TILE_PX; y++)
+        for (let x = 0; x < TILE_PX; x++) {
+          expect(tilePixel(atlas, tile, x, y)[3], `tile ${tile} px ${x},${y}`).toBe(255);
+        }
+    }
+    // 深棕雲杉材 vs 淺木白樺材：平均亮度分別落在橡木板材的兩側
+    expect(spruce.luma).toBeLessThan(oak.luma - 20);
+    expect(birch.luma).toBeGreaterThan(oak.luma + 10);
+    // brief 指定的底色量級：雲杉 [92,64,38]、白樺 [196,180,140]
+    expect(spruce.r).toBeGreaterThan(70);
+    expect(spruce.r).toBeLessThan(105);
+    expect(spruce.b).toBeLessThan(60);
+    expect(birch.r).toBeGreaterThan(180);
+    expect(birch.r).toBeLessThan(220);
+    expect(birch.b).toBeGreaterThan(125);
+    // 垂直板縫：每 4 欄一道（與橡木的橫向板縫同一節奏）——雲杉偏暗、白樺偏亮
+    const colLuma = (tile: number): number[] =>
+      Array.from({ length: TILE_PX }, (_, x) => {
+        let s = 0;
+        for (let y = 0; y < TILE_PX; y++) {
+          const p = tilePixel(atlas, tile, x, y);
+          s += (p[0] + p[1] + p[2]) / 3;
+        }
+        return s / TILE_PX;
+      });
+    const spruceCols = colLuma(SPRUCE_PLANKS);
+    const birchCols = colLuma(BIRCH_PLANKS);
+    const darkest = spruceCols.indexOf(Math.min(...spruceCols));
+    expect(darkest % 4).toBe(3);
+    expect(spruceCols[darkest]).toBeLessThan(spruce.luma - 8);
+    const brightest = birchCols.indexOf(Math.max(...birchCols));
+    expect(brightest % 4).toBe(3);
+    expect(birchCols[brightest]).toBeGreaterThan(birch.luma + 8);
+  });
 });
 
 // ---- Task 15: texture array for greedy-mesh sampling ----

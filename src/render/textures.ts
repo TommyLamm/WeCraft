@@ -60,6 +60,35 @@ function fillTile(
 
 let cachedAtlas: AtlasImage | null = null;
 
+// ---- B5 Task 1：礫石／金礦／鑽石礦的圖樣輔助 ----
+// 位置與深淺都用固定資料（不是逐像素亂數）→ 貼圖決定性，且「20 顆碎石點」
+// 與「5–7 個礦斑」是**數得出來**的，測試能直接釘住。
+
+/** 礫石的 20 顆碎石點（位置用固定亂數種子產生，深淺交替）。 */
+const GRAVEL_SPECKS: ReadonlyArray<{ x: number; y: number; d: number }> = (() => {
+  const rnd = mulberry(34 * 7919 + 17); // 與 fillTile 同一套 PRNG，種子固定
+  const specks: Array<{ x: number; y: number; d: number }> = [];
+  while (specks.length < 20) {
+    const x = Math.floor(rnd() * TILE_PX);
+    const y = Math.floor(rnd() * TILE_PX);
+    if (specks.some((s) => s.x === x && s.y === y)) continue; // 不重疊
+    specks.push({ x, y, d: specks.length % 2 === 0 ? -36 : 34 });
+  }
+  return specks;
+})();
+
+/** 金／鑽石礦的 6 個斑塊中心（原版的 5–7 個；每個斑塊畫成 5 px 的十字）。 */
+const ORE_BLOB_CENTERS: ReadonlyArray<readonly [number, number]> = [
+  [3, 2], [9, 3], [13, 6], [4, 10], [8, 12], [12, 13],
+];
+
+const inOreBlob = (x: number, y: number): boolean =>
+  ORE_BLOB_CENTERS.some(([cx, cy]) => {
+    const dx = x - cx;
+    const dy = y - cy;
+    return dx * dx + dy * dy <= 2;
+  });
+
 export function drawAtlas(): AtlasImage {
   if (cachedAtlas) return cachedAtlas;
   const data = new Uint8ClampedArray(ATLAS_SIZE * ATLAS_SIZE * 4);
@@ -259,6 +288,44 @@ export function drawAtlas(): AtlasImage {
   }); // ice
   // ---- B4 Task 1：羊毛（tile 33）----
   put(33, (_x, _y, r) => vary([233, 236, 236, 255], r, 18)); // wool
+  // ---- B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（tile 34–38）----
+  put(34, (x, y, r) => {
+    // gravel: 灰褐底 ＋ 20 顆深淺不一的碎石點
+    const c = vary([136, 130, 122, 255], r, 16);
+    const speck = GRAVEL_SPECKS.find((s) => s.x === x && s.y === y);
+    if (!speck) return c;
+    return [clamp255(c[0] + speck.d), clamp255(c[1] + speck.d), clamp255(c[2] + speck.d), 255];
+  }); // gravel
+  put(35, (x, y, r) => {
+    // gold_ore: 石頭底 ＋ 6 個金黃色斑塊
+    if (inOreBlob(x, y)) return vary([240, 200, 60, 255], r, 20);
+    const v = (x * 3 + y * 7) % 5 === 0 ? -22 : 0;
+    const c = vary([125, 125, 125, 255], r, 20);
+    return [clamp255(c[0] + v), clamp255(c[1] + v), clamp255(c[2] + v), 255];
+  }); // gold_ore
+  put(36, (x, y, r) => {
+    // diamond_ore: 石頭底 ＋ 6 個青白色斑塊（與金礦同一組斑塊位置、不同顏色）
+    if (inOreBlob(x, y)) return vary([120, 220, 225, 255], r, 20);
+    const v = (x * 3 + y * 7) % 5 === 0 ? -22 : 0;
+    const c = vary([125, 125, 125, 255], r, 20);
+    return [clamp255(c[0] + v), clamp255(c[1] + v), clamp255(c[2] + v), 255];
+  }); // diamond_ore
+  put(37, (x, y, r) => {
+    // spruce_planks: 深棕底 ＋ 垂直深色板縫（每 4 欄一道，交錯的短縫比照橡木）
+    const seam = x % 4 === 3 ? -26 : 0;
+    const cross = (y + (Math.floor(x / 4) % 2) * 4) % 8 === 0 ? -12 : 0;
+    const c = vary([92, 64, 38, 255], r, 14);
+    const d = seam + cross;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // spruce_planks
+  put(38, (x, y, r) => {
+    // birch_planks: 淺木底 ＋ 垂直淺色板縫（同上節奏，方向相反）
+    const seam = x % 4 === 3 ? 26 : 0;
+    const cross = (y + (Math.floor(x / 4) % 2) * 4) % 8 === 0 ? 12 : 0;
+    const c = vary([196, 180, 140, 255], r, 14);
+    const d = seam + cross;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // birch_planks
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

@@ -61,6 +61,12 @@ describe('blocks', () => {
       [BLOCK.ICE, 0.5],
       // B4 Task 1 新增：羊毛 0.8（原版羊毛硬度）
       [BLOCK.WOOL, 0.8],
+      // B5 Task 1 新增：礫石 0.6、金礦／鑽石礦 3.0、雲杉／白樺板材 2.0（皆為原版硬度）
+      [BLOCK.GRAVEL, 0.6],
+      [BLOCK.GOLD_ORE, 3.0],
+      [BLOCK.DIAMOND_ORE, 3.0],
+      [BLOCK.SPRUCE_PLANKS, 2.0],
+      [BLOCK.BIRCH_PLANKS, 2.0],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -101,6 +107,12 @@ describe('blocks', () => {
       [BLOCK.ICE, null, 'pickaxe'],
       // B4 Task 1 新增：羊毛徒手可挖（不要工具）
       [BLOCK.WOOL, null, null],
+      // B5 Task 1 新增：礫石徒手可挖（鏟加速）、金礦／鑽石礦要鐵鎬以上（level 2）、板材用斧
+      [BLOCK.GRAVEL, null, 'shovel'],
+      [BLOCK.GOLD_ORE, { kind: 'pickaxe', level: 2 }, 'pickaxe'],
+      [BLOCK.DIAMOND_ORE, { kind: 'pickaxe', level: 2 }, 'pickaxe'],
+      [BLOCK.SPRUCE_PLANKS, null, 'axe'],
+      [BLOCK.BIRCH_PLANKS, null, 'axe'],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -287,7 +299,11 @@ describe('blocks', () => {
     expect(def.top).toBe(33);
     expect(def.side).toBe(33);
     expect(def.bottom).toBe(33);
-    expect(TILE_COUNT).toBe(34);
+    // `TILE_COUNT` 是「最高 tile ＋ 1」→ 會隨新批次成長（B5 之後 = 39），
+    // 所以這裡只用相對斷言（B3 Task 3 在 textures.test.ts 的同一套寫法）：
+    // 羊毛的 tile 33 **本身不變**，且仍在已宣告的 tile 範圍內。
+    // B5 的絕對值（39）由本批自己的測試把關。
+    expect(TILE_COUNT).toBeGreaterThan(def.top);
   });
 
   it('the wool tile 33 is painted (never the magenta debug layer)', () => {
@@ -305,5 +321,112 @@ describe('blocks', () => {
     }
     expect(magenta, 'tile 33 magenta').toBeLessThan(TILE_PX * TILE_PX);
     expect(painted, 'tile 33 painted').toBeGreaterThan(0);
+  });
+
+  // ---- B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材 ----
+  // 跨批編號：本批 = 27–31（tile 34–38）。同樣只能往後追加——舊存檔的
+  // `modified` 記的是數字 id，重編號會讓舊存檔的方塊全部變形。
+
+  it('the B5 blocks keep their ids and vanilla hardness', () => {
+    expect(BLOCK.GRAVEL).toBe(27);
+    expect(BLOCK.GOLD_ORE).toBe(28);
+    expect(BLOCK.DIAMOND_ORE).toBe(29);
+    expect(BLOCK.SPRUCE_PLANKS).toBe(30);
+    expect(BLOCK.BIRCH_PLANKS).toBe(31);
+
+    expect(getBlockDef(BLOCK.GRAVEL).hardness).toBe(0.6);
+    expect(getBlockDef(BLOCK.GOLD_ORE).hardness).toBe(3.0);
+    expect(getBlockDef(BLOCK.DIAMOND_ORE).hardness).toBe(3.0);
+    expect(getBlockDef(BLOCK.SPRUCE_PLANKS).hardness).toBe(2.0);
+    expect(getBlockDef(BLOCK.BIRCH_PLANKS).hardness).toBe(2.0);
+
+    // BlockDef 的三個必填欄位（`name` 與三面 tile）：值即跨任務交接的介面
+    const names: ReadonlyArray<readonly [number, string]> = [
+      [BLOCK.GRAVEL, 'gravel'],
+      [BLOCK.GOLD_ORE, 'gold_ore'],
+      [BLOCK.DIAMOND_ORE, 'diamond_ore'],
+      [BLOCK.SPRUCE_PLANKS, 'spruce_planks'],
+      [BLOCK.BIRCH_PLANKS, 'birch_planks'],
+    ];
+    for (const [id, name] of names) {
+      const def = getBlockDef(id);
+      expect(def.id).toBe(id);
+      expect(def.name).toBe(name);
+      expect(def.solid).toBe(true);
+      expect(def.transparent).toBe(false);
+      expect(def.shape).toBe('cube');
+      expect(def.top).toBe(def.side); // 三個面共用同一個 tile
+      expect(def.side).toBe(def.bottom);
+    }
+  });
+
+  it('the new blocks carry the vanilla harvest gates', () => {
+    expect(getBlockDef(BLOCK.GOLD_ORE).requiredTool).toEqual({ kind: 'pickaxe', level: 2 });
+    expect(getBlockDef(BLOCK.DIAMOND_ORE).requiredTool).toEqual({ kind: 'pickaxe', level: 2 });
+    expect(getBlockDef(BLOCK.GRAVEL).requiredTool).toBeNull();
+    expect(getBlockDef(BLOCK.GRAVEL).fastTool).toBe('shovel');
+    expect(getBlockDef(BLOCK.SPRUCE_PLANKS).fastTool).toBe('axe');
+    expect(getBlockDef(BLOCK.BIRCH_PLANKS).fastTool).toBe('axe');
+    expect(getBlockDef(BLOCK.GOLD_ORE).fastTool).toBe('pickaxe');
+    expect(getBlockDef(BLOCK.DIAMOND_ORE).fastTool).toBe('pickaxe');
+    // 板材沒有採掘門檻（原版徒手可挖，只是慢）
+    expect(getBlockDef(BLOCK.SPRUCE_PLANKS).requiredTool).toBeNull();
+    expect(getBlockDef(BLOCK.BIRCH_PLANKS).requiredTool).toBeNull();
+  });
+
+  it('the B5 tiles are appended after the wool tile and grow TILE_COUNT', () => {
+    // tile 索引只能往後追加（與 block id 同一條規則）
+    expect(getBlockDef(BLOCK.GRAVEL).top).toBe(34);
+    expect(getBlockDef(BLOCK.GOLD_ORE).top).toBe(35);
+    expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
+    expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
+    expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（B5 落地後 = 39）
+    expect(TILE_COUNT).toBe(39);
+    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.BIRCH_PLANKS).top + 1);
+  });
+
+  it('no two blocks share an id', () => {
+    const ids = Object.values(BLOCK);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('the pre-B3 block ids are unchanged', () => {
+    // 既有 0–16 的 id 不得重編（舊存檔靠數字 id 認方塊）
+    expect(BLOCK.AIR).toBe(0);
+    expect(BLOCK.STONE).toBe(1);
+    expect(BLOCK.DIRT).toBe(2);
+    expect(BLOCK.GRASS).toBe(3);
+    expect(BLOCK.SAND).toBe(4);
+    expect(BLOCK.LOG).toBe(5);
+    expect(BLOCK.LEAVES).toBe(6);
+    expect(BLOCK.PLANKS).toBe(7);
+    expect(BLOCK.COBBLE).toBe(8);
+    expect(BLOCK.WATER).toBe(9);
+    expect(BLOCK.BEDROCK).toBe(10);
+    expect(BLOCK.SNOW).toBe(11);
+    expect(BLOCK.GLASS).toBe(12);
+    expect(BLOCK.COAL_ORE).toBe(13);
+    expect(BLOCK.IRON_ORE).toBe(14);
+    expect(BLOCK.CRAFTING_TABLE).toBe(15);
+    expect(BLOCK.FURNACE).toBe(16);
+  });
+
+  it('the B5 block ids are appended, never renumbered', () => {
+    expect(BLOCK.GRAVEL).toBeGreaterThan(16);
+    expect(BLOCK.GOLD_ORE).toBeGreaterThan(BLOCK.GRAVEL);
+    expect(BLOCK.DIAMOND_ORE).toBeGreaterThan(BLOCK.GOLD_ORE);
+    expect(BLOCK.SPRUCE_PLANKS).toBeGreaterThan(BLOCK.DIAMOND_ORE);
+    expect(BLOCK.BIRCH_PLANKS).toBeGreaterThan(BLOCK.SPRUCE_PLANKS);
+    // B1–B4 已用過的 id 不得被本批挪動
+    expect(BLOCK.WOOL).toBe(26);
+  });
+
+  it('the new blocks are placeable', () => {
+    expect(PLACEABLE).toContain(BLOCK.GOLD_ORE);
+    expect(PLACEABLE).toContain(BLOCK.DIAMOND_ORE);
+    expect(PLACEABLE).toContain(BLOCK.GRAVEL);
+    expect(PLACEABLE).toContain(BLOCK.SPRUCE_PLANKS);
+    expect(PLACEABLE).toContain(BLOCK.BIRCH_PLANKS);
   });
 });
