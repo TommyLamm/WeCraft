@@ -269,7 +269,7 @@ describe('stepMob — skeleton keep-distance', () => {
     expect(out.pos).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it('fires an arced shoot event every 2.0 s while within 35 blocks', () => {
+  it('fires an arced shoot event every 2.0 s while within the 15-block shooting range', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
     const player = { x: 8, y: 0, z: 0 };
 

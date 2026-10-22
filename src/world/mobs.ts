@@ -61,7 +61,10 @@ export const SKELETON_SHOOT_COOLDOWN = 2.0;
  *
  *  **刻意簡化（列進 Task 12 的 README 差異清單）**：原版離開 15 格後會「弓箭上膛等待」，
  *  玩家一回到射程內就立刻射；**本作沒有實作「上膛等待」** —— 離開射程只是不射，
- *  cooldown 照常走完。 */
+ *  cooldown 照常走完。
+ *
+ *  **量綱說明**：原版的 15 格是**三維球距**；**本作以水平（XZ）距離近似** —— 玩家在腳下
+ *  10 格、水平 15 格時仍會被射。這是既有的量綱慣例，非本批引入。 */
 export const SKELETON_SHOOT_RANGE = 15;
 /** Line-of-sight sampling: a solid cell anywhere along the eye→eye segment
  *  blocks the swipe/shot. 0.5 < the 1-block wall thickness, so terrain can't
