@@ -21,10 +21,25 @@ import { canSpawnHostile, type SpawnLight } from './spawn-rules';
 
 // ---- Tuning constants (Task 8) ----
 
-/** XZ distance (blocks) at which a mob engages the player → chase/retreat. */
-export const CHASE_RANGE = 16;
-/** XZ distance beyond which a mob gives up and wanders (target cleared). */
-export const WANDER_RANGE = 24;
+/** XZ distance (blocks) at which a mob engages the player → chase/retreat.
+ *
+ *  **35 = 原版的 follow range**（wiki，2026-10-22 查證）：Zombie 條目「Zombies pursue
+ *  the player on sight from **35 blocks** away」、`follow_range` 屬性的 base value 是 35
+ *  （另有 ±5% 隨機加成）；Skeleton 條目「follow players when approached, much like
+ *  zombies」→ 同一個 35。
+ *
+ *  本作原本的 **16 是 B4 之前的舊值**，與 Task 5 把生成距離改成 **24–128** 直接矛盾：
+ *  生成出來的生物最近也要 24 格，卻只有 ≤ 16 格才會追人 → **新生成的殭屍／骷髏幾乎
+ *  永遠不會走進攻擊範圍、幾乎不會攻擊玩家**（B4 之前生成在 12–24 格，落在 12–16 的
+ *  會直接追人）。原版沒有這個矛盾：偵測／追擊範圍 35 > 最近生成距離 24 → 生成在
+ *  24–35 格的生物會直接來找玩家。 */
+export const CHASE_RANGE = 35;
+/** XZ distance beyond which a mob gives up and wanders (target cleared).
+ *
+ *  **必須 > {@link CHASE_RANGE}**，否則 `distXZ > WANDER_RANGE` 那一支會先攔截、追擊
+ *  分支永遠走不到。保留既有的「遲滯帶」設計（避免追擊／遊蕩的邊界來回跳動）：
+ *  35 < 距離 ≤ 40 維持原狀態，超過 40 才放棄追擊並清掉目標。 */
+export const WANDER_RANGE = 40;
 /** 3D melee reach of the zombie, blocks. */
 export const ATTACK_RANGE = 1.6;
 /** Zombie swipe: damage and the 1.0 s gate before the next one. */
@@ -256,7 +271,7 @@ export function damageMob(
  *  it produced (never mutates the input).
  *
  *  Order: NaN-guard dt → cooldowns tick → XZ-only state machine (with a
- *  16–24 hysteresis band so the chase/wander edge doesn't flicker) → attacks
+ *  35–40 hysteresis band so the chase/wander edge doesn't flicker) → attacks
  *  → desired horizontal velocity → gravity/step-up probe → knockback →
  *  integrate → landing sweep (drops.ts cell-sweep pattern, no tunnelling). */
 export function stepMob(m: Mob, ctx: MobCtx): { mob: Mob; events: MobEvent[] } {
@@ -282,7 +297,7 @@ export function stepMob(m: Mob, ctx: MobCtx): { mob: Mob; events: MobEvent[] } {
   } else if (distXZ <= CHASE_RANGE) {
     if (m.ranged) state = distXZ < KEEP_MIN ? 'retreat' : 'chase';
     else state = 'chase';
-  } // else 16 < distXZ ≤ 24: keep the current state (hysteresis)
+  } // else 35 < distXZ ≤ 40: keep the current state (hysteresis)
   const target = state === 'wander' ? null : { x: p.x, y: p.y, z: p.z };
 
   // ---- desired horizontal velocity ----
@@ -443,8 +458,11 @@ export function stepMobs(
  *  - 只有**不死系**（殭屍／骷髏）會著火——被動生物不會（Task 6 的被動生物是另一個
  *    型別，完全不經過這裡）。
  *  - 只有**日光直射**時才燃燒（夜晚不燃）。
- *  - 遮蔽判定是**刻意簡化**：**頭頂正上方那一格是實心方塊**（屋簷／樹冠葉片）→
- *    不燃；腳下格是水 → 不燃；**不判斷天氣、不判斷頭盔**。
+ *  - 遮蔽判定是**刻意簡化**，兩條規則：
+ *    (a) **頭格**（生物自己的頭格，殭屍腳底 0 時是 y=1）有實心方塊 → 不燃
+ *        （那代表生物**卡在方塊裡**，不該被點燃）；
+ *    (b) **頭頂正上方那一格**（腳底 +2 = y=2，屋簷／樹冠葉片的位置）是實心方塊 → 不燃。
+ *    腳下格是水 → 不燃；**不判斷天氣、不判斷頭盔**。
  *  - `burn` 是「正在燃燒」的旗標（仍在日光下就每幀重設為 {@link SUN_BURN_SEC}），
  *    真正的死亡時間由 1 HP/s × 20 HP ≈ 20 秒決定；`burnAcc` 只在燃燒中累積，
  *    每滿 1 秒扣 {@link SUN_BURN_DPS} 點血，熄火時歸零。 */

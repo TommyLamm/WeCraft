@@ -16,6 +16,8 @@ import {
   SPAWN_MAX_DIST,
   DESPAWN_DISTANCE,
   MAX_MOBS,
+  CHASE_RANGE,
+  WANDER_RANGE,
   ZOMBIE_CHASE_SPEED,
   SKELETON_CHASE_SPEED,
   SUN_BURN_SEC,
@@ -126,7 +128,7 @@ describe('createMob', () => {
 // ---- stepMob: zombie -----------------------------------------------------
 
 describe('stepMob — zombie chase', () => {
-  it('chases within 16 blocks: state chase, moves toward the player at 3.2 b/s', () => {
+  it('chases within 35 blocks: state chase, moves toward the player at 3.2 b/s', () => {
     const m = mob({ pos: { x: 0.5, y: 0, z: 0.5 } });
     const player = { x: 10.5, y: 0, z: 0.5 };
     const { mob: out, events } = stepMob(m, ctxOf(player, 0.5));
@@ -142,7 +144,7 @@ describe('stepMob — zombie chase', () => {
   it('state decisions are XZ-only: a player straight above still triggers chase', () => {
     const m = mob();
     const { mob: out } = stepMob(m, ctxOf({ x: 0.5, y: 8, z: 0.5 }, 0.1));
-    expect(out.state).toBe('chase'); // XZ distance 0 ≤ 16
+    expect(out.state).toBe('chase'); // XZ distance 0 ≤ 35
     expect(Math.hypot(out.vel.x, out.vel.z)).toBeCloseTo(0, 10); // no XZ direction
   });
 
@@ -249,7 +251,7 @@ describe('stepMob — skeleton keep-distance', () => {
     expect(out.pos.x).toBeCloseTo(-1.75, 10); // 3.5 b/s × 0.5 s
   });
 
-  it('approaches when farther than 9 blocks (within 16)', () => {
+  it('approaches when farther than 9 blocks (within 35)', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
     const { mob: out } = stepMob(m, ctxOf({ x: 12, y: 0, z: 0 }, 0.5));
     expect(out.state).toBe('chase');
@@ -266,7 +268,7 @@ describe('stepMob — skeleton keep-distance', () => {
     expect(out.pos).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it('fires an arced shoot event every 2.0 s while within 16 blocks', () => {
+  it('fires an arced shoot event every 2.0 s while within 35 blocks', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
     const player = { x: 8, y: 0, z: 0 };
 
@@ -297,7 +299,8 @@ describe('stepMob — skeleton keep-distance', () => {
 
   it('does not shoot out of range', () => {
     const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 0, y: 0, z: 0 } });
-    const { events } = stepMob(m, ctxOf({ x: 20, y: 0, z: 0 }, 0.1));
+    // 超出追擊／射擊範圍（CHASE_RANGE = 35）→ 不射擊
+    const { events } = stepMob(m, ctxOf({ x: 40, y: 0, z: 0 }, 0.1));
     expect(events).toHaveLength(0);
   });
 });
@@ -305,9 +308,9 @@ describe('stepMob — skeleton keep-distance', () => {
 // ---- stepMob: wander & hysteresis ---------------------------------------
 
 describe('stepMob — wander', () => {
-  it('drops to wander beyond 24 blocks and clears the target', () => {
+  it('drops to wander beyond 40 blocks and clears the target', () => {
     const m = mob({ state: 'chase', target: { x: 1, y: 0, z: 1 } });
-    const { mob: out } = stepMob(m, ctxOf({ x: 30, y: 0, z: 0 }, 0.1));
+    const { mob: out } = stepMob(m, ctxOf({ x: 45, y: 0, z: 0 }, 0.1));
     expect(out.state).toBe('wander');
     expect(out.target).toBeNull();
   });
@@ -329,11 +332,11 @@ describe('stepMob — wander', () => {
     expect(Number.isFinite(out.wanderDir)).toBe(true);
   });
 
-  it('keeps the current state inside the 16–24 hysteresis band', () => {
+  it('keeps the current state inside the 35–40 hysteresis band', () => {
     const chasing = mob({ state: 'chase' });
-    expect(stepMob(chasing, ctxOf({ x: 20, y: 0, z: 0 }, 0.1)).mob.state).toBe('chase');
+    expect(stepMob(chasing, ctxOf({ x: 38, y: 0, z: 0 }, 0.1)).mob.state).toBe('chase');
     const wandering = mob({ state: 'wander' });
-    expect(stepMob(wandering, ctxOf({ x: 20, y: 0, z: 0 }, 0.1)).mob.state).toBe('wander');
+    expect(stepMob(wandering, ctxOf({ x: 38, y: 0, z: 0 }, 0.1)).mob.state).toBe('wander');
   });
 
   it('treats non-finite dt as 0 (no NaN poisoning)', () => {
@@ -354,6 +357,40 @@ describe('stepMob — wander', () => {
     expect(m.attackCooldown).toBe(0); // the attack on the copy left the input alone
     expect(m.pos).toEqual({ x: 0.5, y: 0, z: 0.5 });
     expect(m.state).toBe('chase');
+  });
+});
+
+// ---- B4.4 追擊範圍 ↔ 生成距離（回歸釘子）-------------------------------
+// 背景：B4 之前生成距離是 12–24、追擊範圍 16 → 生成在 12–16 的生物會直接追人。
+// Task 5 把生成距離改成 24–128，**追擊範圍若還停在 16 就會小於最近生成距離** →
+// 新生成的生物幾乎永遠走不進攻擊範圍、幾乎不會攻擊玩家（無聲的玩法回歸）。
+// 原版的 follow range 是 35 格（wiki 2026-10-22：Zombie「pursue the player on sight
+// from 35 blocks away」、`follow_range` base 35；Skeleton 同）→ 35 > 24，原版沒有
+// 這個矛盾：生成在 24–35 的生物會直接來找玩家。
+
+describe('B4.4 追擊範圍與生成距離', () => {
+  it('the chase range is never smaller than the nearest spawn distance', () => {
+    // **不變式釘子**（比逐值斷言更耐未來調整）：追擊範圍必須 ≥ 最近生成距離，
+    // 否則生成出來的生物**不可能**走到攻擊範圍 → 永遠不會攻擊玩家。
+    expect(CHASE_RANGE).toBeGreaterThanOrEqual(SPAWN_MIN_DIST);
+    // 放棄追擊的距離也必須大於追擊範圍，否則 `distXZ > WANDER_RANGE` 會先攔截，
+    // 追擊分支永遠走不到（遲滯帶必須存在）。
+    expect(WANDER_RANGE).toBeGreaterThan(CHASE_RANGE);
+  });
+
+  it('a mob 30 blocks away chases the player (spawn distance band 24–35)', () => {
+    const m = mob();
+    const player = { x: 30.5, y: 0, z: 0.5 }; // XZ 距離 30（在 24–35 之間）
+    const { mob: out } = stepMob(m, ctxOf(player, 0.1));
+    expect(out.state).toBe('chase');
+    expect(out.target).toEqual(player);
+  });
+
+  it('a mob 45 blocks away gives up and wanders', () => {
+    const m = mob({ state: 'chase', target: { x: 1, y: 0, z: 1 } });
+    const { mob: out } = stepMob(m, ctxOf({ x: 45.5, y: 0, z: 0.5 }, 0.1));
+    expect(out.state).toBe('wander');
+    expect(out.target).toBeNull();
   });
 });
 
