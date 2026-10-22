@@ -196,6 +196,72 @@ describe('createPassiveMobRenderer', () => {
     geo.dispose();
   });
 
+  it('the rotated model never sticks out of the hitbox by more than 0.07 blocks', () => {
+    // **命中盒是軸對齊的、模型卻跟著 yaw 轉** → 旋轉後的外接半徑必然可能超過
+    // `width/2`（除非把模型縮成半徑 `width/2` 的圓 → 會看起來明顯偏小，**不做**）。
+    // 實測最壞超出：羊 0.0655 格（@224°）、豬 0.0547（@50°）、牛 0.0284（@49°）、
+    // 雞 0（永不超出）→ **這是「命中盒軸對齊 vs 模型旋轉」的幾何必然，不是建模
+    // 誤差**；上限取 **0.07 格**（≈7 cm，玩家瞄準幾乎不會感覺得到）
+    // → 這條釘子擋住「未來有人把模型改大」。
+    const LIMIT = 0.07;
+    for (const kind of KINDS) {
+      const { scene, renderer } = setup();
+      renderer.syncPassiveMobs([passive(kind)], 0);
+      const group = scene.children[0] as THREE.Group;
+      const def = PASSIVE_DEFS[kind];
+      const half = def.width / 2;
+      let worst = 0;
+      let worstYaw = 0;
+      for (let deg = 0; deg < 360; deg += 1) {
+        group.rotation.y = (deg * Math.PI) / 180;
+        const box = renderedBox(group);
+        const over = Math.max(
+          0,
+          Math.abs(box.min.x) - half,
+          Math.abs(box.max.x) - half,
+          Math.abs(box.min.z) - half,
+          Math.abs(box.max.z) - half,
+          box.max.y - def.height,
+          -box.min.y,
+        );
+        if (over > worst) {
+          worst = over;
+          worstYaw = deg;
+        }
+      }
+      group.rotation.y = 0;
+      expect(worst, `${kind} 最壞超出量（@${worstYaw}°）`).toBeLessThanOrEqual(LIMIT);
+      renderer.dispose();
+    }
+  });
+
+  it('the swinging legs dip at most about 1.3 cm below the ground', () => {
+    // 腿繞「髖部」樞紐擺動 → 旋轉後的角點會暫時低於地面（與 `scene.ts` 的敵對
+    // 生物模型同一現象）。實測最壞下沉：豬 −0.0127、羊 −0.0086、牛 −0.0083、
+    // 雞 −0.0040 格 → 上限取 2 cm（擺動幅度 0.6 rad 的幾何必然）。
+    const LIMIT = 0.02;
+    for (const kind of KINDS) {
+      const { scene, renderer } = setup();
+      renderer.syncPassiveMobs([passive(kind)], 0);
+      const group = scene.children[0] as THREE.Group;
+      const legL = group.getObjectByName('legL') as THREE.Group;
+      const legR = group.getObjectByName('legR') as THREE.Group;
+      let lowest = 0;
+      for (let i = -60; i <= 60; i++) {
+        const swing = (i / 100) * 0.6; // ±0.6 rad（＝擺動幅度）
+        legL.rotation.x = swing;
+        legR.rotation.x = -swing;
+        lowest = Math.min(lowest, renderedBox(group).min.y);
+      }
+      legL.rotation.x = 0;
+      legR.rotation.x = 0;
+      expect(lowest, `${kind} 擺動時腳尖下沉量`).toBeGreaterThanOrEqual(-LIMIT);
+      // 靜止時腳底回到**精確**的 0
+      expect(renderedBox(group).min.y).toBeCloseTo(0, 6);
+      renderer.dispose();
+    }
+  });
+
   it('moves an existing mob without rebuilding', () => {
     const { scene, renderer } = setup();
     renderer.syncPassiveMobs([passive('pig', { pos: { x: 1, y: 2, z: 3 } })], 0.016);
