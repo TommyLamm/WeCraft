@@ -102,9 +102,9 @@ function chickenLayout(): PassiveLayout {
     ],
     blocks: [
       { name: 'body', slot: 'body', size: { x: 0.28, y: 0.26, z: 0.3 }, pos: { x: 0, y: 0.28, z: -0.04 } },
-      { name: 'head', slot: 'head', size: { x: 0.19, y: 0.19, z: 0.19 }, pos: { x: 0, y: 0.48, z: 0.05 } },
-      { name: 'comb', slot: 'accent', size: { x: 0.05, y: 0.07, z: 0.11 }, pos: { x: 0, y: 0.61, z: 0.05 } },
-      { name: 'beak', slot: 'accent2', size: { x: 0.07, y: 0.05, z: 0.09 }, pos: { x: 0, y: 0.45, z: 0.19 } },
+      { name: 'head', slot: 'head', size: { x: 0.19, y: 0.19, z: 0.19 }, pos: { x: 0, y: 0.48, z: 0.09 } },
+      { name: 'comb', slot: 'accent', size: { x: 0.05, y: 0.07, z: 0.11 }, pos: { x: 0, y: 0.61, z: 0.09 } },
+      { name: 'beak', slot: 'accent2', size: { x: 0.07, y: 0.05, z: 0.09 }, pos: { x: 0, y: 0.45, z: 0.23 } },
     ],
   };
 }
@@ -117,9 +117,9 @@ function pigLayout(): PassiveLayout {
       { x: -0.22, hipY: 0.2, size: 0.16 },
     ],
     blocks: [
-      { name: 'body', slot: 'body', size: { x: 0.62, y: 0.44, z: 0.62 }, pos: { x: 0, y: 0.42, z: -0.12 } },
-      { name: 'head', slot: 'head', size: { x: 0.36, y: 0.36, z: 0.36 }, pos: { x: 0, y: 0.5, z: 0.26 } },
-      { name: 'snout', slot: 'accent', size: { x: 0.18, y: 0.13, z: 0.1 }, pos: { x: 0, y: 0.45, z: 0.49 } },
+      { name: 'body', slot: 'body', size: { x: 0.62, y: 0.44, z: 0.58 }, pos: { x: 0, y: 0.42, z: -0.14 } },
+      { name: 'head', slot: 'head', size: { x: 0.36, y: 0.36, z: 0.36 }, pos: { x: 0, y: 0.5, z: 0.32 } },
+      { name: 'snout', slot: 'accent', size: { x: 0.18, y: 0.13, z: 0.1 }, pos: { x: 0, y: 0.45, z: 0.55 } },
     ],
   };
 }
@@ -134,7 +134,7 @@ function sheepLayout(): PassiveLayout {
     blocks: [
       { name: 'body', slot: 'body', size: { x: 0.78, y: 0.66, z: 0.74 }, pos: { x: 0, y: 0.61, z: -0.06 } },
       { name: 'wool', slot: 'accent', size: { x: 0.7, y: 0.12, z: 0.66 }, pos: { x: 0, y: 0.95, z: -0.06 } },
-      { name: 'head', slot: 'head', size: { x: 0.3, y: 0.3, z: 0.3 }, pos: { x: 0, y: 0.92, z: 0.34 } },
+      { name: 'head', slot: 'head', size: { x: 0.3, y: 0.3, z: 0.3 }, pos: { x: 0, y: 0.92, z: 0.42 } },
     ],
   };
 }
@@ -148,9 +148,9 @@ function cowLayout(): PassiveLayout {
     ],
     blocks: [
       { name: 'body', slot: 'body', size: { x: 0.66, y: 0.62, z: 0.74 }, pos: { x: 0, y: 0.63, z: -0.08 } },
-      { name: 'head', slot: 'head', size: { x: 0.36, y: 0.36, z: 0.36 }, pos: { x: 0, y: 1.0, z: 0.34 } },
-      { name: 'hornL', slot: 'accent2', size: { x: 0.07, y: 0.13, z: 0.07 }, pos: { x: 0.13, y: 1.22, z: 0.32 } },
-      { name: 'hornR', slot: 'accent2', size: { x: 0.07, y: 0.13, z: 0.07 }, pos: { x: -0.13, y: 1.22, z: 0.32 } },
+      { name: 'head', slot: 'head', size: { x: 0.36, y: 0.36, z: 0.36 }, pos: { x: 0, y: 1.0, z: 0.4 } },
+      { name: 'hornL', slot: 'accent2', size: { x: 0.07, y: 0.13, z: 0.07 }, pos: { x: 0.13, y: 1.22, z: 0.38 } },
+      { name: 'hornR', slot: 'accent2', size: { x: 0.07, y: 0.13, z: 0.07 }, pos: { x: -0.13, y: 1.22, z: 0.38 } },
       { name: 'spotL', slot: 'accent', size: { x: 0.05, y: 0.26, z: 0.28 }, pos: { x: 0.335, y: 0.72, z: -0.06 } },
       { name: 'spotR', slot: 'accent', size: { x: 0.05, y: 0.26, z: 0.28 }, pos: { x: -0.335, y: 0.72, z: -0.06 } },
       { name: 'spotTop', slot: 'accent', size: { x: 0.24, y: 0.05, z: 0.24 }, pos: { x: 0, y: 0.95, z: -0.12 } },
