@@ -509,11 +509,49 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     );
     const out = trySpawnPassiveGroup(atCap, player, spawnCtxOf({ rng: seeded(1) }));
     expect(out).toBe(atCap); // 達上限 → 不生成（同一個參考）
-    // 差一隻 → 會生成（整群 2–4 隻 → 變成 12+）
+    // 差一隻 → 生成後**恰好 12**（整群被夾制：只補到上限，不會是 13–15）
+    // → 2026-10-22 審查 I-1／controller 裁決：spec 的用語是「**全場**上限 12」
+    //   ＝ 場上的總數永不超過 12；brief 原本的「變 12+」是措辭鬆散，不是設計意圖
+    //   （12+ 會與存檔上限「只保留前 12 筆」衝突 → 最多 3 隻生物在存／讀之間消失）。
     const oneBelow = atCap.slice(0, MAX_PASSIVE_MOBS - 1);
     const more = trySpawnPassiveGroup(oneBelow, player, spawnCtxOf({ rng: seeded(1) }));
     expect(more).not.toBe(oneBelow);
-    expect(more.length).toBeGreaterThanOrEqual(MAX_PASSIVE_MOBS);
+    expect(more.length).toBe(MAX_PASSIVE_MOBS); // **恰好 12**（不是 12+）
+  });
+
+  it('the group is clamped so the total never passes 12', () => {
+    // 從 10 隻開始 → 群最多 4 隻 → **只補到 12**（不會變成 14）
+    const ten = Array.from({ length: 10 }, (_, i) =>
+      passive('cow', { pos: { x: i, y: 6, z: 0 } }),
+    );
+    const out = trySpawnPassiveGroup(ten, player, spawnCtxOf({ rng: seeded(1) }));
+    expect(out).not.toBe(ten);
+    expect(out.length).toBe(MAX_PASSIVE_MOBS); // 恰好 12
+    expect(ten.length).toBe(10); // 輸入沒有被改
+    // 從 12 隻開始 → 達上限 → **回同一個參考**（不發起這一次嘗試）
+    const twelve = ten.concat(
+      Array.from({ length: MAX_PASSIVE_MOBS - ten.length }, (_, i) =>
+        passive('pig', { pos: { x: i, y: 6, z: 0 } }),
+      ),
+    );
+    expect(twelve.length).toBe(MAX_PASSIVE_MOBS);
+    const blocked = trySpawnPassiveGroup(twelve, player, spawnCtxOf({ rng: seeded(1) }));
+    expect(blocked).toBe(twelve);
+  });
+
+  it('the total never exceeds the cap (any input size, any group size)', () => {
+    // **不變式釘子**：無論輸入幾隻、抽到多大的群，輸出的總數都 ≤ 上限
+    // → 擋住未來任何路徑再把「全場上限」弄破。
+    for (let n = 0; n <= MAX_PASSIVE_MOBS; n++) {
+      const input = Array.from({ length: n }, (_, i) =>
+        passive('cow', { pos: { x: i, y: 6, z: 0 } }),
+      );
+      for (let seed = 1; seed <= 20; seed++) {
+        const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ rng: seeded(seed) }));
+        expect(out.length).toBeLessThanOrEqual(MAX_PASSIVE_MOBS);
+        expect(out.length).toBeGreaterThanOrEqual(n); // 不會變少（也不會吃掉既有的）
+      }
+    }
   });
 
   it('no passive mob spawns on sand or stone', () => {

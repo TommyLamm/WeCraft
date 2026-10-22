@@ -77,7 +77,14 @@ export const PASSIVE_DEFS: Readonly<Record<PassiveKind, PassiveMobDef>> = {
   cow: { kind: 'cow', hp: 10, width: 0.9, height: 1.4, vanillaSpeed: 0.2, speed: 1.5 },
 };
 
-/** 同時存在的被動生物上限（原版沒有硬上限，這裡是本作成的保護值）。 */
+/**
+ * 同時存在的被動生物上限（原版沒有硬上限，這裡是本作成的保護值）。
+ *
+ * **這是「全場上限」**（spec §B4.2）：場上的被動生物總數**永不超過 12** → 生成時
+ * 就夾制（見 `trySpawnPassiveGroup`），不是只在「開始嘗試」時擋一次。存檔（Task 10）
+ * 用的是**同一個常數**（超過 12 筆只保留前 12 筆）→ 兩邊一致，不會有生物在存／讀
+ * 之間無聲消失。
+ */
 export const MAX_PASSIVE_MOBS = 12;
 
 /** panic（受驚逃跑）時的速度倍率。 */
@@ -654,12 +661,14 @@ function unchanged(mobs: readonly PassiveMob[]): PassiveMob[] {
  * 1. **光照門檻**：`canSpawnPassive(ctx.light)` → 亮度不足（夜間）就不生成。
  *    B4 用 `clockLight(t)` 近似＝「白天」（spec §B4.2 明示這是簡化，B6 換真光照）。
  * 2. **總量上限**：達 {@link MAX_PASSIVE_MOBS} 就不生成（回同一個參考）。
- *    （上限只擋在「開始嘗試」時 → 11 隻時生成一整群會變成 12+。）
  * 3. **母點**：距玩家 28–48 格、角度均勻（`passiveMotherPoint`）。
  * 4. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
  * 5. **群組成**：2–4 隻、同一種類（四種等機率 → 見 `choosePassiveKind` 的簡化說明）。
  * 6. **成員取位**：母點附近 ±2 格 → 每一隻都重做地面／頭頂空間的檢查；取位
  *    失敗（地面不對／空間不足）就**跳過該隻** → 群可以少於 2 隻。
+ * 7. **全場上限的夾制**：加入成員的**過程中**一旦當前總數達到
+ *    {@link MAX_PASSIVE_MOBS} 就停止再加入（場上的總數**永不超過 12**；存檔也用
+ *    同一個常數 → 存／讀之間不會有生物無聲消失）。
  *
  * **被動生物不會 despawn**（spec §B4.2；原版被動生物也不會自然消失）→ 這裡
  * 沒有「離太遠就移除」的分支（那是接線層的約束，`main.ts` 也沒有距離過濾）。
@@ -672,7 +681,8 @@ export function trySpawnPassiveGroup(
   const rng = ctx.rng ?? Math.random;
   // 1) 光照門檻：亮度 ≥ 9（B4 的 `clockLight` 近似＝白天）
   if (!canSpawnPassive(ctx.light)) return unchanged(mobs);
-  // 2) 總量上限
+  // 2) 總量上限（**全場上限**：達上限就不發起這一次嘗試 → 回同一個參考；
+  //    「加入時也要夾制」見下面第 6 步的註解）
   if (mobs.length >= MAX_PASSIVE_MOBS) return unchanged(mobs);
   // 3) 母點：距玩家 28–48 格
   const mother = passiveMotherPoint(playerPos, rng);
@@ -687,6 +697,12 @@ export function trySpawnPassiveGroup(
   // 6) 成員取位：母點附近 ±2 格 → 每一隻重做地面／頭頂空間的檢查
   const created: PassiveMob[] = [];
   for (let i = 0; i < count; i++) {
+    // **全場上限（spec §B4.2「全場上限 12」）＝ 場上的總數永不超過 12** → 加入的
+    // 過程中就要夾制（不是只在「開始嘗試」時擋一次）：11 隻時生成一整群會到 15，
+    // 而存檔只留前 12 筆（Task 10，與本常數同一個）→ 存／讀之間最多 3 隻無聲
+    // 消失。夾制後**群可以只加一部分**（與「取位失敗就跳過該隻、群可以少於 2 隻」
+    // 同一個語意）。
+    if (mobs.length + created.length >= MAX_PASSIVE_MOBS) break;
     const dx = rng() * PASSIVE_SPAWN_OFFSET * 2 - PASSIVE_SPAWN_OFFSET;
     const dz = rng() * PASSIVE_SPAWN_OFFSET * 2 - PASSIVE_SPAWN_OFFSET;
     const x = mother.x + dx;
