@@ -769,10 +769,40 @@ describe('stepSunBurn — 白天燃燒', () => {
   });
 
   it('a zombie under a solid roof does not burn', () => {
-    // 頭頂格（y = 1）有實心方塊 → 太陽照不到 → 不燃、不掉血
+    // 屋簷 = **頭頂正上方那一格**：fixture 的腳底在 y = 0 → 身體占 y=0、y=1（y=1 是
+    // 牠自己的頭格），屋簷的方塊放在 y=2（腳底 +2）。2026-10-22 審查：先前只查
+    // `head`（y=1，生物自己的頭格、幾乎恆為空氣）→ 屋簷下照樣被燒死。
+    const out = stepSunBurn(mob(), sunCtxOf({ isSolidAt: (_x, y) => y === 2, dt: 1 }));
+    expect(out.burn).toBe(0);
+    expect(out.hp).toBe(20);
+  });
+
+  it('a zombie with the roof one block higher still burns', () => {
+    // 屋簷在**再高一格**（腳底 +3 = y=3）→ 太陽仍然照得到 → 會燃燒
+    // （證明遮蔽不是「上面任一格有方塊就不燃」）。
+    const out = stepSunBurn(mob(), sunCtxOf({ isSolidAt: (_x, y) => y === 3, dt: 1 }));
+    expect(out.burn).toBeGreaterThan(0);
+    expect(out.hp).toBe(19);
+  });
+
+  it('a zombie with a solid block in its own head cell does not burn', () => {
+    // 頭格（腳底 +1 = y=1）本身就是實心方塊 → 生物卡在方塊裡 → 不點燃。
     const out = stepSunBurn(mob(), sunCtxOf({ isSolidAt: (_x, y) => y === 1, dt: 1 }));
     expect(out.burn).toBe(0);
     expect(out.hp).toBe(20);
+  });
+
+  it('the roof cell follows the head cell, not the raw feet height', () => {
+    // 腳底 6.9（下落中的非整數腳底）→ 頭格 = floor(6.9 + 1.9) = 8 → 屋簷在 9。
+    // 用 `floor(pos.y + 2)` 會算成 8（＝頭格）→ 屋簷判定會錯一格。
+    const high = mob({ pos: { x: 0.5, y: 6.9, z: 0.5 } });
+    const roofed = stepSunBurn(high, sunCtxOf({ isSolidAt: (_x, y) => y === 9, dt: 1 }));
+    expect(roofed.burn).toBe(0);
+    expect(roofed.hp).toBe(20);
+    // 再高一格（y = 10）→ 照得到 → 燃燒
+    const open = stepSunBurn(high, sunCtxOf({ isSolidAt: (_x, y) => y === 10, dt: 1 }));
+    expect(open.burn).toBeGreaterThan(0);
+    expect(open.hp).toBe(19);
   });
 
   it('a zombie in water does not burn', () => {

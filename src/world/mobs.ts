@@ -443,8 +443,8 @@ export function stepMobs(
  *  - 只有**不死系**（殭屍／骷髏）會著火——被動生物不會（Task 6 的被動生物是另一個
  *    型別，完全不經過這裡）。
  *  - 只有**日光直射**時才燃燒（夜晚不燃）。
- *  - 遮蔽判定是**刻意簡化**：頭頂格是實心方塊 → 不燃；腳下格是水 → 不燃；
- *    **不判斷天氣、不判斷頭盔**。
+ *  - 遮蔽判定是**刻意簡化**：**頭頂正上方那一格是實心方塊**（屋簷／樹冠葉片）→
+ *    不燃；腳下格是水 → 不燃；**不判斷天氣、不判斷頭盔**。
  *  - `burn` 是「正在燃燒」的旗標（仍在日光下就每幀重設為 {@link SUN_BURN_SEC}），
  *    真正的死亡時間由 1 HP/s × 20 HP ≈ 20 秒決定；`burnAcc` 只在燃燒中累積，
  *    每滿 1 秒扣 {@link SUN_BURN_DPS} 點血，熄火時歸零。 */
@@ -452,8 +452,17 @@ export function stepSunBurn(m: Mob, ctx: SunBurnCtx): Mob {
   const step = Number.isFinite(ctx.dt) && ctx.dt > 0 ? ctx.dt : 0;
   const x = Math.floor(m.pos.x);
   const z = Math.floor(m.pos.z);
-  const head = Math.floor(m.pos.y + 1.9); // 頭頂格（身體高 2 格）
-  const roofed = ctx.isSolidAt(x, head, z);
+  // `head` = 身體占到的**最高格**（殭屍身高 2 格 → 腳底 0 時 y=1 是牠自己的頭格）。
+  // **遮蔽要查 `head + 1`**（腳底正上方那一格）：屋簷／樹冠的方塊放在頭格的**正
+  // 上方**（腳底 0 → 屋簷在 y=2；腳底 6 → 屋簷在 y=8）。
+  //
+  // 教訓（2026-10-22 審查）：先前**只查 `head`** → 那一格是生物自己的頭格、幾乎
+  // 恆為空氣 → **屋簷下的殭屍白天照樣被燒死**（遮蔽條款形同虛設）。
+  // 保留 `head` 那一格的理由：頭格有方塊 = 生物卡在方塊裡 → 也不點燃。
+  // 用 `head + 1` 而不是 `Math.floor(pos.y + 2)`：後者在非整數腳底時會算錯
+  // （腳底 6.9 → floor(8.9) = 8 ＝ 頭格）；`head + 1` 對整數與非整數腳底都對。
+  const head = Math.floor(m.pos.y + 1.9);
+  const roofed = ctx.isSolidAt(x, head, z) || ctx.isSolidAt(x, head + 1, z);
   const inWater = ctx.isWaterAt(x, Math.floor(m.pos.y), z);
   const burning = m.kind === 'zombie' || m.kind === 'skeleton';
   const exposed = ctx.isDaylight && !roofed && !inWater;

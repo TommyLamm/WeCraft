@@ -621,7 +621,7 @@ git commit -m "feat(drops): B4.3 生物掉落表（殭屍腐肉／骷髏骨頭�
 **設計決策（要寫進註解）**：
 - **生怪判準集中到 `spawn-rules.ts`**：`SpawnLight` 是 B6 的替換接縫——B6 只需把 `clockLight(t)` 換成「真的去世界查天空光／方塊光」，`canSpawnPassive`／`canSpawnHostile` 與整條生怪排程都不用動。`clockLight` 的 B4 近似：白天 `{ sky: 15, block: 0 }`、夜晚 `{ sky: 0, block: 0 }`（因此被動生物只在白天生成、敵對只在夜晚生成，與 spec §B4.2／§B4.4 一致）。
 - **速度**：只對齊**比例**——原版 0.25/0.23 ≈ 1.087；本作殭屍維持 3.2 格/秒（既有值），骷髏由 2.6 改為 3.5（3.2 × 1.087 ≈ 3.48）。絕對值低於原版（殭屍 4.6 格/秒）是本作既有的刻意簡化，寫進 README 差異清單。
-- **白天燃燒的遮蔽判定**（spec §B4.4 指定的簡化）：頭頂格是實心方塊就不燃；腳下格是水就不燃；不判斷天氣、不判斷頭盔。
+- **白天燃燒的遮蔽判定**（spec §B4.4 指定的簡化）：**頭頂正上方那一格是實心方塊就不燃**（腳底 +2；含屋簷與樹冠葉片）；腳下格是水就不燃；不判斷天氣、不判斷頭盔。**（2026-10-22 審查修正：原敘述「頭頂格」指的是生物自己的頭格（殭屍腳底 0 時是 y=1、恆為空氣）→ 屋簷下的殭屍照樣被燒死。）**
 - `Mob` 的 `burn`／`burnAcc` 只影響不死系（`kind === 'zombie' || kind === 'skeleton'`）；被動生物不會著火。
 
 - [ ] **Step 1: 寫測試（失敗）**
@@ -655,7 +655,10 @@ git commit -m "feat(drops): B4.3 生物掉落表（殭屍腐肉／骷髏骨頭�
   | L229 同上 | `expect(out.pos.x).toBeCloseTo(1.3, 10)` | `toBeCloseTo(1.75, 10)` |
 - 新增白天燃燒（表驅動，用獨立的 `sunCtxOf` helper：`{ isDaylight, isSolidAt, isWaterAt, dt }`）：
   - `'a zombie burns in direct sunlight under an open sky'`：`stepSunBurn(mob(), sunCtxOf({ isDaylight: true, dt: 1 }))` → `burn > 0`，且 hp 減少 1（1 秒燃燒＝1 點血）。
-  - `'a zombie under a solid roof does not burn'`：`isSolidAt` 讓頭頂格為實心 → `burn === 0`、hp 不變。
+  - `'a zombie under a solid roof does not burn'`：`isSolidAt` 讓**屋簷格（頭頂正上方、腳底 +2；fixture 的腳底在 y = 0 → 屋簷在 y = 2）**為實心 → `burn === 0`、hp 不變。**（2026-10-22 審查修正：原敘述把屋簷放在 y = 1 ＝ 生物自己的頭格 → 那是不可達的幾何狀態，只證明「頭格有方塊時不燃」，證明不了「屋簷下不燃」。）**
+  - （2026-10-22 審查補）`'a zombie with the roof one block higher still burns'`：屋簷在**再高一格**（腳底 +3 → y = 3）→ **會**燃燒（證明不是「上面任一格有方塊就不燃」）。
+  - （2026-10-22 審查補）`'a zombie with a solid block in its own head cell does not burn'`：頭格（腳底 +1 → y = 1）本身實心 → 不燃（生物卡在方塊裡）。
+  - （2026-10-22 審查補）`'the roof cell follows the head cell, not the raw feet height'`：腳底 6.9 → 頭格 = 8 → 屋簷在 9（這就是用 `head + 1` 而非 `floor(pos.y + 2)` 的理由）。
   - `'a zombie in water does not burn'`：`isWaterAt` 回 true → `burn === 0`。
   - `'a zombie at night does not burn'`：`isDaylight: false` → `burn === 0`。
   - `'burning stops when the sun goes down'`：先在白天燒 1 秒（burn > 0），再 `isDaylight: false` 步進 9 秒 → `burn === 0`。
@@ -683,8 +686,9 @@ Expected: FAIL（新模組不存在；既有生成測試因常數未改而失敗
 - `stepSunBurn(m, ctx)`（純函式）：
   ```
   const step = 有限且 > 0 的 dt，否則 0
-  const head = Math.floor(m.pos.y + 1.9);           // 頭頂格
-  const roofed = ctx.isSolidAt(floor(x), head, floor(z));
+  const head = Math.floor(m.pos.y + 1.9);           // 身體占到的最高格（殭屍＝頭格）
+  const roofed = ctx.isSolidAt(floor(x), head, floor(z))
+              || ctx.isSolidAt(floor(x), head + 1, floor(z));   // ← 屋簷在頭格「正上方」
   const inWater = ctx.isWaterAt(floor(x), floor(m.pos.y), floor(z));
   const burning = m.kind === 'zombie' || m.kind === 'skeleton';
   const exposed = ctx.isDaylight && !roofed && !inWater;
@@ -699,6 +703,13 @@ Expected: FAIL（新模組不存在；既有生成測試因常數未改而失敗
   return { ...m, burn, burnAcc: acc, hp };
   ```
   （`burnAcc` 只在燃燒中累積；熄火時歸零。）
+  **2026-10-22 審查修正（屋簷遮蔽差一格）**：原公式只查 `head`（＝生物自己的頭格，
+  殭屍腳底 0 時是 y=1、那一格在遊戲裡是空氣）→ **真正擋太陽的屋簷格（頭頂正上方、
+  腳底 +2）從未被檢查** → 屋簷下的殭屍白天照樣被燒死，遮蔽條款形同虛設。改成
+  「`head` **或** `head + 1` 是實心方塊就不燃」：保留 `head` 是因為頭格有方塊＝生物
+  卡在方塊裡（也不點燃）；屋簷則在 `head + 1`（腳底 0 → 屋簷 y=2；腳底 6 → 屋簷 y=8）。
+  用 `head + 1` 而不是 `Math.floor(m.pos.y + 2)`：後者在非整數腳底時會算錯（腳底 6.9
+  → floor(8.9) = 8 ＝ 頭格）。
 - `trySpawnMob` 的閘門：`if (!canSpawnHostile(ctx.light)) return null;`（取代 `if (!ctx.isNight) return null;`），`SpawnCtx` 改欄位。
 - 檔頭註解補上「白天燃燒」與「生成距離 24–128／上限 12／despawn 128」的現況描述（舊註解寫著「no dayburn — distance only」，必須刪掉）。
 
@@ -1397,7 +1408,7 @@ git commit -m "feat(audio): B4.5 被動生物叫聲（程序合成，加分項�
   - 生物生成以「白天／夜晚」近似原版的亮度判準（B6 換成真光照）。
   - 怪物移動速度低於原版（本作殭屍 3.2 格/秒，原版約 4.6；骷髏 3.5 vs 約 5.0），但比例對齊原版。
   - 被動生物移動速度同樣低於原版（牛 1.5／羊 1.7／雞豬 1.9 格/秒，原版比例對齊）。
-  - 白天燃燒的遮蔽判定簡化為「頭頂無實心方塊」；不判斷天氣與頭盔。
+  - 白天燃燒的遮蔽判定簡化：只要**頭頂正上方一格是實心方塊（含樹冠葉片）就不燃**，不判斷天空光強度、不判天氣、不判頭盔。（2026-10-22 審查修正：原句「頭頂無實心方塊」指的是生物自己的頭格 → 屋簷下的殭屍照樣被燒死。）
   - 燃料以「可覆蓋冶煉次數」計（小數），非原版的連續燃燒計時器。
   - 生肉熟食掉落只在生物燃燒死亡時發生——本作沒有生物著火，故一律掉生肉。
   - 腐肉的「飢餓」狀態效果未實作（本作沒有狀態效果系統）；**生雞肉 30% 機率的「飢餓」狀態效果同樣未實作**（2026-10-20 稽核修正：原計畫只列了腐肉）。
