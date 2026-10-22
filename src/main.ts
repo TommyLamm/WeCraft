@@ -2521,8 +2521,8 @@ gs.renderer.setAnimationLoop(() => {
     // dead mobs despawn past 128 blocks (超距的生物不是死的 → 不掉東西)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });
-    // 近戰當場殺掉的那一批已經在近戰支裡掉過了（那一支會立刻把死掉的生物從
-    // `mobs` 移走 → 這裡看不到牠 → 不會重複掉）。
+    // 不會重複掉：近戰支與這一支都**同步**把死掉的生物從 `mobs` 移走 → 每一隻死掉的
+    // 生物只會被其中一支看到（這一支先跑、近戰支後跑）→ 不會掉兩次。
     if (spilled) bus.emit('drops-changed', {});
 
     // ---- 生存值（Task 9）：sprint/jump exhaustion + regen/starve tick ----

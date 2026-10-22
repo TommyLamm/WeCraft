@@ -203,7 +203,7 @@ export function xzDistance(
 }
 
 /** True when the mob has no hp left — callers filter these out of the list
- *  (no mob loot this phase: the body just disappears). */
+ *  (corpse removed by the caller; loot granted by `dropsForDeaths`). */
 export function isDead(m: Mob): boolean {
   return m.hp <= 0;
 }

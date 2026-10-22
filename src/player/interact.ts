@@ -18,7 +18,7 @@ import { damageMob, type Mob } from '../world/mobs';
  *  iron_ore → raw_iron; grass → dirt; leaves/glass/snow → nothing). Pickup is
  *  proximity-based (main loop + `pickable`/`pickup`).
  *
- *  **機率掉落（B4 Task 4）**：橡木樹葉有 0.5% 機率掉 1 顆蘋果（`chanceDropFor`）。
+ *  **機率掉落（B4 Task 4）**：橡木葉與白樺葉有 0.5% 機率掉 1 顆蘋果（`chanceDropFor`）；
  *  它**不受 `dropItemFor` 回 null 的影響**（樹葉本體不掉，但機率掉落照算），
  *  但**仍受創造模式與收穫門檻約束**（創造模式不產生任何掉落；收穫門檻管的是
  *  「這一次破壞有沒有收穫」）。`rng` 可注入 → 測試能釘住 0.5% 這個門檻。
