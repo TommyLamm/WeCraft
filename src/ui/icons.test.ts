@@ -28,6 +28,15 @@ const B4_ITEM_IDS = [
  *  否則會掉進 `default:` 的灰色 placeholder（從 items.ts 的現況算出來，不是手抄）。 */
 const NON_BLOCK_ITEM_IDS = ALL_ITEM_IDS.filter((id) => blockFromItem(id) === null);
 
+/** B5 Task 2：14 個需要專屬像素圖的新 id（3 個原料 ＋ 11 把工具）。
+ *  本批的方塊物品（礫石／金鑽礦／雲杉白樺板材）走圖集裁切，不在這份清單。 */
+const B5_NEEDS_ART = [
+  'raw_gold', 'gold_ingot', 'diamond',
+  'wooden_shovel', 'stone_shovel', 'iron_shovel',
+  'golden_pickaxe', 'golden_axe', 'golden_sword', 'golden_shovel',
+  'diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel',
+] as const;
+
 /** 在原始碼裡找到名為 `name` 的頂層函式宣告（找不到 → undefined）。 */
 function findFunction(source: string, name: string): ts.FunctionDeclaration | undefined {
   const file = ts.createSourceFile('icons.ts', source, ts.ScriptTarget.Latest, true);
@@ -69,6 +78,17 @@ describe('icons', () => {
     // 「case 標籤真的在那個 switch 裡」，不會被註解裡的字串欺騙。
     const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
     for (const id of B4_ITEM_IDS) {
+      expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
+    }
+  });
+
+  it('every B5 non-block item id has its own icon branch', () => {
+    // B5 Task 2 的 14 個新 id 逐一點名（與上面的動態守門互補：這裡也順便證明
+    // 它們真的沒有方塊物品形式，所以不可能靠圖集裁切蒙混過關）。
+    const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
+    expect(B5_NEEDS_ART).toHaveLength(14);
+    for (const id of B5_NEEDS_ART) {
+      expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
       expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
     }
   });

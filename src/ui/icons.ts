@@ -82,6 +82,22 @@ const STONE_GRAY = '#9a9a9a';
 // obvious against wood '#d8d8d8' and still apart from stone '#9a9a9a'.
 const IRON_GRAY = '#7f8fa1';
 
+/** B5 Task 2：工具材質 → 頭部／亮面色票。木／石／鐵沿用既有色；金／鑽是本批新增。
+ *  每個工具家族仍保留自己的 `case` 標籤（測試靠 AST 掃標籤確認沒有掉進 placeholder）。 */
+type ToolMaterial = 'wooden' | 'stone' | 'iron' | 'golden' | 'diamond';
+const TOOL_COLORS: Record<ToolMaterial, { head: string; edge: string }> = {
+  wooden: { head: WOOD_LIGHT, edge: '#d8d8d8' },
+  stone: { head: STONE_GRAY, edge: '#c6c6c6' },
+  iron: { head: IRON_GRAY, edge: '#b9c6d4' },
+  golden: { head: '#f0c83c', edge: '#ffe89a' },
+  diamond: { head: '#78dce8', edge: '#bff2f7' },
+};
+
+/** 從 `golden_pickaxe` 這類 id 取材質前綴；五個工具家族都有對應色票。 */
+function toolColors(item: ItemId): { head: string; edge: string } {
+  return TOOL_COLORS[item.slice(0, item.indexOf('_')) as ToolMaterial];
+}
+
 function line(
   ctx: CanvasRenderingContext2D,
   x1: number, y1: number, x2: number, y2: number,
@@ -164,6 +180,59 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fillRect(11, 20, 3, 3);
       break;
     }
+    case 'raw_gold': {
+      // 不規則金黃色團塊（比照 raw_iron 的三顆礦塊寫法）
+      ctx.fillStyle = '#f0c83c';
+      ctx.beginPath();
+      ctx.arc(13, 14, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(20, 12, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#c99a1e';
+      ctx.beginPath();
+      ctx.arc(19, 20, 4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'gold_ingot': {
+      // 梯形金條（比照 iron_ingot）：金黃底 ＋ 下緣陰影 ＋ 頂面高光
+      ctx.fillStyle = '#f7d774';
+      ctx.beginPath();
+      ctx.moveTo(10, 12);
+      ctx.lineTo(22, 12);
+      ctx.lineTo(27, 22);
+      ctx.lineTo(5, 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#c99a1e';
+      ctx.fillRect(5, 19, 22, 3);
+      ctx.fillStyle = '#ffe89a';
+      ctx.fillRect(10, 12, 12, 3);
+      break;
+    }
+    case 'diamond': {
+      // 菱形寶石：四邊形填色 ＋ 深色邊 ＋ 上緣亮面
+      ctx.fillStyle = '#78dce8';
+      ctx.beginPath();
+      ctx.moveTo(16, 4);
+      ctx.lineTo(27, 14);
+      ctx.lineTo(16, 28);
+      ctx.lineTo(5, 14);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#3f9aa6';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#bff2f7';
+      ctx.beginPath();
+      ctx.moveTo(16, 7);
+      ctx.lineTo(22, 13);
+      ctx.lineTo(16, 13);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
     case 'apple': {
       ctx.fillStyle = '#d43b3b';
       ctx.beginPath();
@@ -199,9 +268,10 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
     }
     case 'wooden_pickaxe':
     case 'stone_pickaxe':
-    case 'iron_pickaxe': {
-      const head =
-        item === 'iron_pickaxe' ? IRON_GRAY : item === 'stone_pickaxe' ? STONE_GRAY : WOOD_LIGHT;
+    case 'iron_pickaxe':
+    case 'golden_pickaxe':
+    case 'diamond_pickaxe': {
+      const { head } = toolColors(item);
       line(ctx, 10, 26, 20, 10, WOOD, 3);
       ctx.strokeStyle = head;
       ctx.lineWidth = 5;
@@ -214,8 +284,10 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
     }
     case 'wooden_axe':
     case 'stone_axe':
-    case 'iron_axe': {
-      const head = item === 'iron_axe' ? IRON_GRAY : item === 'stone_axe' ? STONE_GRAY : WOOD_LIGHT;
+    case 'iron_axe':
+    case 'golden_axe':
+    case 'diamond_axe': {
+      const { head } = toolColors(item);
       line(ctx, 10, 26, 19, 11, WOOD, 3);
       ctx.fillStyle = head;
       ctx.beginPath();
@@ -227,11 +299,32 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fill();
       break;
     }
+    case 'wooden_shovel':
+    case 'stone_shovel':
+    case 'iron_shovel':
+    case 'golden_shovel':
+    case 'diamond_shovel': {
+      // 鏟：木柄 ＋ 小梯形鏟頭（材質分色）
+      const { head } = toolColors(item);
+      line(ctx, 10, 26, 16, 10, WOOD, 3);
+      ctx.fillStyle = head;
+      ctx.beginPath();
+      ctx.moveTo(12, 10);
+      ctx.lineTo(21, 6);
+      ctx.lineTo(24, 12);
+      ctx.lineTo(15, 16);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
     case 'wooden_sword':
     case 'stone_sword':
-    case 'iron_sword': {
-      const blade =
-        item === 'iron_sword' ? IRON_GRAY : item === 'stone_sword' ? STONE_GRAY : '#d8d8d8';
+    case 'iron_sword':
+    case 'golden_sword':
+    case 'diamond_sword': {
+      // 木劍沿用既有淺色刃；其餘材質用頭部色（石／鐵維持既有外觀）
+      const { head, edge } = toolColors(item);
+      const blade = item.startsWith('wooden') ? edge : head;
       line(ctx, 22, 8, 12, 18, blade, 4);
       line(ctx, 9, 15, 15, 21, WOOD, 3); // guard, perpendicular to blade
       line(ctx, 12, 18, 8, 22, WOOD, 3); // handle

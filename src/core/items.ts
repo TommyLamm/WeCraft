@@ -34,7 +34,14 @@ export type ItemId =
   // 物品形式、每個 PLACEABLE 都要有物品形式）會在方塊落地後**立刻紅**——方塊與它的
   // 物品形式必須同時落地（B3 Task 3 也是同一條規則）。'gravel' 本來就在 union 裡
   // （B1 留下的 dead id），這批只是把它接上方塊 27，不新增 id。
-  | 'gold_ore' | 'diamond_ore' | 'spruce_planks' | 'birch_planks';
+  | 'gold_ore' | 'diamond_ore' | 'spruce_planks' | 'birch_planks'
+  // B5 Task 2：原料（生金／金錠／鑽石）與新工具（金／鑽鎬斧劍鏟 ＋ 木石鐵鏟）。
+  // 金／鑽工具是採掘等級表（Task 3）與配方（Task 4）的原料；鏟讓礫石／沙等
+  // shovel-fast 方塊終於有對應工具（先前只能空手慢慢挖）。
+  | 'raw_gold' | 'gold_ingot' | 'diamond'
+  | 'wooden_shovel' | 'stone_shovel' | 'iron_shovel'
+  | 'golden_pickaxe' | 'golden_axe' | 'golden_sword' | 'golden_shovel'
+  | 'diamond_pickaxe' | 'diamond_axe' | 'diamond_sword' | 'diamond_shovel';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -62,10 +69,16 @@ const ITEM_IDS: Record<ItemId, true> = {
   leather: true, feather: true, rotten_flesh: true, bone: true,
   // B5 Task 1：本批 5 個新方塊的物品形式（4 個新 id；'gravel' 是既有的 dead id）
   gold_ore: true, diamond_ore: true, spruce_planks: true, birch_planks: true,
+  // B5 Task 2：3 個原料 ＋ 11 把新工具
+  raw_gold: true, gold_ingot: true, diamond: true,
+  wooden_shovel: true, stone_shovel: true, iron_shovel: true,
+  golden_pickaxe: true, golden_axe: true, golden_sword: true, golden_shovel: true,
+  diamond_pickaxe: true, diamond_axe: true, diamond_sword: true, diamond_shovel: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 58 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
- *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品）。 */
+/** 全部 ItemId 的正規清單（目前 72 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+ *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
+ *  ＋ B5 Task 2 補的 3 個原料與 11 把工具）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }
@@ -102,7 +115,9 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['ice', BLOCK.ICE],
   // B4 Task 1：羊毛的方塊物品形式（羊掉羊毛 → 物品必須存在）
   ['wool', BLOCK.WOOL],
-  // B5 Task 1：本批 5 個新方塊的物品形式（與方塊同一個 commit —— 見上方 union 的註解）
+  // B5 Task 1：本批 5 個新方塊的物品形式（與方塊同一個 commit —— 見上方 union 的註解）。
+  // B5 起礫石／金鑽礦／雲杉白樺板材有物品形式；雲杉白樺原木、樹葉、花草、冰的
+  // 物品形式由 B3 補（已在上方），羊毛由 B4 補（已在上方）。
   ['gravel', BLOCK.GRAVEL],
   ['gold_ore', BLOCK.GOLD_ORE],
   ['diamond_ore', BLOCK.DIAMOND_ORE],
@@ -117,6 +132,10 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
   'wooden_axe', 'stone_axe', 'iron_axe',
   'wooden_sword', 'stone_sword', 'iron_sword',
+  // B5 Task 2：11 把新工具（金／鑽鎬斧劍鏟 ＋ 木石鐵鏟）——工具與武器一律堆疊 1。
+  'wooden_shovel', 'stone_shovel', 'iron_shovel',
+  'golden_pickaxe', 'golden_axe', 'golden_sword', 'golden_shovel',
+  'diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel',
 ]);
 
 export function maxStack(item: ItemId): number {

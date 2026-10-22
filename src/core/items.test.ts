@@ -28,10 +28,17 @@ const BLOCK_ITEMS: ItemId[] = [
   // → 本批只是把它接上方塊，不新增 id）
   'gold_ore', 'diamond_ore', 'spruce_planks', 'birch_planks',
 ];
+/** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
+const B5_TOOL_ITEMS: ItemId[] = [
+  'wooden_shovel', 'stone_shovel', 'iron_shovel',
+  'golden_pickaxe', 'golden_axe', 'golden_sword', 'golden_shovel',
+  'diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel',
+];
 const TOOL_ITEMS: ItemId[] = [
   'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe',
   'wooden_axe', 'stone_axe', 'iron_axe',
   'wooden_sword', 'stone_sword', 'iron_sword',
+  ...B5_TOOL_ITEMS,
 ];
 const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'raw_iron', 'arrow', 'apple'];
 /** B4 Task 1：生／熟肉與腐肉（食物值表在 Task 2；熟牛肉的 id 是 'steak'）。 */
@@ -42,8 +49,10 @@ const FOOD_ITEMS: ItemId[] = [
   'raw_beef', 'steak',
   'rotten_flesh',
 ];
-/** B4 Task 1：材料（皮革／羽毛／骨頭）——不是食物、也不是工具。 */
-const MATERIAL_ITEMS: ItemId[] = ['leather', 'feather', 'bone'];
+/** B5 Task 2：3 個新原料（生金／金錠／鑽石）——不是方塊、也不是工具。 */
+const B5_MATERIAL_ITEMS: ItemId[] = ['raw_gold', 'gold_ingot', 'diamond'];
+/** B4 Task 1：材料（皮革／羽毛／骨頭）＋ B5 Task 2 的 3 個原料——不是食物、也不是工具。 */
+const MATERIAL_ITEMS: ItemId[] = ['leather', 'feather', 'bone', ...B5_MATERIAL_ITEMS];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
@@ -56,9 +65,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
 /** 物品總數（**單一真相**）：動工前讀到的現況值 41 ＝ 36 個既有 ＋ B3 Task 4 補的 5 個物品形式，
  *  B4 Task 1 再補 13 個（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）＝ 54。
  *  B5 Task 1 再補 4 個（本批 5 個新方塊的物品形式；礫石 'gravel' 是 B1 留下的 dead id，
- *  **不新增** id，只是接上方塊）→ 58。B5 Task 2 的工具／原料再往上加。
+ *  **不新增** id，只是接上方塊）→ 58。
+ *  B5 Task 2 再補 14 個（3 個原料 ＋ 11 把工具）→ **72**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 58;
+const TOTAL_ITEM_COUNT = 72;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -100,7 +110,7 @@ describe('items', () => {
       expect(sanitizeStack({ item: id, count: 2 })).toEqual({ item: id, count: 2 });
       expect(maxStack(id)).toBe(64);
     }
-    // 本批新增 13 個 id（清單與計數常數同一組數字）；總數 54 由 TOTAL_ITEM_COUNT 把關
+    // 本批新增 13 個 id（清單與計數常數同一組數字）；總數由 TOTAL_ITEM_COUNT 把關
     expect(B4_ITEM_IDS).toHaveLength(B4_ITEM_COUNT);
   });
 
@@ -130,6 +140,39 @@ describe('items', () => {
     expect(stackFromBlock(BLOCK.DIAMOND_ORE)).toEqual({ item: 'diamond_ore', count: 64 });
     expect(maxStack('spruce_planks')).toBe(64);
     expect(maxStack('gold_ore')).toBe(64);
+  });
+
+  it('the new block items are the item form of their blocks', () => {
+    expect(blockFromItem('gravel')).toBe(BLOCK.GRAVEL);
+    expect(blockFromItem('gold_ore')).toBe(BLOCK.GOLD_ORE);
+    expect(blockFromItem('diamond_ore')).toBe(BLOCK.DIAMOND_ORE);
+    expect(blockFromItem('spruce_planks')).toBe(BLOCK.SPRUCE_PLANKS);
+    expect(blockFromItem('birch_planks')).toBe(BLOCK.BIRCH_PLANKS);
+  });
+
+  // ---- B5 Task 2：3 個原料 ＋ 11 把新工具（物品表 58 → 72）----
+
+  it('the raw materials are not blocks and stack to 64', () => {
+    expect(blockFromItem('raw_gold')).toBeNull();
+    expect(blockFromItem('gold_ingot')).toBeNull();
+    expect(blockFromItem('diamond')).toBeNull();
+    expect(maxStack('raw_gold')).toBe(64);
+    expect(maxStack('gold_ingot')).toBe(64);
+    expect(maxStack('diamond')).toBe(64);
+  });
+
+  it('every new tool stacks to 1', () => {
+    // 11 個新工具逐一驗證（金／鑽全套 ＋ 木石鐵鏟）
+    expect(B5_TOOL_ITEMS).toHaveLength(11);
+    for (const tool of B5_TOOL_ITEMS) expect(maxStack(tool)).toBe(1);
+  });
+
+  it('the new raw materials and tools are known, sanitizable ids', () => {
+    for (const id of [...B5_MATERIAL_ITEMS, ...B5_TOOL_ITEMS]) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1 });
+      expect(blockFromItem(id)).toBeNull();
+    }
   });
 
   it('the cooked beef item id is steak (原版命名)', () => {
