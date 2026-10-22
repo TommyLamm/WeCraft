@@ -337,7 +337,7 @@ export function createPassiveMobRenderer(scene: THREE.Scene): PassiveMobRenderer
       const entry = mobs.get(id);
       if (!entry) return;
       entry.flash = FLASH_SEC;
-      // **立刻**變白（不等下一幀的 sync）→ 玩家揮下去的那一帧就看得到閃白。
+      // **立刻**變白（不等下一幀的 sync）→ 玩家揮下去的那一幀就看得到閃白。
       for (const m of entry.materials) m.emissive.setHex(0xffffff);
     },
 
