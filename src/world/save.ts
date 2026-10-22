@@ -2,11 +2,14 @@
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 // B1.3: payload v3 (dual-mode stash) + v1/v2→v3 migration in `loadGame`.
+// B5 Task 7: payload v4 (36-slot inventory: hotbar row 0..8 + 27 main slots)
+// + v1/v2/v3→v4 migration. Old 9-slot records keep their entries in the SAME
+// positions (the hotbar row); the new main slots load as null.
 // B3 Task 7：附加欄位 `worldgenVersion`——payload 版本**維持 3**（舊版程式會直接
 // 忽略不認識的欄位），只多蓋一個版本戳記而已。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
-import type { ItemStack } from '../core/items';
+import { INVENTORY_SLOTS, sanitizeSlots, type ItemStack } from '../core/items';
 import { normalizeModeStash, type ModeStash, type StashPayload } from '../core/mode-stash';
 import {
   emptyAdvancements,
@@ -45,11 +48,9 @@ export interface SavePayloadV2 extends Omit<SavePayloadV1, 'version'> {
 	advancements: AdvancementState;
 }
 
-/** Current payload (B1.3): v2 plus the per-mode stash — the hotbar of the mode
- *  you are NOT in, and the survival vitals. `loadGame` ALWAYS returns this
- *  shape: v1 records migrate with empty advancements, v1/v2 records get a stash
- *  derived from the mode/inventory/vitals they recorded, and a v3 record's
- *  stash is sanitized against the current item table. */
+/** Legacy v3 payload (B1.3): v2 plus the per-mode stash — the 9-slot hotbar of
+ *  the mode you are NOT in, and the survival vitals. Kept for the migration
+ *  path; `loadGame` upgrades it to v4 and pads both inventories to 36 slots. */
 export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	version: 3;
 	stash: StashPayload;
@@ -69,20 +70,30 @@ export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	passiveMobs?: PassiveMobRecord[];
 }
 
+/** Current payload (B5 Task 7): v3 plus the 36-slot inventory semantics — the
+ *  first 9 slots are the hotbar row (hand-held range 0..8), the remaining 27
+ *  are the main inventory. `SavePayloadV4 extends Omit<SavePayloadV3,
+ *  'version'>` on purpose: every additive field B3/B4 introduced (notably
+ *  `worldgenVersion` and `passiveMobs`) is inherited, so the v3→v4 migration
+ *  cannot silently drop them. */
+export interface SavePayloadV4 extends Omit<SavePayloadV3, 'version'> {
+	version: 4;
+}
+
 /** The shape written to / read from the single local slot. */
-export type SavePayload = SavePayloadV3;
+export type SavePayload = SavePayloadV4;
 
 /**
- * v3 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
+ * v4 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
  *
  * B4 Task 10：`loadGame`（讀取端）與 `collectSavePayload`（寫出端）**一律**帶這個
  * 鍵 → 用這個型別把「一定有」表達出來，呼叫端不必寫 `?? []` 或「有沒有這個鍵」
  * 的分支。磁碟上的**舊**記錄仍然可以沒有這個欄位 → 那由 `loadGame` 的正規化補上
  * （空陣列 ＝ 沒有生物，不是壞檔）。
  *
- * 它是 {@link SavePayload}（＝`SavePayloadV3`）的**子型** → 既有呼叫端
+ * 它是 {@link SavePayload}（＝`SavePayloadV4`）的**子型** → 既有呼叫端
  * （`saveGame(payload: SavePayload)` 等）完全不受影響。 */
-export interface SavePayloadWithPassiveMobs extends SavePayloadV3 {
+export interface SavePayloadWithPassiveMobs extends SavePayloadV4 {
 	passiveMobs: PassiveMobRecord[];
 }
 
@@ -122,7 +133,7 @@ export interface SaveSources {
  *  是唯一會蓋值的地方（讀取端從不補值，所以舊存檔仍然看得出是舊存檔）。 */
 export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMobs {
 	return {
-		version: 3,
+		version: 4,
 		savedAt: args.savedAt ?? Date.now(),
 		worldSeed: args.world.seed,
 		modified: args.world.serializeModified(),
@@ -131,7 +142,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 			yaw: args.player.yaw,
 			mode: args.player.mode,
 			vitals: args.vitals ? { ...args.vitals } : null,
-			inventory: args.player.inventory.map((s) => (s ? { ...s } : null)),
+			// B5 Task 7：一律 36 格（不足補 null、超過截斷）且逐格深拷貝。
+			inventory: sanitizeSlots(args.player.inventory, INVENTORY_SLOTS),
 		},
 		time: { t: args.clockT },
 		advancements: {
@@ -139,8 +151,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 			nightSeen: args.advancements.nightSeen,
 		},
 		stash: {
-			survival: args.stash.survival.map((s) => (s ? { ...s } : null)),
-			creative: args.stash.creative.map((s) => (s ? { ...s } : null)),
+			survival: sanitizeSlots(args.stash.survival, INVENTORY_SLOTS),
+			creative: sanitizeSlots(args.stash.creative, INVENTORY_SLOTS),
 			survivalVitals: { ...args.stash.survivalVitals },
 		},
 		worldgenVersion: WORLDGEN_VERSION,
@@ -150,11 +162,12 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 	};
 }
 
-/** Shape-validate an unknown value as a v1, v2 or v3 save payload (review #2;
- *  Task 11 widened the accepted versions to v1/v2, B1.3 to v3 — older records
- *  migrate in loadGame). IndexedDB records can be written by an older or broken
- *  build — continueGame trusts this shape completely (destructuring, setBlock
- *  keys, DOM writes), so a record must prove: object, version ∈ {1, 2, 3}, a
+/** Shape-validate an unknown value as a v1, v2, v3 or v4 save payload (review
+ *  #2; Task 11 widened the accepted versions to v1/v2, B1.3 to v3, B5 Task 7
+ *  to v4 — older records migrate in loadGame). IndexedDB records can be
+ *  written by an older or broken build — continueGame trusts this shape
+ *  completely (destructuring, setBlock keys, DOM writes), so a record must
+ *  prove: object, version ∈ {1, 2, 3, 4}, a
  *  player with a finite pos triple and finite yaw (a NaN yaw would reach camera
  *  render state without ever throwing), mode ∈ {survival, creative}, an
  *  inventory of null | {item: string, count: finite number}, vitals
@@ -170,10 +183,12 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
  *  （既不放寬也不收緊）：沒有這個欄位的舊 v1/v2/v3 記錄照樣通過；帶著髒值（`'x'`）
  *  的記錄也照樣被讀出來（讀取端會把該鍵剝除，而不是整筆拒收）。
  *  Pure: exported for tests, called by loadGame. */
-export function isValidSavePayload(x: unknown): x is SavePayloadV1 | SavePayloadV2 | SavePayload {
+export function isValidSavePayload(
+	x: unknown,
+): x is SavePayloadV1 | SavePayloadV2 | SavePayloadV3 | SavePayloadV4 {
 	if (typeof x !== 'object' || x === null) return false;
 	const r = x as Partial<SavePayloadV1>;
-	if (r.version !== 1 && r.version !== 2 && r.version !== 3) return false;
+	if (r.version !== 1 && r.version !== 2 && r.version !== 3 && r.version !== 4) return false;
 	// player: pos triple + yaw + mode + inventory + vitals
 	const p = r.player as SavePayloadV1['player'] | undefined;
 	if (typeof p !== 'object' || p === null) return false;
@@ -249,16 +264,21 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 }
 
 /** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
- *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3): a supported-version
- *  record with a broken shape (missing player, non-finite pos, bad mode, NaN
- *  clock, …) reads as "no save". ALWAYS returns a normalized v3 payload:
+ *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3, v4 B5 Task 7): a
+ *  supported-version record with a broken shape (missing player, non-finite
+ *  pos, bad mode, NaN clock, …) reads as "no save". ALWAYS returns a
+ *  normalized v4 payload (36-slot inventory: hotbar row 0..8 + 27 main slots):
  *  - v1 migrates to `{...v1, version: 2, advancements: emptyAdvancements()}`
  *    first (old saves keep loading; progress starts fresh), then the stash is
  *    derived from the recorded mode/inventory/vitals;
  *  - v2's advancements are sanitized against the current table and its stash is
  *    derived the same way (no stash exists in those records);
  *  - v3's stash is sanitized (`normalizeModeStash`), so a short/unknown-item
- *    stash loads as the canonical 9-slot shape.
+ *    stash loads as the canonical 36-slot shape;
+ *  - every version's `player.inventory` is sanitized with `sanitizeSlots(...,
+ *    INVENTORY_SLOTS)`: old 9-slot records keep their entries in the SAME
+ *    positions (the hotbar row), the 27 main slots load as null, and a longer
+ *    array is truncated.
  *  Vitals written before `exhaustion` existed (or otherwise malformed) run
  *  through survival.ts `normalizeVitals` — for the live player AND for the
  *  stash's survival snapshot — so the live model always sees the full shape.
@@ -276,17 +296,18 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
 			if (!isValidSavePayload(value)) return null;
-			// Migration chain: v1 → v2 (advancements) → v3 (stash). The stash is
-			// read off the RAW record (only v3 has one) so v1/v2 can derive it from
-			// the fields they actually stored.
+			// Migration chain: v1 → v2 (advancements) → v3 (stash) → v4 (36 slots).
+			// The stash is read off the RAW record (only v3+ has one) so v1/v2 can
+			// derive it from the fields they actually stored. The v4 spread keeps
+			// every additive field (worldgenVersion, passiveMobs, …) intact.
 			const v2: SavePayloadV2 =
 				value.version === 1
 					? { ...value, version: 2, advancements: emptyAdvancements() }
 					: { ...value, version: 2, advancements: sanitizeAdvancements(value.advancements) };
-			const migrated: SavePayloadV3 = {
+			const v3: SavePayloadV3 = {
 				...v2,
 				version: 3,
-				stash: normalizeModeStash((value as Partial<SavePayload>).stash, {
+				stash: normalizeModeStash((value as Partial<SavePayloadV4>).stash, {
 					mode: value.player.mode,
 					inventory: value.player.inventory,
 					vitals: value.player.vitals,
@@ -295,6 +316,15 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 					...v2.player,
 					vitals:
 						v2.player.vitals === null ? null : normalizeVitals(v2.player.vitals),
+				},
+			};
+			const migrated: SavePayloadV4 = {
+				...v3,
+				version: 4,
+				player: {
+					...v3.player,
+					// 舊 9 格留在前 9 格（熱鍵列）；不足補 null、超過截斷。
+					inventory: sanitizeSlots(v3.player.inventory, INVENTORY_SLOTS),
 				},
 			};
 			// B3 Task 7：附加欄位 `worldgenVersion` 的三條規則——

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createCrafting, mountCrafting, type CraftingParams } from './crafting';
 import { createInventory } from './inventory';
-import type { ItemId, ItemStack } from '../core/items';
+import { INVENTORY_SLOTS, type ItemId, type ItemStack } from '../core/items';
 
 beforeEach(() => {
   document.getElementById('ui-root')?.remove();
@@ -83,6 +83,22 @@ describe('crafting section (embedded)', () => {
     expect(root().querySelector('.ui-craft-grid.size-2')).not.toBeNull();
     unmount();
     expect(root().querySelector('.ui-craft')).toBeNull();
+  });
+
+  it('renders only the first 9 source slots when the inventory is 36 wide', () => {
+    // B5 Task 7：背包變成 36 格，但合成來源列在 Task 8 之前暫時維持前 9 格
+    // （熱鍵列）——不能把 27 格主背包也畫進來。
+    const { params } = harness(2);
+    const wide: Array<ItemStack | null> = [
+      ...params.hotbar,
+      ...new Array(INVENTORY_SLOTS - params.hotbar.length).fill(null),
+    ];
+    wide[INVENTORY_SLOTS - 1] = { item: 'diamond', count: 64 };
+    expect(wide).toHaveLength(INVENTORY_SLOTS);
+    mountCrafting(root(), { ...params, hotbar: wide });
+    expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
+    expect(root().querySelector('[data-slot="9"]')).toBeNull();
+    expect(root().querySelector('[data-slot="35"]')).toBeNull();
   });
 
   it('3×3 renders 9 grid slots', () => {

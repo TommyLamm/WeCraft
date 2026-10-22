@@ -9,11 +9,12 @@ import {
   type SavePayload,
   type SavePayloadV1,
   type SavePayloadV2,
+  type SavePayloadV3,
 } from './save';
 import { createVitals } from '../player/survival';
 import { emptyAdvancements } from '../core/advancements';
 import { createModeStash, type ModeStash } from '../core/mode-stash';
-import { starterSlots, type ItemStack } from '../core/items';
+import { starterSlots, INVENTORY_SLOTS, type ItemStack } from '../core/items';
 import { WORLDGEN_VERSION } from './worldgen';
 import { createPassiveMob } from './passive-mobs';
 
@@ -21,9 +22,14 @@ import { createPassiveMob } from './passive-mobs';
  *  test can delete the whole database between cases without exporting it. */
 const DB_NAME = 'wecraft-save';
 
-/** Hotbar-shaped slots: `items` padded with nulls to the 9-slot width — payloads
- *  are stored canonical, so a v3 round-trip can deep-equal. */
+/** Inventory-shaped slots: `items` padded with nulls to the 36-slot width —
+ *  v4 payloads are stored canonical, so a round-trip can deep-equal. */
 function slots(...items: Array<ItemStack | null>): Array<ItemStack | null> {
+  return [...items, ...new Array(INVENTORY_SLOTS - items.length).fill(null)];
+}
+
+/** The OLD 9-slot shape a pre-B5 record actually wrote (v1/v2/v3 fixtures). */
+function legacySlots(...items: Array<ItemStack | null>): Array<ItemStack | null> {
   return [...items, ...new Array(9 - items.length).fill(null)];
 }
 
@@ -38,7 +44,7 @@ function deleteSaveDb(): Promise<void> {
 
 function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
   return {
-    version: 3,
+    version: 4,
     savedAt: 0, // saveGame must stamp its own value
     worldSeed: 1337,
     modified: [
@@ -50,7 +56,11 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
       yaw: 0.75,
       mode: 'survival',
       vitals: createVitals(),
-      inventory: [{ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }],
+      inventory: slots(
+        { item: 'stone', count: 32 },
+        null,
+        { item: 'wooden_pickaxe', count: 1 },
+      ),
     },
     time: { t: 0.42 },
     // non-empty, so the round-trip deep-equal actually exercises progress state
@@ -113,6 +123,31 @@ function makeV2Payload(): SavePayloadV2 {
   };
 }
 
+/** A raw v3 record exactly as a pre-B5 build wrote it (9-slot inventory,
+ *  dual-mode stash, advancements). */
+function makeV3Payload(): SavePayloadV3 {
+  return {
+    version: 3,
+    savedAt: 0,
+    worldSeed: 1337,
+    modified: [['5,70,5', 1]],
+    player: {
+      pos: [1.5, 64, -3.25],
+      yaw: 0.75,
+      mode: 'survival',
+      vitals: createVitals(),
+      inventory: [{ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }],
+    },
+    time: { t: 0.42 },
+    advancements: { done: { getting_wood: true }, nightSeen: false },
+    stash: {
+      survival: legacySlots({ item: 'dirt', count: 3 }),
+      creative: legacySlots({ item: 'stone', count: 64 }),
+      survivalVitals: { ...createVitals(), hp: 12 },
+    },
+  };
+}
+
 /** Create the save DB at a version save.ts cannot open → every save.ts call fails. */
 function createIncompatibleDb(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -161,12 +196,14 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.savedAt).toBeLessThanOrEqual(after);
   });
 
-  it('round-trips null vitals and an empty inventory', async () => {
+  it('round-trips null vitals and an empty inventory (padded to 36 slots)', async () => {
     const base = makePayload();
     await saveGame({ ...base, player: { ...base.player, vitals: null, inventory: [] } });
     const loaded = await loadGame();
     expect(loaded?.player.vitals).toBeNull();
-    expect(loaded?.player.inventory).toEqual([]);
+    // B5 Task 7：本機 payload 一律回傳 36 格（空記錄＝36 個 null）。
+    expect(loaded?.player.inventory).toEqual(slots());
+    expect(loaded?.player.inventory).toHaveLength(INVENTORY_SLOTS);
   });
 
   it('round-trips a creative-mode payload', async () => {
@@ -197,7 +234,7 @@ describe('saveGame / loadGame', () => {
     expect(reloaded?.stash.creative).toEqual(slots());
   });
 
-  it('derives the stash when a v3 record carries a corrupt or missing one', async () => {
+  it('derives the stash when a v4 record carries a corrupt or missing one', async () => {
     const expected = {
       survival: slots({ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }),
       creative: starterSlots('creative'),
@@ -208,20 +245,28 @@ describe('saveGame / loadGame', () => {
       await putRawRecord({ ...makePayload(), stash });
       expect((await loadGame())?.stash).toEqual(expected);
     }
-    // a v3 record missing the key entirely falls back the same way
+    // a v4 record missing the key entirely falls back the same way
     const noStash = makePayload() as Partial<SavePayload>;
     delete noStash.stash;
     await putRawRecord(noStash);
     expect((await loadGame())?.stash).toEqual(expected);
+    // 兩側都是 36 格（不是舊的 9 格）
+    expect(expected.survival).toHaveLength(INVENTORY_SLOTS);
+    expect(expected.creative).toHaveLength(INVENTORY_SLOTS);
   });
 
-  it('migrates a raw v1 record to v3 with derived stash and empty advancements', async () => {
+  it('migrates a raw v1 record to v4 with derived stash and empty advancements', async () => {
     const v1 = makeV1Payload();
     await putRawRecord(v1);
     const loaded = await loadGame();
     expect(loaded).toEqual({
       ...v1,
-      version: 3,
+      version: 4,
+      player: {
+        ...v1.player,
+        // 舊的 9 格資料落在前 9 格（熱鍵列），其餘 27 格留空。
+        inventory: slots({ item: 'stone', count: 32 }),
+      },
       advancements: emptyAdvancements(),
       // no stash on the record → the survival side is derived from what it saved
       stash: {
@@ -233,16 +278,25 @@ describe('saveGame / loadGame', () => {
       // 記錄沒有這個欄位 → 空陣列（舊存檔＝沒有生物，不是錯誤）。
       passiveMobs: [],
     });
-    expect(loaded!.version).toBe(3);
+    expect(loaded!.version).toBe(4);
+    expect(loaded!.player.inventory).toHaveLength(36);
+    expect(loaded!.player.inventory[0]).toEqual({ item: 'stone', count: 32 });
+    expect(loaded!.player.inventory.slice(1)).toEqual(new Array(35).fill(null));
+    expect(loaded!.stash.survival).toHaveLength(36);
   });
 
-  it('migrates a raw v2 record to v3, deriving stash from the recorded mode', async () => {
+  it('migrates a raw v2 record to v4, deriving stash from the recorded mode', async () => {
     const v2 = makeV2Payload();
     await putRawRecord(v2);
     const loaded = await loadGame();
     expect(loaded).toEqual({
       ...v2,
-      version: 3,
+      version: 4,
+      player: {
+        ...v2.player,
+        // 舊 9 格 → 熱鍵列（前 9 格），其餘留空。
+        inventory: slots({ item: 'oak_planks', count: 12 }),
+      },
       stash: {
         survival: slots(), // the mode the record was NOT in starts empty
         creative: slots({ item: 'oak_planks', count: 12 }),
@@ -251,7 +305,110 @@ describe('saveGame / loadGame', () => {
       // B4 Task 10：同上——舊記錄缺欄位 → 空陣列。
       passiveMobs: [],
     });
-    expect(loaded!.version).toBe(3);
+    expect(loaded!.version).toBe(4);
+    expect(loaded!.player.inventory).toHaveLength(36);
+    expect(loaded!.player.inventory[0]).toEqual({ item: 'oak_planks', count: 12 });
+    expect(loaded!.player.inventory.slice(1)).toEqual(new Array(35).fill(null));
+    expect(loaded!.stash.creative[0]).toEqual({ item: 'oak_planks', count: 12 });
+    expect(loaded!.stash.creative).toHaveLength(36);
+  });
+
+  it('migrates a raw v3 record to v4 and keeps the nine old slots in the hotbar row', async () => {
+    const v3 = {
+      ...makeV3Payload(),
+      version: 3 as const,
+      player: {
+        ...makeV3Payload().player,
+        inventory: [{ item: 'dirt' as const, count: 5 }, { item: 'stone' as const, count: 1 }],
+      },
+      stash: {
+        ...makeV3Payload().stash,
+        survival: legacySlots({ item: 'apple', count: 2 }),
+        creative: legacySlots({ item: 'dirt', count: 9 }),
+      },
+    };
+    await putRawRecord(v3);
+    const loaded = await loadGame();
+    expect(loaded!.version).toBe(4);
+    expect(loaded!.player.inventory[0]).toEqual({ item: 'dirt', count: 5 });
+    expect(loaded!.player.inventory[1]).toEqual({ item: 'stone', count: 1 });
+    expect(loaded!.player.inventory[2]).toBeNull();
+    expect(loaded!.player.inventory).toHaveLength(36);
+    // v3 的 stash 也只有 9 格 → 兩側都補到 36 格，舊資料留在前 9 格。
+    expect(loaded!.stash.survival[0]).toEqual({ item: 'apple', count: 2 });
+    expect(loaded!.stash.survival).toHaveLength(36);
+    expect(loaded!.stash.creative[0]).toEqual({ item: 'dirt', count: 9 });
+    expect(loaded!.stash.creative).toHaveLength(36);
+  });
+
+  it('keeps the nine v3 slots out of the main inventory (not shifted)', async () => {
+    // 舊 9 格是「熱鍵列」→ 索引 0..8；主背包（9..35）必須是空的。
+    const v3 = {
+      ...makeV3Payload(),
+      player: {
+        ...makeV3Payload().player,
+        inventory: Array.from({ length: 9 }, (_, i) => ({
+          item: 'stone' as const,
+          count: i + 1,
+        })),
+      },
+    };
+    await putRawRecord(v3);
+    const loaded = await loadGame();
+    expect(loaded!.player.inventory.slice(0, 9)).toEqual(
+      Array.from({ length: 9 }, (_, i) => ({ item: 'stone', count: i + 1 })),
+    );
+    expect(loaded!.player.inventory.slice(9)).toEqual(new Array(27).fill(null));
+  });
+
+  it('keeps B4 passiveMobs through the v3→v4 migration', async () => {
+    // 跨批介面：v4 只改背包寬度，不得把 B4 的可選欄位吃掉。
+    const v3 = {
+      ...makeV3Payload(),
+      passiveMobs: [{ kind: 'cow' as const, x: 1, y: 2, z: 3, hp: 10, yaw: 0 }],
+    };
+    await putRawRecord(v3);
+    const loaded = await loadGame();
+    expect(loaded!.version).toBe(4);
+    expect(loaded!.passiveMobs).toEqual([
+      { kind: 'cow', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+    ]);
+  });
+
+  it('a v4 record with a wrong slot count is padded or truncated', async () => {
+    const base = makePayload();
+    for (const [width, count] of [[3, 3], [40, 36]] as const) {
+      await putRawRecord({
+        ...base,
+        player: {
+          ...base.player,
+          inventory: Array.from({ length: width }, (_, i) => ({
+            item: 'stone' as const,
+            count: i + 1,
+          })),
+        },
+        stash: {
+          survival: Array.from({ length: width }, (_, i) => ({
+            item: 'dirt' as const,
+            count: i + 1,
+          })),
+          creative: Array.from({ length: width }, (_, i) => ({
+            item: 'sand' as const,
+            count: i + 1,
+          })),
+          survivalVitals: createVitals(),
+        },
+      });
+      const loaded = await loadGame();
+      expect(loaded!.player.inventory).toHaveLength(INVENTORY_SLOTS);
+      expect(loaded!.stash.survival).toHaveLength(INVENTORY_SLOTS);
+      expect(loaded!.stash.creative).toHaveLength(INVENTORY_SLOTS);
+      // 前 `count` 格保留、其餘補 null；超過 36 的截斷。
+      expect(loaded!.player.inventory.slice(0, count)).toHaveLength(count);
+      expect(loaded!.player.inventory.slice(count)).toEqual(
+        new Array(INVENTORY_SLOTS - count).fill(null),
+      );
+    }
   });
 
   /**
@@ -338,7 +495,7 @@ describe('saveGame / loadGame', () => {
     const v1 = makeV1Payload();
     await putRawRecord({ ...v1, player: { ...v1.player, vitals: legacyVitals } });
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(3);
+    expect(loaded?.version).toBe(4);
     expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
     // the migrated stash's survival vitals carry the same normalized record
     expect(loaded?.stash.survivalVitals).toEqual({ ...legacyVitals, exhaustion: 0 });
@@ -369,7 +526,7 @@ describe('saveGame / loadGame', () => {
   });
 
   it('returns null for a record with an unsupported version', async () => {
-    await putRawRecord({ version: 4 });
+    await putRawRecord({ version: 5 });
     expect(await loadGame()).toBeNull();
   });
 
@@ -396,6 +553,8 @@ describe('saveGame / loadGame', () => {
     await putRawRecord({ version: 2 });
     expect(await loadGame()).toBeNull();
     await putRawRecord({ version: 3 });
+    expect(await loadGame()).toBeNull();
+    await putRawRecord({ version: 4 });
     expect(await loadGame()).toBeNull();
     // non-finite pos coordinate
     await putRawRecord({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } });
@@ -465,11 +624,9 @@ describe('B4 Task 10：被動生物跨存檔（本機 payload v3 的附加欄位
       expect(loaded?.passiveMobs).toEqual([]);
       // 其餘欄位照樣有效（玩家位置、背包都在）
       expect(loaded?.player.pos).toEqual([1.5, 64, -3.25]);
-      expect(loaded?.player.inventory).toEqual([
-        { item: 'stone', count: 32 },
-        null,
-        { item: 'wooden_pickaxe', count: 1 },
-      ]);
+      expect(loaded?.player.inventory).toEqual(
+        slots({ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }),
+      );
     }
   });
 
@@ -499,20 +656,21 @@ describe('B4 Task 10：被動生物跨存檔（本機 payload v3 的附加欄位
  *  build — loadGame must validate the SHAPE before handing a payload to
  *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
 describe('isValidSavePayload', () => {
-  it('accepts a fully valid payload (v1, v2 and v3 all pass base validation)', () => {
+  it('accepts a fully valid payload (v1, v2, v3 and v4 all pass base validation)', () => {
     expect(isValidSavePayload(makePayload())).toBe(true);
     expect(
       isValidSavePayload(makePayload({ player: { ...makePayload().player, vitals: null } })),
     ).toBe(true);
     expect(isValidSavePayload(makeV1Payload())).toBe(true); // migration input
     expect(isValidSavePayload(makeV2Payload())).toBe(true); // migration input
+    expect(isValidSavePayload(makeV3Payload())).toBe(true); // migration input
   });
 
   it('rejects non-objects, wrong version and a missing player', () => {
     expect(isValidSavePayload(null)).toBe(false);
     expect(isValidSavePayload('garbage')).toBe(false);
     expect(isValidSavePayload(42)).toBe(false);
-    expect(isValidSavePayload({ ...makePayload(), version: 4 })).toBe(false);
+    expect(isValidSavePayload({ ...makePayload(), version: 5 })).toBe(false);
     expect(isValidSavePayload({ version: 1 })).toBe(false); // player missing
   });
 
@@ -613,7 +771,11 @@ describe('collectSavePayload', () => {
       passiveMobs: [],
       savedAt: 123,
     });
-    expect(payload.version).toBe(3);
+    expect(payload.version).toBe(4);
+    // 三個槽位陣列一律 36 格（空的來源也會補滿 null）。
+    expect(payload.player.inventory).toHaveLength(INVENTORY_SLOTS);
+    expect(payload.stash.survival).toHaveLength(INVENTORY_SLOTS);
+    expect(payload.stash.creative).toHaveLength(INVENTORY_SLOTS);
     expect(payload.worldSeed).toBe(4242);
     expect(payload.modified).toEqual([
       ['5,70,5', 1],
@@ -733,10 +895,9 @@ describe('collectSavePayload', () => {
     const survivalStack: ItemStack = { item: 'dirt', count: 3 };
     const creativeStack: ItemStack = { item: 'stone', count: 64 };
     const survivalVitals = { ...createVitals(), hp: 9 };
-    // a non-canonical stash on purpose: the payload copies what it is given
     const stash: ModeStash = {
-      survival: [survivalStack, null],
-      creative: [creativeStack],
+      survival: slots(survivalStack),
+      creative: slots(creativeStack),
       survivalVitals,
     };
     const payload = collectSavePayload({

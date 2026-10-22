@@ -164,17 +164,29 @@ export function stackFromBlock(block: BlockId, count?: number): ItemStack | null
   return { item, count: count ?? maxStack(item) };
 }
 
-/** Starting hotbar contents per mode. Survival begins EMPTY (vanilla parity —
- *  and a full hotbar leaves fits() zero slack, blocking every pickup and craft
- *  take); creative begins with the standard block kit at full stacks.
- *  A fresh array (and fresh stacks) per call — callers write it straight into
- *  live slot arrays, so results must never alias each other. */
+/** 熱鍵列格數（也是遊戲手持列的索引範圍 0..8）。 */
+export const HOTBAR_SLOTS = 9;
+
+/** 主背包格數（3 列 × 9）。 */
+export const MAIN_SLOTS = 27;
+
+/** 背包總格數：前 9 格是熱鍵列，之後 27 格是主背包。 */
+export const INVENTORY_SLOTS = HOTBAR_SLOTS + MAIN_SLOTS; // 36
+
+/** Starting inventory contents per mode (B5 Task 7: 36 slots). Survival
+ *  begins EMPTY (vanilla parity — empty slots are also the fits() slack for
+ *  pickups and craft takes); creative begins with the standard block kit at
+ *  full stacks in the HOTBAR ROW (0..8), and the 27 main slots stay empty —
+ *  the full item list lives in the creative palette, not in the starting
+ *  inventory. A fresh array (and fresh stacks) per call — callers write it
+ *  straight into live slot arrays, so results must never alias each other. */
 export function starterSlots(mode: 'survival' | 'creative'): Array<ItemStack | null> {
   // Local union, not `import type { GameMode } from './inventory'`: GameMode is
   // declared in inventory.ts, which imports THIS module — importing it back
   // would close a module cycle for zero benefit (structurally identical union).
-  if (mode === 'survival') return HOTBAR_DEFAULT.map(() => null);
-  return HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
+  if (mode === 'survival') return new Array<ItemStack | null>(INVENTORY_SLOTS).fill(null);
+  const kit = HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
+  return [...kit, ...new Array<ItemStack | null>(INVENTORY_SLOTS - kit.length).fill(null)];
 }
 
 /** Runtime id gate for UNTRUSTED input (save/cloud records). Built from the

@@ -45,6 +45,10 @@ export type CraftingOpenParams = CraftingParams & { onClose?(): void };
 const validStack = (s: ItemStack | null | undefined): s is ItemStack =>
   !!s && Number.isFinite(s.count) && s.count >= 1;
 
+/** B5 Task 7：背包已是 36 格，但合成來源列在 Task 8 之前只顯示前 9 格
+ *  （熱鍵列）。Task 8 會把它升級成 `params.slots.slice(0, params.sourceCount)`。 */
+const SOURCE_SLOTS = 9;
+
 /** Copy a stack into a slot element (own canvas — `itemIcon` caches ONE canvas
  *  per item, which cannot sit in several cells at once; mirrors hud's draw). */
 function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
@@ -66,8 +70,9 @@ function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
  *  Returns an unmount function. The section re-renders itself after every
  *  interaction — all state lives in the params' live arrays + local `selected`. */
 export function mountCrafting(host: HTMLElement, params: CraftingParams): () => void {
+  const sourceCount = Math.min(params.hotbar.length, SOURCE_SLOTS);
   let selected =
-    Number.isInteger(params.selected) && params.selected >= 0 && params.selected < params.hotbar.length
+    Number.isInteger(params.selected) && params.selected >= 0 && params.selected < sourceCount
       ? params.selected
       : 0;
 
@@ -107,7 +112,8 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
 
     const bar = document.createElement('div');
     bar.className = 'ui-craft-hotbar';
-    params.hotbar.forEach((stack, i) => {
+    // 只渲染熱鍵列（前 9 格）；每次 render 重讀活的陣列。
+    params.hotbar.slice(0, SOURCE_SLOTS).forEach((stack, i) => {
       const slot = document.createElement('div');
       slot.className = i === selected ? 'ui-slot selected' : 'ui-slot';
       slot.dataset.slot = String(i);

@@ -9,6 +9,9 @@ import {
   sanitizeStack,
   sanitizeSlots,
   ALL_ITEM_IDS,
+  HOTBAR_SLOTS,
+  MAIN_SLOTS,
+  INVENTORY_SLOTS,
   type ItemId,
 } from './items';
 import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
@@ -274,21 +277,31 @@ describe('items', () => {
   // The Critical the live walkthrough found: a survival hotbar starting FULL
   // (64/64 of unrelated blocks) leaves fits() zero slack, so no mined drop can
   // be picked up and no craft result can be taken — the whole loop deadlocks.
-  it('starterSlots is a full hotbar of nulls in survival (fits() must have slack)', () => {
+  // B5 Task 7：背包是 36 格（前 9 格熱鍵列＋27 格主背包）——生存仍全空，
+  // 但留白變多（fits() 的 slack 更大）；形狀變更不是弱化。
+  it('starterSlots is a full inventory of nulls in survival (fits() must have slack)', () => {
     const slots = starterSlots('survival');
-    expect(slots).toHaveLength(9);
-    expect(slots).toHaveLength(HOTBAR_DEFAULT.length);
+    expect(slots).toHaveLength(36);
+    expect(slots).toHaveLength(INVENTORY_SLOTS);
     expect(slots.every((s) => s === null)).toBe(true);
   });
 
   it('starterSlots is the default block kit at max stacks in creative', () => {
-    const expected = HOTBAR_DEFAULT.map((b) => stackFromBlock(b));
-    expect(starterSlots('creative')).toEqual(expected);
-    expect(starterSlots('creative')).toHaveLength(HOTBAR_DEFAULT.length);
-    for (const s of starterSlots('creative')) {
+    const creative = starterSlots('creative');
+    expect(creative).toHaveLength(36);
+    expect(creative.slice(0, 9)).toEqual(HOTBAR_DEFAULT.map((b) => stackFromBlock(b)));
+    expect(creative.slice(9).every((s) => s === null)).toBe(true);
+    // 前 9 格（熱鍵列）每一格都是滿堆疊
+    for (const s of creative.slice(0, 9)) {
       expect(s).not.toBeNull();
       expect(s!.count).toBe(maxStack(s!.item));
     }
+  });
+
+  it('the inventory width constants describe the vanilla layout', () => {
+    expect(HOTBAR_SLOTS).toBe(9);
+    expect(MAIN_SLOTS).toBe(27);
+    expect(INVENTORY_SLOTS).toBe(36);
   });
 
   it('starterSlots returns a fresh array each call (mutating one cannot alias the next)', () => {

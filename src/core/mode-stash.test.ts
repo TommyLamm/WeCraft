@@ -5,24 +5,29 @@ import {
   saveModeState,
   loadModeSlots,
 } from './mode-stash';
-import { maxStack, starterSlots, type ItemStack } from './items';
+import { INVENTORY_SLOTS, maxStack, starterSlots, type ItemStack } from './items';
 import { createVitals } from '../player/survival';
 
-/** The live hotbar is 9 slots (shared HOTBAR_DEFAULT length). */
-const HOTBAR_LENGTH = 9;
+/** B5 Task 7：每個模式各存一份 36 格背包（熱鍵列 9 ＋ 主背包 27）。 */
+const INVENTORY_WIDTH = INVENTORY_SLOTS;
 
-/** Hotbar-shaped slots: `items` padded with nulls to the shared width. */
+/** Inventory-shaped slots: `items` padded with nulls to the shared width. */
 function padded(items: Array<ItemStack | null>): Array<ItemStack | null> {
-  return [...items, ...new Array(HOTBAR_LENGTH - items.length).fill(null)];
+  return [...items, ...new Array(INVENTORY_WIDTH - items.length).fill(null)];
 }
 
 describe('mode stash — per-mode state survives switches', () => {
   it('createModeStash starts survival empty, creative full and fresh vitals', () => {
     const stash = createModeStash();
-    expect(stash.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(stash.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null));
+    expect(stash.survival).toHaveLength(36);
     expect(stash.creative).toEqual(starterSlots('creative'));
-    // "full": every creative slot holds a whole stack of its item
-    expect(stash.creative.every((s) => s !== null && s.count === maxStack(s.item))).toBe(true);
+    expect(stash.creative).toHaveLength(36);
+    // "full": the 9-slot HOTBAR ROW holds whole stacks; the 27 main slots are empty
+    expect(
+      stash.creative.slice(0, 9).every((s) => s !== null && s.count === maxStack(s.item)),
+    ).toBe(true);
+    expect(stash.creative.slice(9).every((s) => s === null)).toBe(true);
     expect(stash.survivalVitals).toEqual(createVitals());
     // fresh per call — two stashes never share arrays or the vitals object
     const other = createModeStash();
@@ -46,7 +51,7 @@ describe('mode stash — per-mode state survives switches', () => {
     expect(next.survival[0]).toEqual({ item: 'dirt', count: 3 }); // snapshot, not the live stack
     expect(next.survival[1]).toBeNull();
     expect(next.survival[2]).toEqual({ item: 'stone', count: 64 });
-    expect(stash.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null)); // input stash untouched
+    expect(stash.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null)); // input stash untouched
   });
 
   it('saveModeState stores survival vitals only on survival', () => {
@@ -81,7 +86,7 @@ describe('mode stash — per-mode state survives switches', () => {
     expect(stash.creative[0]).toEqual(creativeBefore[0]);
     expect(stash.creative[1]).toEqual(creativeBefore[1]);
 
-    expect(loadModeSlots(stash, 'survival')).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(loadModeSlots(stash, 'survival')).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(loadModeSlots(stash, 'creative')).not.toBe(loaded); // a new array every call
   });
 
@@ -149,7 +154,7 @@ describe('normalizeModeStash — payload restore', () => {
       legacy('creative', [{ item: 'dirt', count: 4 }], null),
     );
     expect(fromCreative.creative).toEqual(padded([{ item: 'dirt', count: 4 }]));
-    expect(fromCreative.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromCreative.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(fromCreative.survivalVitals).toEqual(createVitals()); // nothing to carry over
   });
 
@@ -170,17 +175,17 @@ describe('normalizeModeStash — payload restore', () => {
       legacy('survival', [], null),
     );
     expect(fromRaw.survival).toEqual(padded([{ item: 'stone', count: 64 }]));
-    expect(fromRaw.creative).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromRaw.creative).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(fromRaw.survivalVitals).toEqual(createVitals()); // junk vitals → fresh defaults
 
     // a MISSING side is filled with that mode's starter kit instead
     const partial = normalizeModeStash({ survival: [] }, legacy('creative', [], null));
-    expect(partial.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(partial.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(partial.creative).toEqual(starterSlots('creative'));
 
     // garbage raws never throw — they fall back to the legacy fields
     const fromJunk = normalizeModeStash('junk', legacy('survival', [], null));
-    expect(fromJunk.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(fromJunk.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(fromJunk.creative).toEqual(starterSlots('creative'));
   });
 
@@ -196,7 +201,7 @@ describe('normalizeModeStash — payload restore', () => {
     expect(stash.survivalVitals).toEqual(recorded); // recorded vitals kept, hp 7
     expect(stash.survivalVitals).not.toBe(recorded); // fresh object, never aliased
     // the MISSING sides still get their starter kits (survival = empty)
-    expect(stash.survival).toEqual(new Array(HOTBAR_LENGTH).fill(null));
+    expect(stash.survival).toEqual(new Array(INVENTORY_WIDTH).fill(null));
     expect(stash.creative).toEqual(starterSlots('creative'));
   });
 

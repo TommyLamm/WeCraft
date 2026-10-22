@@ -2,9 +2,10 @@ import type { GameMode } from './inventory';
 import { sanitizeSlots, starterSlots, type ItemStack } from './items';
 import { createVitals, normalizeVitals, type Vitals } from '../player/survival';
 
-/** Per-mode live state that survives mode switches (B1.3). Each mode keeps its
- *  OWN 9-slot hotbar, and vitals exist in survival only — switching modes must
- *  not destroy the other mode's inventory or reset HP/hunger. Pure in-memory
+/** Per-mode live state that survives mode switches (B1.3; B5 Task 7: 36 slots).
+ *  Each mode keeps its OWN 36-slot inventory (9-slot hotbar row + 27-slot main
+ *  inventory), and vitals exist in survival only — switching modes must not
+ *  destroy the other mode's inventory or reset HP/hunger. Pure in-memory
  *  state: main owns the single instance and the save payloads carry a
  *  `StashPayload` copy (Task 3). Every function returns new objects — callers
  *  never alias. */
@@ -24,11 +25,13 @@ export type StashPayload = {
   survivalVitals: Vitals;
 };
 
-/** Slots per mode: the live hotbar width (`starterSlots` is HOTBAR_DEFAULT-shaped). */
+/** Slots per mode: the live inventory width, derived from `starterSlots` so the
+ *  stash follows `INVENTORY_SLOTS` automatically (B5 Task 7: 9 → 36). */
 const SLOTS_PER_MODE = starterSlots('survival').length;
 
-/** Fresh stash for a new session: survival hotbar empty (vanilla parity —
- *  starterSlots('survival') is 9 × null), creative kit full and fresh vitals. */
+/** Fresh stash for a new session: survival inventory empty (vanilla parity —
+ *  starterSlots('survival') is 36 × null), creative kit full in the hotbar row
+ *  (main slots empty) and fresh vitals. */
 export function createModeStash(): ModeStash {
   return {
     survival: starterSlots('survival'),

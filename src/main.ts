@@ -205,7 +205,8 @@ interface WecraftDebug {
   hunger: () => number | null;
   /** 玩家腳底中心的座標。 */
   pos: () => { x: number; y: number; z: number };
-  /** 熱鍵欄九格的（物品、數量）快照；空格為 `null`。 */
+  /** 背包 36 格的（物品、數量）快照；前 9 格是熱鍵列，空格為 `null`。
+   *  名稱沿用舊介面（既有 Playwright 腳本依賴 `hotbar()`）。 */
   hotbar: () => Array<{ item: ItemId; count: number } | null>;
   /** 地面上尚未被拾取的掉落物數量。 */
   drops: () => number;
@@ -358,7 +359,7 @@ const bus = createBus<GameEvents>();
 
 let state: GameState = 'title';
 let player: PlayerState = createPlayer(0.5, 90, 0.5);
-// B1.3: per-mode hotbar + survival vitals, carried across mode switches — the
+// B1.3: per-mode slots + survival vitals, carried across mode switches — the
 // mode-changed handler below saves the OUTGOING mode's live state here, then
 // loads the INCOMING mode's. Re-created on every New Game (startGame).
 let modeStash = createModeStash();
@@ -368,13 +369,13 @@ let currentMode: GameMode = settings.mode;
 // Flight is creative-only (spec §95): gate the double-tap Space toggle at the
 // input layer — synced at every `currentMode` assignment below.
 input.setFlyEnabled(currentMode === 'creative');
-// Stack-based model owns the hotbar slots; `hotbar` is the live reference the
-// HUD/palette render. Mode comes from settings (default survival since Task 5);
-// creative add/remove no-op inside the model. starterSlots: survival starts
-// EMPTY — a full hotbar leaves fits() zero slack, so no drop could be picked
-// up and no craft result taken (Task 17.5 Critical).
+// Stack-based model owns the 36 inventory slots; `slots` is the live reference
+// the HUD and crafting read (B5 Task 7: first 9 = hotbar row, then 27 main slots).
+// Mode comes from settings (default survival since Task 5); creative add/remove
+// no-op inside the model. starterSlots: survival starts EMPTY, so fits() has
+// room for drops and craft results (Task 17.5 Critical).
 const inventory = createInventoryModel(starterSlots(settings.mode), settings.mode);
-const hotbar = inventory.slots;
+const slots = inventory.slots;
 let selected = 0;
 let showDebug = false;
 // B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
@@ -488,15 +489,15 @@ function giveItem(item: ItemId, count: number): number {
   if (inventory.mode !== 'creative') return inventory.addItem(item, count);
   const cap = maxStack(item);
   let rest = count;
-  for (let i = 0; i < hotbar.length && rest > 0; i++) {
-    const s = hotbar[i];
+  for (let i = 0; i < slots.length && rest > 0; i++) {
+    const s = slots[i];
     if (!s || s.item !== item || s.count >= cap) continue;
     const put = Math.min(cap - s.count, rest);
     inventory.setSlot(i, { item, count: s.count + put });
     rest -= put;
   }
-  for (let i = 0; i < hotbar.length && rest > 0; i++) {
-    if (hotbar[i]) continue;
+  for (let i = 0; i < slots.length && rest > 0; i++) {
+    if (slots[i]) continue;
     const put = Math.min(cap, rest);
     inventory.setSlot(i, { item, count: put });
     rest -= put;
@@ -535,22 +536,23 @@ function craftingParams(size: 2 | 3): CraftingParams {
   return {
     size,
     grid: craftGrid, // live array — the UI writes cells in place
-    hotbar, // live slots — re-read on every UI render
+    // 傳同一個活的 36 格陣列（不要 slice）：crafting.ts 每次 render 重讀前 9 格。
+    hotbar: slots,
     selected, // source slot for the first transfer (UI-local afterwards)
     // no onSlotSelect: the craft row's source selection is local to the widget.
     // Syncing it into `selected` would desync the inventory palette, whose
     // heading + onPick snapshot `selected` at open time (keys are gated while
     // unlocked, so nothing else can move it mid-open).
     onSpend: (slot, item) => {
-      const s = hotbar[slot];
+      const s = slots[slot];
       if (!s || s.item !== item || !Number.isFinite(s.count) || s.count < 1) return false;
       inventory.setSlot(slot, s.count > 1 ? { item: s.item, count: s.count - 1 } : null);
-      hud.setHotbar(hotbar, selected);
+      hud.setHotbar(slots, selected);
       return true;
     },
     onGiveBack: (item) => {
       const overflow = giveItem(item, 1);
-      hud.setHotbar(hotbar, selected);
+      hud.setHotbar(slots, selected);
       return overflow;
     },
     onTake: (result) => {
@@ -561,7 +563,7 @@ function craftingParams(size: 2 | 3): CraftingParams {
       // capacity exactly, so the give below never overflows here.
       if (!inventory.fits(result.item, result.count)) return false; // full → blocked, grid untouched
       giveItem(result.item, result.count);
-      hud.setHotbar(hotbar, selected);
+      hud.setHotbar(slots, selected);
       // Task 12: a successful craft take is an obtain event (creative never
       // reaches this path, and checkAdvancements would suppress it anyway).
       applyAdvancement({ type: 'obtain', item: result.item, mode: currentMode });
@@ -589,7 +591,7 @@ function takeFurnaceOutput(): void {
   giveItem(out.item, out.count);
   const next: FurnaceState = { ...st, output: null };
   furnaces.set(openFurnaceKey, next);
-  hud.setHotbar(hotbar, selected);
+  hud.setHotbar(slots, selected);
   applyAdvancement({ type: 'smelt-take', mode: currentMode });
   furnaceUi.open(next);
 }
@@ -608,7 +610,7 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
     const rest = stack.count > 1 ? { item: stack.item, count: stack.count - 1 } : null;
     next = which === 'input' ? { ...st, input: rest } : { ...st, fuel: rest };
   } else {
-    const src = hotbar[selected];
+    const src = slots[selected];
     if (!src || !Number.isFinite(src.count) || src.count < 1) return;
     const accepted = which === 'input'
       ? src.item in SMELT_RECIPES
@@ -619,7 +621,7 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
     next = which === 'input' ? { ...st, input: moved } : { ...st, fuel: moved };
   }
   furnaces.set(openFurnaceKey, next);
-  hud.setHotbar(hotbar, selected);
+  hud.setHotbar(slots, selected);
   furnaceUi.open(next);
 }
 
@@ -687,7 +689,7 @@ let drops: DropEntity[] = [];
 
 // ---- B2.2／B2.5 放置與丟棄（Task 10 接線）----
 // 兩個 helper 放在模組層（不是迴圈內）：每幀重建函式物件沒有好處，而且它們
-// 需要讀 `drops`／`hotbar`／`selected` 等模組層狀態。
+// 需要讀 `drops`／`slots`／`selected` 等模組層狀態。
 /** 在 `target` 命中的那一面放一個方塊 —— 「放置」這一件事的完整實作。
  *
  *  **為什麼要抽出來**：B2.2 的連放要求「第一次右鍵照完整流程（開工作台／開熔爐／
@@ -718,7 +720,7 @@ function tryPlaceBlock(target: RayHit): void {
     target,
     world.getBlock(target.x, target.y, target.z),
   );
-  const held = hotbar[selected];
+  const held = slots[selected];
   const placeId = held ? blockFromItem(held.item) : null;
   if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return;
   // no pay, no place: the stack is spent FIRST (creative's spendFromSlot is a
@@ -726,7 +728,7 @@ function tryPlaceBlock(target: RayHit): void {
   // practice, structural defense
   if (!inventory.spendFromSlot(selected, 1)) return;
   world.setBlock(t.x, t.y, t.z, placeId); // placeId is BlockId | null, guarded above
-  hud.setHotbar(hotbar, selected);
+  hud.setHotbar(slots, selected);
   // Phase 3 Task 10: material-accurate place thud at the target centre
   // (listener defaults to pos → full volume).
   audio.play('place', materialGroup(placeId), {
@@ -740,7 +742,7 @@ function tryPlaceBlock(target: RayHit): void {
  *  （方塊、工具、空手……）。右手拿食物時右鍵＝進食（不放置），這是原版的
  *  優先序。 */
 function heldIsFood(): boolean {
-  const held = hotbar[selected];
+  const held = slots[selected];
   return held !== null && foodFor(held.item) !== null;
 }
 
@@ -767,7 +769,7 @@ function heldIsFood(): boolean {
  *  **沒有回傳值**（審查 Minor 1）：呼叫端不消費「是否丟成功」，結果看得見
  *  （熱鍵欄計數、地上有沒有東西）。 */
 function dropSelected(wholeStack: boolean): void {
-  const stack = hotbar[selected];
+  const stack = slots[selected];
   // 決策交給純函式：創造模式 → 0；空手／數量不合法 → 0；普通 Q → 1；Ctrl+Q → 整疊
   const count = dropCount(stack, wholeStack, currentMode);
   if (!stack || count <= 0) return; // 不丟、不消耗
@@ -792,7 +794,7 @@ function dropSelected(wholeStack: boolean): void {
       },
     },
   );
-  hud.setHotbar(hotbar, selected); // 熱鍵欄計數變了 → 刷新
+  hud.setHotbar(slots, selected); // 熱鍵欄計數變了 → 刷新
   bus.emit('drops-changed', {}); // 掉落物清單變了（與其它生成路徑一致）
 }
 
@@ -1026,11 +1028,11 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
 // The emit is synchronous, so menus' post-callback re-read of loadSettings
 // still sees the new value for its label.
 bus.on('mode-changed', ({ mode }) => {
-  // B1.3: stash the OUTGOING mode first — its hotbar and (in survival) vitals
+  // B1.3: stash the OUTGOING mode first — its slots and (in survival) vitals
   // survive the switch instead of being destroyed. saveModeState snapshots
   // deep copies, so later gameplay can never leak into the stash; saving runs
   // before loading, so the default stash never clobbers live state.
-  modeStash = saveModeState(modeStash, currentMode, [...hotbar], vitals);
+  modeStash = saveModeState(modeStash, currentMode, [...slots], vitals);
   currentMode = mode;
   input.setFlyEnabled(currentMode === 'creative'); // survival: force a landing
   // B2.1：疾跑狀態與 FOV 一起歸零 → 跨模式不殘留「雙擊 W 鎖存」（創造模式
@@ -1044,15 +1046,15 @@ bus.on('mode-changed', ({ mode }) => {
   saveSettings({ mode }); // single persist point
   inventory.setMode(mode);
   if (mode === 'creative') {
-    // creative: restore its stashed hotbar (the starter kit on first entry)
+    // creative: restore its stashed slots (the starter kit on first entry)
     loadModeSlots(modeStash, mode).forEach((s, i) => inventory.setSlot(i, s));
-    hud.setHotbar(hotbar, selected);
+    hud.setHotbar(slots, selected);
     setVitals(null); // hide the bar; Task 9 owns the vitals lifecycle
   } else {
-    // survival: restore its stashed hotbar + vitals — each mode keeps its own
+    // survival: restore its stashed slots + vitals — each mode keeps its own
     // inventory and vitals across round-trips (B1.3; no more fresh-vitals reset)
     loadModeSlots(modeStash, mode).forEach((s, i) => inventory.setSlot(i, s));
-    hud.setHotbar(hotbar, selected);
+    hud.setHotbar(slots, selected);
     setVitals({ ...modeStash.survivalVitals }); // copy: the stash object must never become live vitals
   }
 });
@@ -1537,12 +1539,16 @@ function setState(next: GameState): void {
     // Flush leftovers from a previous session (items never lost) — this runs in
     // creative too, where the 2×2 section below does NOT mount (plan 12.4).
     resetCraftGrid(2);
+    // B5 Task 7: the survival panel still lists the pre-B5 9-slot hotbar until
+    // Task 8 rebuilds it for the full 36-slot inventory. Pass a view, not the
+    // live model array: the panel only reads, and `inventory.setSlot` below
+    // still receives the real 0..8 indices.
     inv.open(
-      hotbar,
+      slots.slice(0, 9),
       selected,
       (slot, stack) => {
         inventory.setSlot(slot, stack);
-        hud.setHotbar(hotbar, selected);
+        hud.setHotbar(slots, selected);
       },
       // backdrop click closes: E can only fire while pointer-locked, and opening
       // the inventory unlocks — so "press E again to close" is impossible (Task 17 deviation)
@@ -1553,7 +1559,7 @@ function setState(next: GameState): void {
       // Task 11: 2×2 crafting section embedded at the top of the panel.
       // creative: crafting hidden (plan 12.4) → no params, no section mounted.
       currentMode === 'survival' ? craftingParams(2) : undefined,
-      // B1.2: survival lists the OWNED hotbar; creative keeps the palette.
+      // B1.2: survival lists the OWNED slots; creative keeps the palette.
       currentMode,
     );
   } else if (next === 'crafting') {
@@ -1629,12 +1635,12 @@ function sessionSavePayload(): SavePayload | null {
       pos: [player.position.x, player.position.y, player.position.z],
       yaw: player.yaw,
       mode: currentMode,
-      inventory: [...hotbar],
+      inventory: [...slots],
     },
     vitals,
     clockT: clock.t,
     advancements,
-    stash: modeStash, // B1.3: the other mode's hotbar + survival vitals
+    stash: modeStash, // B1.3: the other mode's slots + survival vitals
     passiveMobs, // B4 Task 10: 被動生物（種類／座標／血量／朝向）跨存檔
   });
 }
@@ -1699,11 +1705,11 @@ function applyCloudData(data: CloudData): void {
   inventory.setMode(currentMode);
   // The payload's inventory is untrusted even after shape validation (unknown
   // ids, junk counts, any length): sanitizeSlots pads/truncates to the live
-  // hotbar width and drops junk ENTRY by entry (never the whole inventory) —
+  // inventory width and drops junk ENTRY by entry (never the whole inventory) —
   // then setSlot floors + clamps counts to maxStack.
-  const restoredSlots = sanitizeSlots(data.inventory, hotbar.length);
-  for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, restoredSlots[i]);
-  hud.setHotbar(hotbar, selected);
+  const restoredSlots = sanitizeSlots(data.inventory, slots.length);
+  for (let i = 0; i < slots.length; i++) inventory.setSlot(i, restoredSlots[i]);
+  hud.setHotbar(slots, selected);
   setVitals(
     currentMode === 'survival'
       ? data.vitals
@@ -1712,7 +1718,7 @@ function applyCloudData(data: CloudData): void {
       : null,
   );
   // B1.3: restore the per-mode stash that travelled with the payload (the
-  // other mode's hotbar + survival vitals). acceptCloudData always hands one
+  // other mode's slots + survival vitals). acceptCloudData always hands one
   // over: for an old format-1 payload that carries none it derives the stash
   // UPSTREAM (cloud-save.ts) from the fields the payload did write (the
   // recorded mode's inventory + vitals) — the args below are a defensive
@@ -1756,7 +1762,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       yaw: player.yaw,
       vitals: vitals ? { ...vitals } : null,
       clockT: clock.t,
-      inventory: [...hotbar],
+      inventory: [...slots],
       advancements,
       settings,
       stash: modeStash,
@@ -2041,19 +2047,19 @@ function startGame(): void {
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
   modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
-  // Task 17.5 Critical (verified live): the hotbar is the ENTIRE inventory, so
-  // inheriting the previous session's slots deadlocks a fresh survival game —
-  // fits() counts slack only from empty slots / partial stacks of the same
-  // item, and a hotbar of unrelated 64/64 stacks has ZERO: mined drops can't
-  // be picked up (addItem overflows → pickup rejected) and craft results can't
-  // be taken (craftingParams.onTake pre-checks fits() → blocked forever).
+  // Task 17.5 Critical (verified live; B5 Task 7 widened the inventory to 36):
+  // inheriting the previous session's inventory deadlocks a fresh survival game
+  // — fits() counts slack only from empty slots / partial stacks of the same
+  // item, and a full inventory of unrelated 64/64 stacks has ZERO: mined drops
+  // can't be picked up (addItem overflows → pickup rejected) and craft results
+  // can't be taken (craftingParams.onTake pre-checks fits() → blocked forever).
   // Vitals/clock carried stale values the same way (quit at hp 6/20 → new game
   // at 6/20; quit at night → new game at night), and staged craftGrid/craftExcess
   // items would flush into the NEW session's inventory on its first inventory open.
   const fresh = loadModeSlots(modeStash, currentMode);
-  for (let i = 0; i < hotbar.length; i++) inventory.setSlot(i, fresh[i] ?? null);
+  for (let i = 0; i < slots.length; i++) inventory.setSlot(i, fresh[i] ?? null);
   selected = 0;
-  hud.setHotbar(hotbar, selected);
+  hud.setHotbar(slots, selected);
   setVitals(currentMode === 'survival' ? { ...modeStash.survivalVitals } : null);
   clock = createClock(settings.dayLengthSec);
   // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
@@ -2131,12 +2137,12 @@ function continueGame(payload: SavePayload): void {
   saveSettings({ mode: currentMode }); // keep menu labels in sync
   inventory.setMode(currentMode);
   // B1.3: restore the per-mode stash that travelled with the payload — the
-  // OTHER mode's hotbar and the survival vitals survive a quit/reload. The LIVE
-  // slots below come from `player.inventory`, never from the stash's side for
-  // the mode being entered: that side is only refreshed when the mode is LEFT,
-  // so it can legitimately be older than the live slots (the save-first order
-  // in the mode-changed handler is what keeps the pair sound). For v1/v2
-  // records normalizeModeStash derives both sides.
+  // OTHER mode's inventory and the survival vitals survive a quit/reload. The
+  // LIVE inventory below comes from `player.inventory`, never from the stash's
+  // side for the mode being entered: that side is only refreshed when the mode
+  // is LEFT, so it can legitimately be older than the live slots (the save-first
+  // order in the mode-changed handler is what keeps the pair sound). For v1/v2
+  // records, normalizeModeStash derives both sides.
   modeStash = normalizeModeStash(payload.stash, {
     mode: payload.player.mode,
     inventory: payload.player.inventory,
@@ -2144,13 +2150,13 @@ function continueGame(payload: SavePayload): void {
   });
   // The record's inventory is untrusted even after shape validation (unknown
   // ids, junk counts, any length): sanitizeSlots pads/truncates to the live
-  // hotbar width and drops junk rather than writing it into the model.
-  const restoredSlots = sanitizeSlots(payload.player.inventory, hotbar.length);
-  for (let i = 0; i < hotbar.length; i++) {
+  // inventory width and drops junk rather than writing it into the model.
+  const restoredSlots = sanitizeSlots(payload.player.inventory, slots.length);
+  for (let i = 0; i < slots.length; i++) {
     const s = restoredSlots[i];
     inventory.setSlot(i, s ? { ...s } : null); // setSlot copies + validates; clears the tail
   }
-  hud.setHotbar(hotbar, selected);
+  hud.setHotbar(slots, selected);
   // vitals: survival restores saved values (payload vitals is null only when
   // it was saved in creative; a corrupt survival payload falls back to a full
   // reset); creative keeps the hidden bar hidden. Review #5: COPY the payload's
@@ -2369,17 +2375,18 @@ if (typeof ResizeObserver !== 'undefined') {
 }
 window.visualViewport?.addEventListener('resize', syncViewportSize);
 
-hud.setHotbar(hotbar, selected);
+hud.setHotbar(slots, selected);
 // B2.1 唯讀 debug hook（Task 9）：**僅供 Playwright 驗收讀取**（Task 13）——
 // 全部是 getter，唯讀、不改變任何遊戲行為，內容只有本機遊戲資料。
 // getter 讀的是模組層級的 live binding（`sprintState`／`vitals`／`player`／
-// `hotbar`／`drops`），所以每次取值都是當下的狀態。
+// `slots`／`drops`），所以每次取值都是當下的狀態。
 window.__wecraft = {
   sprint: () => sprintState.active,
   fov: () => gs.camera.fov,
   hunger: () => (vitals ? vitals.hunger : null), // 創造模式 → null（無飢餓條）
   pos: () => ({ x: player.position.x, y: player.position.y, z: player.position.z }),
-  hotbar: () => hotbar.map((s) => (s ? { item: s.item, count: s.count } : null)),
+  // 名稱沿用 `hotbar`（既有 Playwright 驗收腳本依賴）；B5 Task 7 起回傳 36 格。
+  hotbar: () => slots.map((s) => (s ? { item: s.item, count: s.count } : null)),
   drops: () => drops.length,
   modified: () => world.modified.size,
   viewMode: () => viewMode,
@@ -2674,7 +2681,7 @@ gs.renderer.setAnimationLoop(() => {
         }
       }
       if (pickedUp) {
-        hud.setHotbar(hotbar, selected); // inventory changed → refresh counts
+        hud.setHotbar(slots, selected); // inventory changed → refresh counts
         bus.emit('drops-changed', {});
       }
       for (const item of obtained) {
@@ -2911,7 +2918,7 @@ gs.renderer.setAnimationLoop(() => {
             hitMobId(mobs, rayOrigin, dir, meleeReach) !== null ||
             hitPassiveMobId(passiveMobs, rayOrigin, dir, meleeReach) !== null;
         } else {
-          const heldStack = hotbar[selected];
+          const heldStack = slots[selected];
           const dmg = toolDamage(heldStack?.item ?? null);
           const atk = attackMob(
             mobs,
@@ -2991,7 +2998,7 @@ gs.renderer.setAnimationLoop(() => {
       let digTarget: RayHit | null = null;
       if (hit && input.state.dig && !attacking) {
         const id = world.getBlock(hit.x, hit.y, hit.z);
-        const held = hotbar[selected];
+        const held = slots[selected];
         // digStep owns the mode branch and resolves the vanilla break time
         // (hardness × 1.5/×5 ÷ tool speed) from the held stack inside — no
         // external speed needed (creative breaks instantly regardless)
@@ -3148,7 +3155,7 @@ gs.renderer.setAnimationLoop(() => {
       //  - `item` ＝ 手上拿的東西；`allowed` ＝ 生存模式 ＋ 沒吃飽（`canEat`）
       //    → **滿飢餓不可進食**（不開始進食、也不消耗物品）。
       // 放開右鍵 → `eatTick` 自行歸零並回 'idle'（進度條也跟著收掉）。
-      const eatStack = hotbar[selected];
+      const eatStack = slots[selected];
       const eatItem = eatStack ? eatStack.item : null;
       // `v` 是 const 快照 → 下面的 null 守門對 tsc 有型別效果（與既有寫法一致）。
       const eatVitals = currentMode === 'survival' ? vitals : null;
@@ -3170,11 +3177,11 @@ gs.renderer.setAnimationLoop(() => {
         // 吃東西的**食物值一律來自 `foodFor()`**（食物值表的單一真值）→
         // 不寫死蘋果的 4／2.4。
         const def = foodFor(eatItem);
-        const eaten = eatFromSlot(hotbar, selected);
+        const eaten = eatFromSlot(slots, selected);
         if (eaten.ate && def !== null) {
           inventory.setSlot(selected, eaten.slots[selected] ?? null);
           setVitals(eat(eatVitals, def.food, def.saturation));
-          hud.setHotbar(hotbar, selected);
+          hud.setHotbar(slots, selected);
           // 食物沒有方塊形式 —— 沿用放置的軟 thud，不新增音色。
           audio.play('place', 'grass', { pos: player.position });
           // `tasty` 只在吃蘋果時解鎖（advancements.ts 的既有規則不變）。
@@ -3226,7 +3233,7 @@ gs.renderer.setAnimationLoop(() => {
       if (inSlot !== selected) {
         selected = inSlot;
         hud.setSelected(selected);
-        const held = hotbar[selected];
+        const held = slots[selected];
         hud.showItemName(held ? stackName(held.item) : null);
         clearTimeout(itemNameTimer);
         itemNameTimer = setTimeout(() => hud.showItemName(null), 1200);
@@ -3295,7 +3302,7 @@ gs.renderer.setAnimationLoop(() => {
   // model swaps the same frame), then the swing/bob pose is applied.
   // B2.4：揮手／擺動只在 playing 時推進；第三身（面後／面前）與所有非 playing
   // 狀態都隱藏手持模型（第一人稱才看得到手上的東西）。
-  const heldItem = hotbar[selected]?.item ?? null;
+  const heldItem = slots[selected]?.item ?? null;
   if (heldItem !== heldViewmodelItem) {
     heldViewmodelItem = heldItem;
     viewmodel.setItem(heldItem);

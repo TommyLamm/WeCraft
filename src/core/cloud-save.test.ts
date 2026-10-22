@@ -11,7 +11,7 @@ import {
   type CloudData,
 } from './cloud-save';
 import { createVitals } from '../player/survival';
-import { starterSlots, type ItemStack } from './items';
+import { starterSlots, INVENTORY_SLOTS, type ItemStack } from './items';
 import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
 import { WORLDGEN_VERSION } from '../world/worldgen';
@@ -43,10 +43,10 @@ function rawValid(): Record<string, unknown> {
   };
 }
 
-/** Hotbar-shaped slots: `items` padded with nulls to the 9-slot width (the
- *  canonical shape the stash normalization produces). */
+/** Inventory-shaped slots: `items` padded with nulls to the 36-slot width (the
+ *  canonical shape the stash normalization produces after B5 Task 7). */
 function slots(...items: Array<ItemStack | null>): Array<ItemStack | null> {
-  return [...items, ...new Array(9 - items.length).fill(null)];
+  return [...items, ...new Array(INVENTORY_SLOTS - items.length).fill(null)];
 }
 
 describe('cloud-save', () => {
@@ -264,7 +264,9 @@ describe('cloud-save', () => {
     expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
   });
 
-  it('byteSizeOf: small payload is under 1 KiB', () => {
+  it('byteSizeOf: the canonical empty payload is under 2 KiB', () => {
+    // B5 Task 7：36 格背包＋兩側 36 格 stash 讓空 payload 從 ~700 B 長到
+    // 1027 B——仍遠低於實際上限（CLOUD_MAX_BYTES），這裡只做基本 sanity check。
     const data = buildCloudData({
       seed: 1337,
       pos: [0, 64, 0],
@@ -277,7 +279,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
     });
-    expect(byteSizeOf(data)).toBeLessThan(1024);
+    expect(byteSizeOf(data)).toBeLessThan(2048);
   });
 
   it('byteSizeOf: a packed 2000-slot inventory stays under the cap', () => {
