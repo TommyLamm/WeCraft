@@ -3,6 +3,8 @@ import { createGameScene, createDropRenderer, createMobRenderer } from './render
 import { ChunkRenderer } from './render/chunk-renderer';
 import { createCrackOverlay } from './render/crack';
 import { createParticleRenderer } from './render/particles';
+// B4 Task 8：被動生物（雞／豬／羊／牛）的方塊模型渲染（方塊身 ＋ 頭 ＋ 兩條腿）
+import { createPassiveMobRenderer } from './render/passive-mobs';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
@@ -125,6 +127,7 @@ import {
   trySpawnPassiveGroup,
   PASSIVE_SPAWN_INTERVAL_SEC,
   type PassiveMob,
+  type PassiveKind,
 } from './world/passive-mobs';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
@@ -204,6 +207,18 @@ interface WecraftDebug {
   clock: () => number;
   /** 被動生物腳底座標的快照（驗收「離玩家 ≥ 24 格」要用；純唯讀）。 */
   passiveMobPositions: () => Array<{ x: number; y: number; z: number }>;
+  /** 被動生物**逐隻**的狀態快照（id／種類／座標／血量）。
+   *
+   *  **純唯讀**：只是把當下的 `passiveMobs` 映射成一份新陣列（不修改任何遊戲
+   *  狀態、不產生副作用）→ 驗收要確認「打中一隻 → 那一隻的血量下降」時用。 */
+  passiveMobStates: () => Array<{
+    id: number;
+    kind: PassiveKind;
+    x: number;
+    y: number;
+    z: number;
+    hp: number;
+  }>;
 }
 
 declare global {
@@ -229,6 +244,8 @@ const chunkRenderer = new ChunkRenderer(gs.scene); // Task 4: shared texture arr
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 // Task 8: mobs + arrows — blocky humanoids and oriented boxes
 const mobRenderer = createMobRenderer(gs.scene);
+// B4 Task 8：被動生物渲染（方塊化的雞／豬／羊／牛；與敵對生物的模型分開）
+const passiveRenderer = createPassiveMobRenderer(gs.scene);
 // Task 4: break/dig debris — billboard quads over the shared block texture array
 const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
@@ -2281,6 +2298,16 @@ window.__wecraft = {
   passiveMobs: () => passiveMobs.length,
   clock: () => clock.t,
   passiveMobPositions: () => passiveMobs.map((m) => ({ x: m.pos.x, y: m.pos.y, z: m.pos.z })),
+  // 逐隻的狀態（血量在這裡；座標快照沒有血量 → 驗收「命中 → 扣血」用這個）
+  passiveMobStates: () =>
+    passiveMobs.map((m) => ({
+      id: m.id,
+      kind: m.kind,
+      x: m.pos.x,
+      y: m.pos.y,
+      z: m.pos.z,
+      hp: m.hp,
+    })),
 };
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,
@@ -2827,8 +2854,8 @@ gs.renderer.setAnimationLoop(() => {
               attacking = true;
               passiveMobs = patk.mobs;
               attackCd = ATTACK_COOLDOWN_SEC;
-              // 被動生物的受擊閃白由後續的渲染任務處理（那時才有被動生物的
-              // renderer）→ 這裡只負責扣血、擊退與掉落。
+              // B4 Task 8：受擊閃白 0.1 秒（與敵對生物同一個做法）。
+              passiveRenderer.flashPassiveMob(patk.hitId);
               attackedThisFrame = true;
               if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
               // 死亡 → 掉落（生存模式）→ 移除屍體。
@@ -3153,6 +3180,9 @@ gs.renderer.setAnimationLoop(() => {
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
+  // B4 Task 8：被動生物（雞／豬／羊／牛）的方塊模型 —— 非 playing 時 dt = 0
+  // → 走路擺動凍結（與敵對生物同一個處理）。
+  passiveRenderer.syncPassiveMobs(passiveMobs, state === 'playing' ? dt : 0);
   // Task 3: cracks belong to the dig loop only — the playing branch above
   // drives set(digTarget, dig.progress); every other state (title/paused/
   // inventory/crafting/dead) clears any quad left hanging on the frozen view.
