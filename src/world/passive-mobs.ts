@@ -1,5 +1,5 @@
 /**
- * 被動生物（雞／豬／羊／牛）的模型與 AI（B4 Task 6）。
+ * 被動生物（雞／豬／羊／牛）的模型與 AI（B4 Task 6）＋**生成規則**（B4 Task 7）。
  *
  * **純邏輯層**（no Three/DOM；渲染在後續任務的 `render/passive-mobs.ts`）—— 與
  * `world/mobs.ts`（敵對生物）同一套慣例：純資料實體 + 注入的 `isSolidAt`／
@@ -32,8 +32,11 @@ import {
   KNOCKBACK_SPEED,
   KNOCKBACK_DECAY_PER_SEC,
   KNOCKBACK_MIN,
+  surfaceYAt,
 } from './mobs';
 import { rayAabbEntry } from './raycast';
+import { BLOCK } from './blocks';
+import { canSpawnPassive, type SpawnLight } from './spawn-rules';
 
 // ---- 定義表 -------------------------------------------------------------
 
@@ -470,12 +473,231 @@ export function attackPassiveMob(
 /**
  * 四種被動生物的**等機率**選種（rng 可注入 → 測試可重現；省略＝`Math.random`）。
  *
- * **範圍說明**：本任務只提供「選哪一種」這個純函式；**生成群的統計**（生成距離、
- * 光照門檻、群體大小、地面材質…）是後續任務的事 → 那邊會把這裡的等機率接上
- * 真正的生成規則（必要時會調整機率）。
+ * **範圍說明**：本函式只提供「選哪一種」這個純函式；生成群的統計（生成距離、
+ * 光照門檻、群體大小、地面材質…）在檔尾的「生成規則」那一段。
+ *
+ * **等機率是簡化（要寫進 README 的簡化清單）**：原版依**生態**（biome）加權
+ * （例如牛只在新版本草原大量生成），本作目前是四種等機率 → B3 的 8 個生態落地後
+ * 可以再調成跟生態走。
  */
 export function choosePassiveKind(rng: () => number = Math.random): PassiveKind {
   const kinds: readonly PassiveKind[] = ['chicken', 'pig', 'sheep', 'cow'];
   const i = Math.floor(rng() * kinds.length);
   return kinds[Math.min(kinds.length - 1, Math.max(0, i))];
+}
+
+// ---- 生成規則（B4 Task 7）------------------------------------------------
+
+/**
+ * 被動生物的生成間隔（秒）。**與敵對生物的 5 秒排程並列**（`main.ts` 的
+ * `state === 'playing'` 區塊），但更慢：被動生物**不會 despawn**（離開視線也
+ * 還在）→ 補得太快會讓世界塞滿雞豬羊牛（上限 {@link MAX_PASSIVE_MOBS}）。
+ */
+export const PASSIVE_SPAWN_INTERVAL_SEC = 10;
+
+/**
+ * **spec §B4.2 的硬下限**：成員的**實際距離**（離玩家）不得小於這個值（24）。
+ *
+ * **與 {@link PASSIVE_SPAWN_MOTHER_MIN_DIST} 的界線要分清楚**（2026-10-20 稽核修正）：
+ * - `PASSIVE_SPAWN_MIN_DIST = 24` ＝ **成員實際距離的下界**（＝測試門檻）。
+ * - `PASSIVE_SPAWN_MOTHER_MIN_DIST = 28` ＝ **母點距離的下界**。
+ *
+ * 成員在母點附近 ±2 格取位 → 最壞的位移是 `√(2²+2²) ≈ 2.83` → 成員實際距離
+ * 最壞是 `28 − 2.83 ≈ 25.2 ≥ 24` → 兩條規則自洽。
+ * （母點若從 24 起算，成員會掉到 `24 − 2.83 ≈ 21.2 < 24` → 與「離玩家 ≥ 24」
+ * 的測試互相矛盾、會間歇性紅。）
+ */
+export const PASSIVE_SPAWN_MIN_DIST = 24;
+
+/**
+ * 生成距離的**上限**（格）：世界半徑有限，遠處生成的動物玩家走不到（B6 可調）。
+ *
+ * **這個上限是「母點距離」的上限**（母點的區間是
+ * {@link PASSIVE_SPAWN_MOTHER_MIN_DIST}–{@link PASSIVE_SPAWN_MAX_DIST}）；成員在母點
+ * 附近 ±2 格取位 → 成員的實際距離最多再多 `√(2²+2²) ≈ 2.83` 格。
+ */
+export const PASSIVE_SPAWN_MAX_DIST = 48;
+
+/**
+ * **母點**（整群的中心）距離的**下限**（格）——見 {@link PASSIVE_SPAWN_MIN_DIST}
+ * 的推導：母點從 28 起算，成員偏移 ±2 之後仍然 ≥ 24（spec 的硬下限）。
+ */
+export const PASSIVE_SPAWN_MOTHER_MIN_DIST = 28;
+
+/**
+ * 一群的成員數下／上限（wiki，2026-10-20：Bedrock 2–4、Java 4）→ 本作取 **2–4**。
+ */
+export const PASSIVE_SPAWN_MIN_GROUP = 2;
+export const PASSIVE_SPAWN_MAX_GROUP = 4;
+
+/** 成員在母點附近的偏移半寬（格）：母點附近 ±2 格內隨機取位。 */
+const PASSIVE_SPAWN_OFFSET = 2;
+
+/**
+ * 被動生物生成的上下文（純邏輯；`main.ts` 注入世界的查詢）。
+ *
+ * 與敵對生物的 `mobs.ts` 的 `SpawnCtx` 同一個形狀（光照門檻 ＋ 注入的世界讀取
+ * ＋ 可注入的 rng）→ B6 換成真的光照時只要換 `light` 的來源，其餘不用動。
+ */
+export interface PassiveSpawnCtx {
+  /**
+   * 生成點的光照：B4 用 `clockLight(t)` **近似**（天空光 15／0）→ 被動生物
+   * **只在白天生成**（spec §B4.2 明示這是簡化，B6 換成真的天空光／方塊光查詢）。
+   */
+  light: SpawnLight;
+  /** 該格是不是實心方塊（注入，不 import `World`；水**不**算實心）。 */
+  isSolidAt: (x: number, y: number, z: number) => boolean;
+  /** 該格的方塊 id（注入）。 */
+  blockIdAt: (x: number, y: number, z: number) => number;
+  /** 隨機數來源（可注入 → 測試可重現；省略＝`Math.random`）。 */
+  rng?: () => number;
+}
+
+/**
+ * 母點（整群的中心）：與玩家相距 {@link PASSIVE_SPAWN_MOTHER_MIN_DIST}–{@link PASSIVE_SPAWN_MAX_DIST}
+ * 格、角度均勻（rng 可注入 → 測試可重現）。
+ *
+ * **為什麼母點的下界（28）比成員的下界（24）大**：成員在母點附近 ±2 格取位
+ * → 母點 28 最壞也會讓成員落在 `28 − 2.83 ≈ 25.2`（≥ 24 ✓）。
+ */
+export function passiveMotherPoint(
+  playerPos: { x: number; y: number; z: number },
+  rng: () => number = Math.random,
+): { x: number; z: number; dist: number } {
+  const angle = rng() * Math.PI * 2;
+  const dist =
+    PASSIVE_SPAWN_MOTHER_MIN_DIST +
+    rng() * (PASSIVE_SPAWN_MAX_DIST - PASSIVE_SPAWN_MOTHER_MIN_DIST);
+  return {
+    x: playerPos.x + Math.sin(angle) * dist,
+    z: playerPos.z + Math.cos(angle) * dist,
+    dist,
+  };
+}
+
+/** 可生長的地面：草地（`BLOCK.GRASS`）或泥土（`BLOCK.DIRT`）（spec §B4.2）。 */
+function isSpawnGround(id: number): boolean {
+  return id === BLOCK.GRASS || id === BLOCK.DIRT;
+}
+
+/**
+ * 一柱的「地面」高度（最高的一個草地／泥土實心塊的 y）；沒有可生長的地面 → null。
+ *
+ * **為什麼不直接用 `surfaceYAt` 的結果當地面**：`surfaceYAt` 回的是「**最高**的
+ * 實心塊 + 1」→ 若地面上方有天花板（石頭／樹葉），那個天花板會變成「地面」，
+ * 生物會站在天花板上，而「頭頂空間」的檢查也會永遠成立（形同虛設）。所以在
+ * 最高的實心塊不是草地／泥土時，往下找**真正的地面**，讓頭頂空間的檢查有意義
+ * （天花板正下方就沒有空間 → 不生成）。
+ */
+function groundYAt(
+  x: number,
+  z: number,
+  isSolidAt: (x: number, y: number, z: number) => boolean,
+  blockIdAt: (x: number, y: number, z: number) => number,
+): number | null {
+  // **格座標一定要先 floor**：`world.getBlock(x, y, z)` 只 floor 到 chunk，
+  // 格子內的座標是**原樣**送進 `chunk.get` 的（不 floor）→ 傳小數會讀到
+  // `undefined` → 地面判定全數落空（瀏覽器實測：整個遊戲都不生成）。
+  const cx = Math.floor(x);
+  const cz = Math.floor(z);
+  const surface = surfaceYAt(cx, cz, isSolidAt, blockIdAt);
+  if (surface === null) return null; // 整柱沒有實心塊（未生成）或只有基岩
+  const top = surface - 1;
+  if (isSpawnGround(blockIdAt(cx, top, cz))) return top;
+  for (let y = top - 1; y >= 1; y--) {
+    if (!isSolidAt(cx, y, cz)) continue;
+    if (isSpawnGround(blockIdAt(cx, y, cz))) return y;
+  }
+  return null;
+}
+
+/**
+ * 頭頂空間：身體要佔 `Math.ceil(height)` 格 → 這些格都必須是空的。
+ *
+ * **空間是依高度推導的**（不是原版一律 2 格）：雞／豬 1 格、羊／牛 2 格。
+ * 原版是「至少兩格空間」，但雞只有 0.7 高 → 不需要 2 格；用高度推導比較合理。
+ */
+function hasRoomAbove(
+  x: number,
+  feetY: number,
+  z: number,
+  height: number,
+  isSolidAt: (x: number, y: number, z: number) => boolean,
+): boolean {
+  const cells = Math.ceil(height);
+  const cx = Math.floor(x);
+  const cz = Math.floor(z);
+  for (let i = 0; i < cells; i++) {
+    if (isSolidAt(cx, feetY + i, cz)) return false;
+  }
+  return true;
+}
+
+/**
+ * 「這一輪沒有生成 → 回**同一個參考**」的統一寫法。
+ *
+ * 參數是 `readonly PassiveMob[]`（**我們不會 mutate 輸入**），回傳型別卻要是
+ * `PassiveMob[]`（呼叫端要能直接賦回自己的名單）→ 這裡只做一次型別轉身：
+ * **不複製、不修改**，回傳的就是同一個陣列。
+ */
+function unchanged(mobs: readonly PassiveMob[]): PassiveMob[] {
+  return mobs as PassiveMob[];
+}
+
+/**
+ * 嘗試生成**一群**被動生物（2–4 隻、同一種類）。
+ *
+ * **回傳值的語意**：成功 → **新陣列**（`[...mobs, ...created]`）；沒有生成 →
+ * **同一個參考**（`mobs`）→ 呼叫端可以直接 `mobs = trySpawnPassiveGroup(...)`。
+ *
+ * 流程（任何一步不通就整輪不生成）：
+ * 1. **光照門檻**：`canSpawnPassive(ctx.light)` → 亮度不足（夜間）就不生成。
+ *    B4 用 `clockLight(t)` 近似＝「白天」（spec §B4.2 明示這是簡化，B6 換真光照）。
+ * 2. **總量上限**：達 {@link MAX_PASSIVE_MOBS} 就不生成（回同一個參考）。
+ *    （上限只擋在「開始嘗試」時 → 11 隻時生成一整群會變成 12+。）
+ * 3. **母點**：距玩家 28–48 格、角度均勻（`passiveMotherPoint`）。
+ * 4. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
+ * 5. **群組成**：2–4 隻、同一種類（四種等機率 → 見 `choosePassiveKind` 的簡化說明）。
+ * 6. **成員取位**：母點附近 ±2 格 → 每一隻都重做地面／頭頂空間的檢查；取位
+ *    失敗（地面不對／空間不足）就**跳過該隻** → 群可以少於 2 隻。
+ *
+ * **被動生物不會 despawn**（spec §B4.2；原版被動生物也不會自然消失）→ 這裡
+ * 沒有「離太遠就移除」的分支（那是接線層的約束，`main.ts` 也沒有距離過濾）。
+ */
+export function trySpawnPassiveGroup(
+  mobs: readonly PassiveMob[],
+  playerPos: { x: number; y: number; z: number },
+  ctx: PassiveSpawnCtx,
+): PassiveMob[] {
+  const rng = ctx.rng ?? Math.random;
+  // 1) 光照門檻：亮度 ≥ 9（B4 的 `clockLight` 近似＝白天）
+  if (!canSpawnPassive(ctx.light)) return unchanged(mobs);
+  // 2) 總量上限
+  if (mobs.length >= MAX_PASSIVE_MOBS) return unchanged(mobs);
+  // 3) 母點：距玩家 28–48 格
+  const mother = passiveMotherPoint(playerPos, rng);
+  // 4) 母點的地面（沒有可生長的地面 → 這一輪不生成）
+  if (groundYAt(mother.x, mother.z, ctx.isSolidAt, ctx.blockIdAt) === null) return unchanged(mobs);
+  // 5) 群組成：2–4 隻、同一種類
+  const count =
+    PASSIVE_SPAWN_MIN_GROUP +
+    Math.floor(rng() * (PASSIVE_SPAWN_MAX_GROUP - PASSIVE_SPAWN_MIN_GROUP + 1));
+  const kind = choosePassiveKind(rng);
+  const def = PASSIVE_DEFS[kind];
+  // 6) 成員取位：母點附近 ±2 格 → 每一隻重做地面／頭頂空間的檢查
+  const created: PassiveMob[] = [];
+  for (let i = 0; i < count; i++) {
+    const dx = rng() * PASSIVE_SPAWN_OFFSET * 2 - PASSIVE_SPAWN_OFFSET;
+    const dz = rng() * PASSIVE_SPAWN_OFFSET * 2 - PASSIVE_SPAWN_OFFSET;
+    const x = mother.x + dx;
+    const z = mother.z + dz;
+    const ground = groundYAt(x, z, ctx.isSolidAt, ctx.blockIdAt);
+    if (ground === null) continue; // 這一隻的地面不對 → 跳過
+    const feetY = ground + 1;
+    if (!hasRoomAbove(x, feetY, z, def.height, ctx.isSolidAt)) continue; // 頭頂空間不足
+    created.push(createPassiveMob(kind, { x, y: feetY, z }, rng));
+  }
+  // 7) 沒有成員 → 回同一個參考
+  if (created.length === 0) return unchanged(mobs);
+  return [...mobs, ...created];
 }

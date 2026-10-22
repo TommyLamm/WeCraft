@@ -122,6 +122,8 @@ import {
   isPassiveDead,
   hitPassiveMobId,
   attackPassiveMob,
+  trySpawnPassiveGroup,
+  PASSIVE_SPAWN_INTERVAL_SEC,
   type PassiveMob,
 } from './world/passive-mobs';
 import { createHud, formatDebugLines } from './ui/hud';
@@ -195,6 +197,13 @@ interface WecraftDebug {
   viewMode: () => ViewMode;
   /** 世界上活著的敵對生物數量（B4 Task 5：白天燃燒驗收要看生物數的變化）。 */
   mobs: () => number;
+  /** 世界上活著的**被動生物**數量（B4 Task 7：白天生成／夜間不生成的驗收要看
+   *  數量的變化；被動生物還沒渲染 → 這是唯一能從外部觀察到的線索）。 */
+  passiveMobs: () => number;
+  /** 晝夜的時鐘相位（0–1：0.5 以下是白天）——驗收要對齊「白天／夜間」。 */
+  clock: () => number;
+  /** 被動生物腳底座標的快照（驗收「離玩家 ≥ 24 格」要用；純唯讀）。 */
+  passiveMobPositions: () => Array<{ x: number; y: number; z: number }>;
 }
 
 declare global {
@@ -714,9 +723,15 @@ let spawnAcc = 0; // seconds toward the next 5 s spawn tick
  * - 步進規則不同（漫遊／panic／水中漂浮，不追玩家）；
  * - **不 despawn**（原版被動生物不會自然消失）→ 沒有距離過濾；
  * - **不進 `mobs-changed`**（那是敵對生物的計數事件）。
- * 生成規則在後續任務（那之前這裡一直是空的）。
+ * 生成規則在 B4 Task 7（`world/passive-mobs.ts` 的 `trySpawnPassiveGroup`：白天、
+ * 離玩家 ≥ 24、成群 2-4、上限 12）。
  */
 let passiveMobs: PassiveMob[] = [];
+/**
+ * 被動生物的生成排程（B4 Task 7）：每 {@link PASSIVE_SPAWN_INTERVAL_SEC} 秒嘗試
+ * 一次（與敵對生物的 5 秒排程**並列**，互不影響）。
+ */
+let passiveSpawnAcc = 0;
 
 // ---- 破壞/挖掘粒子（Task 4）----
 // Pure particle sim (world/particles.ts) stepped each playing frame; the
@@ -2263,6 +2278,9 @@ window.__wecraft = {
   modified: () => world.modified.size,
   viewMode: () => viewMode,
   mobs: () => mobs.length,
+  passiveMobs: () => passiveMobs.length,
+  clock: () => clock.t,
+  passiveMobPositions: () => passiveMobs.map((m) => ({ x: m.pos.x, y: m.pos.y, z: m.pos.z })),
 };
 // Task 14: resolve save existence ONCE before the title mounts — Continue
 // renders iff loadGame() found a payload (settled: hidden when there is none,
@@ -2627,6 +2645,19 @@ gs.renderer.setAnimationLoop(() => {
         const before = mobs.length;
         spawnTick();
         if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
+      }
+
+      // 被動生物生成排程（B4 Task 7）：每 10 s 嘗試一次 → 白天 + 離玩家 ≥ 24 +
+      // 成群 2-4 + 上限 12（規則都在 `world/passive-mobs.ts` 這個純邏輯層，
+      // 這裡只提供世界查詢與光照）。**沒有生成時回同一個參考** → 直接賦回去即可。
+      passiveSpawnAcc += dt;
+      if (passiveSpawnAcc >= PASSIVE_SPAWN_INTERVAL_SEC) {
+        passiveSpawnAcc = 0;
+        passiveMobs = trySpawnPassiveGroup(passiveMobs, player.position, {
+          light: clockLight(clock.t),
+          isSolidAt: (x, y, z) => world.isSolid(x, y, z),
+          blockIdAt: (x, y, z) => world.getBlock(x, y, z),
+        });
       }
 
       // Task 14 save point (c): autosave every 30 s while playing — BOTH modes

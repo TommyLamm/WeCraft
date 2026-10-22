@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { BLOCK } from './blocks';
+import { clockLight } from './spawn-rules';
+import { xzDistance } from './mobs';
 import {
   PASSIVE_DEFS,
   MAX_PASSIVE_MOBS,
@@ -11,9 +14,18 @@ import {
   hitPassiveMobId,
   attackPassiveMob,
   choosePassiveKind,
+  trySpawnPassiveGroup,
+  passiveMotherPoint,
+  PASSIVE_SPAWN_INTERVAL_SEC,
+  PASSIVE_SPAWN_MIN_DIST,
+  PASSIVE_SPAWN_MAX_DIST,
+  PASSIVE_SPAWN_MOTHER_MIN_DIST,
+  PASSIVE_SPAWN_MIN_GROUP,
+  PASSIVE_SPAWN_MAX_GROUP,
   type PassiveKind,
   type PassiveMob,
   type PassiveCtx,
+  type PassiveSpawnCtx,
 } from './passive-mobs';
 
 // ---- helpers -------------------------------------------------------------
@@ -385,5 +397,174 @@ describe('choosePassiveKind', () => {
     for (const v of [0, 0.24, 0.5, 0.75, 0.99]) {
       expect(['chicken', 'pig', 'sheep', 'cow']).toContain(choosePassiveKind(() => v));
     }
+  });
+});
+
+// ---- B4 Task 7：生成規則（統計測試）--------------------------------------
+
+/** 固定種子的 rng（mulberry32）→ 生成統計可重現（同一個種子 → 同一串抽樣）。 */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 假世界：每一柱的地面頂面都在 y = 5（腳底 y = 6）、上方是空的。 */
+const groundAt5 = (_x: number, y: number, _z: number): boolean => y <= 5;
+/** 整數格座標？（真實的 `world.getBlock` **不會**自己 floor 格子內的座標 →
+ *  實作必須自己 floor → 這個假世界把「沒 floor」變成「地面不對」→ 測試會紅）。 */
+const isInt = (v: number): boolean => Number.isInteger(v);
+/** 假世界：到處都是草地（**只有整數格座標**才回草 → 不整數 → 空氣）。 */
+const grassEverywhere = (x: number, y: number, z: number): number =>
+  isInt(x) && isInt(y) && isInt(z) ? BLOCK.GRASS : BLOCK.AIR;
+/** 玩家站在地面上（腳底 y = 6）。 */
+const player = { x: 0, y: 6, z: 0 };
+
+/** 白天（0.25）＋ 平地草地的生成上下文。 */
+function spawnCtxOf(over: Partial<PassiveSpawnCtx> = {}): PassiveSpawnCtx {
+  return {
+    light: clockLight(0.25), // 白天 → 亮度 15 ≥ 9 → 可以生成
+    isSolidAt: groundAt5,
+    blockIdAt: grassEverywhere,
+    ...over,
+  };
+}
+
+describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () => {
+  it('passive mobs spawn in daylight on grass', () => {
+    const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(1) }));
+    expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
+    expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
+    // 每隻都站在草地上（地表頂面 y = 5 → 腳底 y = 6）
+    for (const m of out) expect(m.pos.y).toBe(6);
+  });
+
+  it('no passive mob spawns at night', () => {
+    // 夜晚 → `clockLight` 的天空光 = 0 → 亮度不足 → 不生成（回**同一個參考**）
+    const input: PassiveMob[] = [];
+    const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ light: clockLight(0.75), rng: seeded(1) }));
+    expect(out).toBe(input);
+    expect(out.length).toBe(0);
+  });
+
+  it('every spawned passive mob is at least 24 blocks from the player', () => {
+    // **門檻與實作是同一組數字**：母點 28–48、成員偏移 ±2 → 最壞情況
+    // 28 − √(2²+2²) ≈ 25.2 ≥ 24。
+    for (let i = 0; i < 50; i++) {
+      const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(i + 1) }));
+      expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
+      for (const m of out) {
+        expect(xzDistance(m.pos, player)).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_DIST);
+      }
+    }
+  });
+
+  it('the mother point is 28 blocks or more away (so members stay ≥ 24)', () => {
+    // **母點距離的下界（28）與成員實際距離的下界（24）是兩條不同的規則**：
+    // 這裡把母點那條釘住，上面那條釘住成員那條。
+    for (let i = 0; i < 50; i++) {
+      const mother = passiveMotherPoint(player, seeded(i + 1));
+      expect(mother.dist).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MOTHER_MIN_DIST);
+      expect(mother.dist).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_DIST);
+    }
+  });
+
+  it('the members stay within 2 blocks of the mother point', () => {
+    // 同一個種子重播 → 母點是同一個（rng 的前兩抽）→ 逐一比對成員的偏移。
+    for (let i = 0; i < 50; i++) {
+      const seed = i + 1;
+      const mother = passiveMotherPoint(player, seeded(seed));
+      const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(seed) }));
+      expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
+      for (const m of out) {
+        expect(Math.abs(m.pos.x - mother.x)).toBeLessThanOrEqual(2);
+        expect(Math.abs(m.pos.z - mother.z)).toBeLessThanOrEqual(2);
+      }
+    }
+  });
+
+  it('a spawn group holds 2 to 4 mobs', () => {
+    for (let i = 0; i < 100; i++) {
+      const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(i + 1) }));
+      expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
+      expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
+    }
+  });
+
+  it('a group is all one kind', () => {
+    // 一次生成的是**同一種類**的 2–4 隻
+    for (let i = 0; i < 20; i++) {
+      const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(i + 1) }));
+      expect(new Set(out.map((m) => m.kind)).size).toBe(1);
+    }
+  });
+
+  it('the passive cap is 12', () => {
+    const atCap = Array.from({ length: MAX_PASSIVE_MOBS }, (_, i) =>
+      passive('cow', { pos: { x: i, y: 6, z: 0 } }),
+    );
+    const out = trySpawnPassiveGroup(atCap, player, spawnCtxOf({ rng: seeded(1) }));
+    expect(out).toBe(atCap); // 達上限 → 不生成（同一個參考）
+    // 差一隻 → 會生成（整群 2–4 隻 → 變成 12+）
+    const oneBelow = atCap.slice(0, MAX_PASSIVE_MOBS - 1);
+    const more = trySpawnPassiveGroup(oneBelow, player, spawnCtxOf({ rng: seeded(1) }));
+    expect(more).not.toBe(oneBelow);
+    expect(more.length).toBeGreaterThanOrEqual(MAX_PASSIVE_MOBS);
+  });
+
+  it('no passive mob spawns on sand or stone', () => {
+    const sandInput: PassiveMob[] = [];
+    const sand = trySpawnPassiveGroup(sandInput, player, spawnCtxOf({ blockIdAt: () => BLOCK.SAND, rng: seeded(1) }));
+    expect(sand).toBe(sandInput);
+    const stoneInput: PassiveMob[] = [];
+    const stone = trySpawnPassiveGroup(stoneInput, player, spawnCtxOf({ blockIdAt: () => BLOCK.STONE, rng: seeded(1) }));
+    expect(stone).toBe(stoneInput);
+  });
+
+  it('no passive mob spawns under a low ceiling', () => {
+    // 地表頂面 y = 5、其上 y = 6 有一塊石頭（天花板）→ 地面之上的空間是 0 格
+    // → 連 1 格高的雞都塞不進去 → 不生成（同一個參考）。
+    const isSolidAt = (_x: number, y: number, _z: number): boolean => y <= 6;
+    const blockIdAt = (x: number, y: number, z: number): number => {
+      if (!isInt(x) || !isInt(y) || !isInt(z)) return BLOCK.AIR;
+      return y === 6 ? BLOCK.STONE : BLOCK.GRASS;
+    };
+    const input: PassiveMob[] = [];
+    const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ isSolidAt, blockIdAt, rng: seeded(1) }));
+    expect(out).toBe(input);
+    expect(out.length).toBe(0);
+  });
+
+  it('the spawned kinds are all one of the four', () => {
+    for (let i = 0; i < 100; i++) {
+      const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(i + 1) }));
+      for (const m of out) {
+        expect(['chicken', 'pig', 'sheep', 'cow']).toContain(m.kind);
+      }
+    }
+  });
+
+  it('the spawn attempt never mutates the input list', () => {
+    const input: PassiveMob[] = [passive('cow', { pos: { x: 3, y: 6, z: 3 } })];
+    const before = JSON.stringify(input);
+    const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ rng: seeded(3) }));
+    expect(JSON.stringify(input)).toBe(before);
+    expect(out.length).toBeGreaterThanOrEqual(input.length + PASSIVE_SPAWN_MIN_GROUP);
+    expect(out.length).toBeLessThanOrEqual(input.length + PASSIVE_SPAWN_MAX_GROUP);
+  });
+});
+
+describe('B4 Task 7：被動生物生成的常數', () => {
+  it('pins the spawn interval, the distance band and the group size', () => {
+    expect(PASSIVE_SPAWN_INTERVAL_SEC).toBe(10);
+    expect(PASSIVE_SPAWN_MIN_DIST).toBe(24); // spec 的硬下限（成員實際距離）
+    expect(PASSIVE_SPAWN_MAX_DIST).toBe(48);
+    expect(PASSIVE_SPAWN_MOTHER_MIN_DIST).toBe(28); // 母點距離的下界
+    expect(PASSIVE_SPAWN_MIN_GROUP).toBe(2);
+    expect(PASSIVE_SPAWN_MAX_GROUP).toBe(4);
   });
 });
