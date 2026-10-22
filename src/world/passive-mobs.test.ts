@@ -122,9 +122,8 @@ describe('stepPassiveMob (漫遊／panic／水中漂浮)', () => {
 
   it('a panicked mob flees away from the attacker', () => {
     const m = passive('cow', { pos: { x: 0, y: 0, z: 0 } });
-    // 第三個參數是「被推開的方向」（`damageMob` 的形狀）→ 攻擊者在 x = 10，
-    // 生物被推向 -x（背離攻擊者）。
-    const hurt = damagePassiveMob(m, 1, { x: -1, z: 0 });
+    // 第三個參數是**攻擊者的位置**（brief 釘死）→ 攻擊者在 x = 10 → 生物往 -x 逃
+    const hurt = damagePassiveMob(m, 1, { x: 10, z: 0 });
     expect(hurt.panicTimer).toBe(5);
     const out = stepPassiveMob(hurt, ctxOf({ dt: 0.5, playerPos: { x: 10, y: 0, z: 0 } }));
     expect(out.pos.x).toBeLessThan(hurt.pos.x); // 遠離 x = 10 的攻擊者
@@ -302,11 +301,12 @@ describe('hitPassiveMobId / attackPassiveMob（玩家的瞄準與揮擊）', () 
 
   it('the knockback pushes the mob further than an identical mob without it', () => {
     // **對照組**：兩隻牛起始位置／方向／受傷完全相同，只有「有沒有擊退衝量」不同。
-    //   A：給了擊退方向 {0, -1} → kbVel = (0, -6)、panicDir = π（往 -z 逃）
-    //   B：沒給擊退方向     → kbVel = (0, 0)、panicDir = 漫遊方向 + π = π（同樣往 -z 逃）
-    // → AI 的行為完全一致，位移差**只可能**來自擊退（審查 I-1 的回歸釘子）。
+    //   A：第 4 個參數給了擊退方向 {0, -1} → kbVel = (0, -6)
+    //   B：沒有給擊退方向                          → kbVel = (0, 0)
+    // 兩隻都沒有給 `from` → panicDir 都是「漫遊方向 + π = π」（往 -z 逃）→ AI 的
+    // 行為完全一致，位移差**只可能**來自擊退（審查 I-1 的回歸釘子）。
     const start = passive('cow', { pos: { x: 0, y: 0, z: 0 }, wanderDir: 0, wanderTimer: 10 });
-    const knocked = damagePassiveMob(start, 1, { x: 0, z: -1 });
+    const knocked = damagePassiveMob(start, 1, undefined, { x: 0, z: -1 });
     const plain = damagePassiveMob(start, 1);
     expect(knocked.kbVel.z).toBeCloseTo(-6, 5);
     expect(plain.kbVel.z).toBe(0);
@@ -323,9 +323,29 @@ describe('hitPassiveMobId / attackPassiveMob（玩家的瞄準與揮擊）', () 
     expect(Math.abs(a.pos.z - b.pos.z)).toBeGreaterThan(0.5);
   });
 
+  it('the attacker position and the knockback direction are independent', () => {
+    const m = passive('cow', { pos: { x: 0, y: 0, z: 0 }, wanderDir: 0, wanderTimer: 10 });
+    // 只給 `from`（攻擊者在 x = 10）→ panic 背離它（-x），但**沒有**擊退衝量
+    const onlyFrom = damagePassiveMob(m, 1, { x: 10, z: 0 });
+    expect(onlyFrom.panicDir).toBeCloseTo(Math.atan2(0 - 10, 0 - 0), 10);
+    expect(onlyFrom.kbVel.x).toBe(0);
+    expect(onlyFrom.kbVel.z).toBe(0);
+    // 只給 `knockbackDir`（往 +z 推）→ 有衝量，panic 方向用「漫遊方向 + π」
+    const onlyKnock = damagePassiveMob(m, 1, undefined, { x: 0, z: 1 });
+    expect(onlyKnock.kbVel.z).toBeCloseTo(6, 5);
+    expect(onlyKnock.kbVel.x).toBeCloseTo(0, 5);
+    expect(onlyKnock.panicDir).toBeCloseTo(Math.PI, 10);
+    // 兩個都給、而且**方向不同** → 各自只影響自己的部分
+    const both = damagePassiveMob(m, 1, { x: 10, z: 0 }, { x: 0, z: 1 });
+    expect(both.panicDir).toBeCloseTo(Math.atan2(-10, 0), 10); // 背離攻擊者（-x）
+    expect(both.kbVel.z).toBeCloseTo(6, 5); // 擊退往 +z
+    expect(both.kbVel.x).toBeCloseTo(0, 5);
+  });
+
   it('the knockback impulse decays and clears', () => {
     const m = passive('cow', { pos: { x: 0, y: 0, z: 0 } });
-    const hurt = damagePassiveMob(m, 1, { x: 0, z: -1 });
+    // 第 4 個參數＝擊退方向（往 -z 推）
+    const hurt = damagePassiveMob(m, 1, undefined, { x: 0, z: -1 });
     expect(hurt.kbVel.z).toBeCloseTo(-6, 5);
     // `mobs.ts` 的衰減：0.1^dt（dt = 1 → ×0.1）
     const one = stepPassiveMob(hurt, ctxOf({ dt: 1 }));

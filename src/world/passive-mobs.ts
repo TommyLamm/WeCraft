@@ -189,28 +189,30 @@ export function isPassiveDead(m: PassiveMob): boolean {
 /**
  * 施加傷害：回傳一隻**新的**被動生物，血量夾在 0（不會是負數）。
  *
- * **形狀沿用 `mobs.ts` 的 `damageMob(m, dmg, knockbackDir?)`**：
- * - `knockbackDir`（任何水平向量；3D 的也吃得下，y 會被忽略）＝**生物要被推開的
- *   方向**（＝背離攻擊者）。方向長度 0 或非有限 → 不施加衝量。
- * - 擊退衝量加到 {@link PassiveMob.kbVel}（`KNOCKBACK_SPEED` × 正規化後的方向），
- *   由 `stepPassiveMob` 逐幀衰減並推動位置。
+ * **兩個參數各自只管一件事（互相獨立）**：
+ * - `from`（**攻擊者的位置**，brief 釘死的第三個參數）→ 決定 `panicDir`
+ *   （**背離攻擊者**）：`atan2(m.pos.x - from.x, m.pos.z - from.z)`；沒有 `from`
+ *   時用「原本的漫遊方向 + π」＝往回跑。
+ * - `knockbackDir`（**擊退方向**，任何水平向量；3D 的也吃得下，y 會被忽略）→
+ *   決定 `kbVel` 的衝量：方向正規化後 × `KNOCKBACK_SPEED`（**照 `mobs.ts` 的
+ *   `damageMob` 的數學**），由 `stepPassiveMob` 逐幀衰減並推動位置。方向長度 0
+ *   或非有限 → 不施加。
  *
  * 其他規則：
  * - **NaN／非有限的傷害 → 不扣血**（repo 的 NaN 防護慣例）。
  * - **負數／0 的傷害 → 不扣血、也不 panic**（「沒有受傷就沒有反應」）。
- * - **真的受傷 → panic**：{@link PANIC_SEC} 秒的逃跑時間，`panicDir` ＝**背離
- *   攻擊者**的方向（有 `knockbackDir` 時就是它的方向；沒有就用「原本的漫遊方向
- *   + π」＝往回跑）。
+ * - **真的受傷 → panic**：{@link PANIC_SEC} 秒的逃跑時間。
  * - **永遠回傳新物件**（與 `damageMob` 同一個慣例；不在任何分支回同一個參考）。 */
 export function damagePassiveMob(
   m: PassiveMob,
   dmg: number,
+  from?: { x: number; z: number },
   knockbackDir?: { x: number; y?: number; z: number },
 ): PassiveMob {
   const hurt = Number.isFinite(dmg) && dmg > 0;
   const hp = hurt ? Math.max(0, m.hp - dmg) : m.hp;
 
-  // ---- 擊退：與 `mobs.ts` 的 `damageMob` 同一段數學 ----
+  // ---- 擊退：與 `mobs.ts` 的 `damageMob` 同一段數學（與 panic 互相獨立）----
   const kbVel = { x: m.kbVel.x, z: m.kbVel.z };
   const len = knockbackDir ? Math.hypot(knockbackDir.x, knockbackDir.z) : 0;
   const hasDir = Number.isFinite(len) && len > 0;
@@ -219,14 +221,13 @@ export function damagePassiveMob(
     kbVel.z += (knockbackDir.z / len) * KNOCKBACK_SPEED;
   }
 
-  // ---- 驚慌：受傷才開始；方向＝擊退的方向（＝背離攻擊者） ----
+  // ---- 驚慌：受傷才開始；方向＝背離攻擊者（`from`） ----
   const panicTimer = hurt ? PANIC_SEC : m.panicTimer;
   let panicDir = m.panicDir;
   if (hurt) {
-    panicDir =
-      knockbackDir && hasDir
-        ? Math.atan2(knockbackDir.x, knockbackDir.z)
-        : m.wanderDir + Math.PI;
+    panicDir = from
+      ? Math.atan2(m.pos.x - from.x, m.pos.z - from.z)
+      : m.wanderDir + Math.PI;
   }
 
   return { ...m, hp, kbVel, panicTimer, panicDir };
@@ -435,10 +436,13 @@ export interface PassiveAttackResult {
  * 一次近戰揮擊：找出準星下最近的那隻被動生物（`reach` 內），扣血並沿著**水平
  * 視線方向**給一個擊退。
  *
- * - **擊退方向**＝`knockDir`（玩家的視線方向 → 生物被推離玩家）。衝量寫進
- *   {@link PassiveMob.kbVel}（`KNOCKBACK_SPEED`，與 `mobs.ts` 同一個常數）→
- *   由 `stepPassiveMob` 逐幀衰減並**推動位置**（疊加在 AI 的水平速度之上）。
- * - **panic 的方向**＝同一個擊退方向（＝背離攻擊者）→ 被打到就往反方向逃。
+ * - **攻擊者位置**＝`eyePos`（玩家的眼睛）→ 傳給 `damagePassiveMob` 的 `from`，
+ *   生物的 panic 方向＝**背離玩家**。
+ * - **擊退方向**＝`knockDir`（玩家的水平視線方向 → 把生物推離玩家）→ 傳給
+ *   `damagePassiveMob` 的 `knockbackDir`，衝量寫進 {@link PassiveMob.kbVel}
+ *   （`KNOCKBACK_SPEED`，與 `mobs.ts` 同一個常數）→ 由 `stepPassiveMob` 逐幀衰減
+ *   並**推動位置**（疊加在 AI 的水平速度之上）。
+ * - 兩個方向在遊戲內一致：玩家在 +z 看著生物 → 背離玩家 ＝ -z ＝ 視線方向。
  * - 沒打中 → 回傳**同一個陣列參考**與 `hitId: null`（與 `attackMob` 同一個慣例）。
  */
 export function attackPassiveMob(
@@ -455,9 +459,10 @@ export function attackPassiveMob(
   const next = mobs.map((m) => {
     if (applied || m.id !== hitId) return m; // 其他生物保留原參考
     applied = true;
-    // 傷害＋擊退＋驚慌：一次完成（`damagePassiveMob` 與 `mobs.ts` 的 `damageMob`
-    // 同一個形狀：第三個參數是「被推開的方向」）。
-    return damagePassiveMob(m, damage, knockDir);
+    // 傷害＋擊退＋驚慌：一次完成。
+    // `from` ＝攻擊者位置（玩家的眼睛）→ panic 方向＝背離玩家；
+    // `knockbackDir` ＝擊退方向（水平視線方向）→ kbVel 衝量。
+    return damagePassiveMob(m, damage, { x: eyePos.x, z: eyePos.z }, knockDir);
   });
   return { mobs: next, hitId };
 }
