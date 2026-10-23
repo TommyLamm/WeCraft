@@ -4,7 +4,9 @@ import { World } from './world';
 import { BLOCK, getBlockDef, type BlockId } from './blocks';
 import {
   MAX_LIGHT,
+  SKY_SCALE_NIGHT,
   TORCH_LIGHT,
+  internalSkyLight,
   blockLightAt,
   computeChunkLight,
   computeChunkTopY,
@@ -12,6 +14,7 @@ import {
   lightAt,
   setLight,
   skyLightAt,
+  skyLightScale,
 } from './lighting';
 
 // ── 測試輔助（測試檔內自帶，不依賴 main）────────────────────────────────────
@@ -74,7 +77,9 @@ describe('block light engine (B6 Task 1)', () => {
     computeChunkLight(w, 0, 0);
     expect(blockLightAt(w, 14, 64, 0)).toBe(13); // 邊界內側
     expect(blockLightAt(w, 16, 64, 0)).toBe(13); // x=16 屬區塊 (1,0)
-    expect(skyLightAt(w, 16, 64, 0)).toBe(0); // 本 task 不動天空光通道（Task 2 接上）
+    // B6 Task 2 接上天空光：(16,64,0) 是開闊天空柱 → 全高柱掃描種下 15
+    // （空鄰塊 topY=0 也不影響——掃描上界是世界高，不是 topY）
+    expect(skyLightAt(w, 16, 64, 0)).toBe(15);
   });
 
   it('light spreads back into a late neighbour', () => {
@@ -112,9 +117,10 @@ describe('block light engine (B6 Task 1)', () => {
     expect(chunk.light!.length).toBe(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT); // 65536
     const idx = chunkIndex(0, 65, 0);
     expect(chunk.light![idx] & 0x0f).toBe(14); // 方塊光在低 4 位
-    expect(chunk.light![idx] >> 4).toBe(0); // 天空光在高 4 位（本 task 恆 0）
+    // B6 Task 2 接上天空光：(0,65,0) 是開闊天空柱（POPPY 透明）→ 高 4 位 = 15
+    expect(chunk.light![idx] >> 4).toBe(15);
     expect(blockLightAt(w, 0, 65, 0)).toBe(14);
-    expect(skyLightAt(w, 0, 65, 0)).toBe(0);
+    expect(skyLightAt(w, 0, 65, 0)).toBe(15);
   });
 
   it('setting a block marks the chunk and its eight neighbours for relighting', () => {
@@ -212,5 +218,84 @@ describe('block light engine (B6 Task 1)', () => {
     chunk.lightDirty = true;
     computeChunkLight(w, 3, 7);
     expect(chunk.lightDirty).toBe(false); // 重算完成 → 旗標清掉
+  });
+});
+
+// ══ 天空光引擎（B6 Task 2）══════════════════════════════════════════════════
+
+describe('sky light engine (B6 Task 2)', () => {
+  it('open sky is 15 and a roof shades the ground one level at a time', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15); // 地板
+    w.setBlock(5, 70, 5, BLOCK.STONE); // 單格厚屋簷
+    computeChunkLight(w, 0, 0);
+    // 稽核修正後的期望值（已用腳本重算）：單格厚屋簷下，整列只暗一階——
+    // 旁邊的開闊柱 (4,·,5) 在每個高度水平餵 14 過來，不會「每往下一格 −1」。
+    expect(skyLightAt(w, 5, 71, 5)).toBe(15); // 屋簷上方（開闊天空）
+    expect(skyLightAt(w, 4, 69, 5)).toBe(15); // 旁邊的開闊柱
+    expect(skyLightAt(w, 5, 69, 5)).toBe(14); // 屋簷下：水平 −1
+    expect(skyLightAt(w, 5, 68, 5)).toBe(14); // 不是 13！（開闊柱每個高度都餵 14）
+  });
+
+  it('a walled pocket loses one level per step from the opening', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15); // 地板
+    fill(w, BLOCK.STONE, 0, 70, 0, 15, 70, 15); // 屋頂
+    w.setBlock(0, 70, 5, BLOCK.AIR); // 唯一的洞口
+    fill(w, BLOCK.STONE, 0, 64, 0, 15, 69, 0); // 側牆 z=0
+    fill(w, BLOCK.STONE, 0, 64, 15, 15, 69, 15); // 側牆 z=15
+    fill(w, BLOCK.STONE, 15, 64, 5, 15, 69, 5); // 後牆 x=15（z=5）
+    computeChunkLight(w, 0, 0);
+    expect(skyLightAt(w, 0, 69, 5)).toBe(15); // 洞口正下方（垂直下傳不衰減）
+    expect(skyLightAt(w, 1, 69, 5)).toBe(14); // 離洞口每往內一格 −1
+    expect(skyLightAt(w, 2, 69, 5)).toBe(13);
+    expect(skyLightAt(w, 3, 69, 5)).toBe(12);
+    expect(skyLightAt(w, 2, 68, 5)).toBe(13); // 同一水平深度往下也是 13
+  });
+
+  it('a sealed cave has no sky light', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 2, 65, 2, 4, 67, 4); // 3×3×3 石殼
+    w.setBlock(3, 66, 3, BLOCK.AIR); // 挖掉中心 → 密閉空腔
+    computeChunkLight(w, 0, 0);
+    expect(skyLightAt(w, 3, 66, 3)).toBe(0); // 腔內全暗
+  });
+
+  it('sky light crosses the chunk border', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15);
+    w.addChunk(new Chunk(1, 0)); // ★ 鄰塊必須先存在（稽核修正）
+    w.setBlock(16, 70, 5, BLOCK.STONE); // 屋頂在「鄰塊」裡 → (16,69,5) 被遮蔽
+    computeChunkLight(w, 0, 0);
+    expect(skyLightAt(w, 15, 69, 5)).toBe(15); // 開闊柱
+    expect(skyLightAt(w, 16, 69, 5)).toBe(14); // 跨邊界水平 −1
+    computeChunkLight(w, 1, 0); // 重算鄰塊 → 不被清 0
+    expect(skyLightAt(w, 16, 69, 5)).toBe(14);
+  });
+
+  it('removing a roof restores the sky light', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15);
+    w.setBlock(5, 70, 5, BLOCK.STONE);
+    computeChunkLight(w, 0, 0);
+    expect(skyLightAt(w, 5, 69, 5)).toBe(14);
+    w.setBlock(5, 70, 5, BLOCK.AIR); // 挖掉屋簷
+    computeChunkLight(w, 0, 0);
+    expect(skyLightAt(w, 5, 69, 5)).toBe(15);
+    expect(skyLightAt(w, 5, 68, 5)).toBe(15); // 垂直下傳不衰減
+  });
+
+  it('internal sky light follows the vanilla day curve', () => {
+    expect(internalSkyLight(15, 0.25)).toBe(15); // 正午
+    expect(internalSkyLight(15, 0.75)).toBe(4); // 午夜
+    expect(internalSkyLight(14, 0.25)).toBe(14);
+    expect(internalSkyLight(0, 0.25)).toBe(0); // 洞穴：15 − 15 → 0
+    expect(internalSkyLight(0, 0.75)).toBe(0); // 不得為負
+  });
+
+  it('the rendered sky scale is 1 at noon and dimmer at night', () => {
+    expect(skyLightScale(0.25)).toBe(1);
+    expect(skyLightScale(0.75)).toBe(SKY_SCALE_NIGHT);
+    expect(skyLightScale(0.25)).toBeGreaterThan(skyLightScale(0.75));
   });
 });

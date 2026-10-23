@@ -22,6 +22,7 @@
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkIndex, type Chunk } from './chunk';
 import { BLOCK, getBlockDef, isTransparent } from './blocks';
 import type { World } from './world';
+import { dayFactor } from '../core/daynight';
 
 /** 最高光照等級（16 個等級 0..15）。 */
 export const MAX_LIGHT = 15;
@@ -187,7 +188,9 @@ export function groupChunks(world: World, cx: number, cz: number): Chunk[] {
  *  - 只清空並重算區塊 (cx,cz) 自己；鄰塊由它們自己的重算負責。
  *  - 播種時掃描周圍 3×3 群組（含對角）內所有已存在區塊的發光來源；
  *    鄰塊不存在就跳過 → 光寫不進不存在的區塊（後生成時由它自己的重算拉回）。
- *  - 本任務只做方塊光通道；天空光在 Task 2 接上（骨架在此建立）。 */
+ *  - 天空光（Task 2）：3×3 群組的**開闊天空柱**也是來源——鄰塊的開闊柱會
+ *    水平餵光進本區塊（只掃本區塊會讓邊界少一階，稽核修正）；柱掃描上界
+ *    用各區塊自己的 `topY`。 */
 export function computeChunkLight(world: World, cx: number, cz: number): void {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) return;
@@ -211,6 +214,8 @@ export function computeChunkLight(world: World, cx: number, cz: number): void {
       }
       propagateBlockLight(world, wx, ly, wz, emission);
     }
+    // 天空光：該群組區塊的開闊柱播種＋多來源 BFS（Task 2）
+    seedSkyColumns(world, src.cx, src.cz);
   }
   chunk.lightDirty = false;
 }
@@ -239,4 +244,98 @@ export function computeChunkTopY(chunk: Chunk): number {
     }
   }
   return 0;
+}
+
+// ── 天空光（B6 Task 2）───────────────────────────────────────────────────────
+
+/** 夜間的渲染用天空比例（正午 1.0 → 夜間 0.85；Task 4 餵給著色器 uniform）。 */
+export const SKY_SCALE_NIGHT = 0.85;
+/** 極暗下限（Task 4 的頂點光 factor 夾在此之上，避免全黑）。 */
+export const MIN_LIGHT_FACTOR = 0.05;
+
+/** 渲染用天空比例：正午 1.0、夜間 `SKY_SCALE_NIGHT`（與日夜曲線同源）。 */
+export function skyLightScale(t: number): number {
+  return SKY_SCALE_NIGHT + (1 - SKY_SCALE_NIGHT) * dayFactor(t);
+}
+
+/** 內部天空光（生怪判準用，原版地下亮度曲線）：正午 15、午夜 4；
+ *  天空光不足 15 時再減 (15 − skyLevel)（洞穴裡 = 0，永不為負）。 */
+export function internalSkyLight(skyLevel: number, t: number): number {
+  const base = 4 + (MAX_LIGHT - 4) * dayFactor(t); // 正午 15、午夜 4
+  return Math.max(0, Math.round(base - (MAX_LIGHT - skyLevel)));
+}
+
+/** 天空光 BFS 共用骨架：pop 一格 → 6 鄰居擴張。衰減規則與方塊光唯一的差別：
+ *  **往下且 level = 15 時不衰減**（垂直下傳，minecraft.wiki/Light 的 sky light
+ *  直曝柱）；其餘每格 −1。只寫比現值高的格；不透明擋光；目標區塊不存在 →
+ *  setLight 回 false → **不寫也不 push**（與方塊光同一條終止規則）。 */
+function expandSkyQueue(world: World): void {
+  while (queueHead < queueTail) {
+    const px = queue[queueHead * 4];
+    const py = queue[queueHead * 4 + 1];
+    const pz = queue[queueHead * 4 + 2];
+    const lv = queue[queueHead * 4 + 3];
+    queueHead += 1;
+    if (lv <= 1) continue; // 再傳就是 0，不值得寫
+    for (const [dx, dy, dz] of NEIGHBORS6) {
+      const nx = px + dx;
+      const ny = py + dy;
+      const nz = pz + dz;
+      if (ny < 0 || ny >= CHUNK_HEIGHT) continue;
+      if (isOpaqueAt(world, nx, ny, nz)) continue; // 不透明方塊擋光（也不持有光）
+      const next = dy === -1 && lv === MAX_LIGHT ? MAX_LIGHT : lv - 1;
+      if (skyLightAt(world, nx, ny, nz) >= next) continue; // 只寫比現值高的格
+      // ★ 目標區塊不存在 → setLight 回 false → 不寫、也不 push（佇列必終止）
+      if (!setLight(world, nx, ny, nz, { sky: next, block: blockLightAt(world, nx, ny, nz) })) {
+        continue;
+      }
+      pushQueue(nx, ny, nz, next);
+    }
+  }
+}
+
+/** 單來源天空光 flood-fill（世界座標；種子格持 `level`）。
+ *  多來源的大量播種請用 {@link seedSkyColumns}（整區塊一次 BFS，快得多）。 */
+export function propagateSkyLight(
+  world: World,
+  sx: number,
+  sy: number,
+  sz: number,
+  level: number,
+): void {
+  resetQueue(); // 保險：即使前一次異常中斷也從乾淨狀態開始
+  pushQueue(Math.floor(sx), Math.floor(sy), Math.floor(sz), level);
+  expandSkyQueue(world);
+  resetQueue();
+}
+
+/** 逐柱播種天空光 15（遇到第一個不透明方塊即停；透明格含水、玻璃、葉、
+ *  植被——簡化：不做過濾衰減），**整區塊一次多來源 BFS**（結果與「每個種子
+ *  各跑一次 BFS」完全相同，但快約 15 倍）。
+ *
+ *  **掃描上界 = CHUNK_HEIGHT−1（全高），不是 `chunk.topY`**（2026-10-23 裁決，
+ *  覆寫稽核的 topY 上界）：topY 只涵蓋「地形最高方塊 + 1」，其上的開闊天空柱
+ *  若不播種就恆 0——(a) 稽核自己的跨區塊測試要求 `(15,69,5) === 15`（69 在
+ *  只有地板的區塊的 topY=64 之上）；(b) 玩家在山上蓋塔時，塔的可見面取樣的
+ *  正是 topY 之上的格子 → 光照會錯。topY 只增不減 ⇒ topY 之上的格子**必然
+ *  全是空氣** ⇒ 全高掃描的結果就是物理正確值；topY 的維護保留（T3 生成接線、
+ *  其他消費者），光照不再依賴它。 */
+export function seedSkyColumns(world: World, cx: number, cz: number): void {
+  const chunk = world.getChunk(cx, cz);
+  if (!chunk) return;
+  resetQueue();
+  for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const wx = cx * CHUNK_SIZE + lx;
+      const wz = cz * CHUNK_SIZE + lz;
+      for (let ly = CHUNK_HEIGHT - 1; ly >= 0; ly--) {
+        if (isOpaqueAt(world, wx, ly, wz)) break; // 第一個不透明方塊 → 柱結束
+        // 種子寫入保留該格既有的方塊光（兩條通道互不覆蓋）
+        if (!setLight(world, wx, ly, wz, { sky: 15, block: blockLightAt(world, wx, ly, wz) })) break;
+        pushQueue(wx, ly, wz, 15); // 種子進同一個佇列
+      }
+    }
+  }
+  expandSkyQueue(world);
+  resetQueue();
 }

@@ -117,6 +117,14 @@ function windowWeight(t: number, center: number): number {
   return dist >= ORANGE_HALF_WIDTH ? 0 : 1 - dist / ORANGE_HALF_WIDTH;
 }
 
+/** 白天權重：太陽仰角 → 0..1（正午 1、夜間 0）。`skyColors` 與 B6 的天空光
+ *  引擎（`internalSkyLight`／`skyLightScale`）共用同一條曲線——正午 1、
+ *  深夜 0、晨昏 smoothstep 過渡。與 `skyColors` 內原本內聯的 `dayF` 完全同式。 */
+export function dayFactor(t: number): number {
+  const elev = Math.cos((t - 0.25) * Math.PI * 2); // sun elevation (= sunDirection(t).y)
+  return clamp01((elev + 0.2) / 0.4);
+}
+
 /** Sky/fog/light state for clock position `t`:
  *  - `dayF` — 1 well above the horizon, 0 well below (smoothstep-ish via sun
  *    elevation); drives base sky lerp plus ambient/sun intensities.
@@ -126,8 +134,7 @@ function windowWeight(t: number, center: number): number {
  *    sunset stays on the horizon (`sky`), the dome top goes straight to dusk.
  *  `fog` always equals `sky` (Phase 1 scene keeps both in lockstep). */
 export function skyColors(t: number): DayNightColors {
-  const elev = Math.cos((t - 0.25) * Math.PI * 2); // sun elevation (= sunDirection(t).y)
-  const dayF = clamp01((elev + 0.2) / 0.4);
+  const dayF = dayFactor(t); // 同一條曲線（原本內聯，數值完全相同）
   const base = lerpColor(NIGHT_SKY, DAY_SKY, dayF);
   const orangeW = Math.max(windowWeight(t, 0), windowWeight(t, 0.5));
   const sky = lerpColor(base, GOLDEN_SKY, orangeW * ORANGE_PEAK);

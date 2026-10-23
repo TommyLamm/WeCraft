@@ -6,6 +6,7 @@ import {
   sunDirection,
   skyColors,
   lerpColor,
+  dayFactor,
   DEFAULT_DAY_LENGTH_SEC,
 } from './daynight';
 
@@ -199,5 +200,14 @@ describe('lerpColor', () => {
     expect(lerpColor(0x87ceeb, 0x0a0e1a, -1)).toBe(0x87ceeb);
     expect(lerpColor(0x87ceeb, 0x0a0e1a, 4)).toBe(0x0a0e1a);
     expect(lerpColor(0x87ceeb, 0x0a0e1a, NaN)).toBe(0x87ceeb);
+  });
+});
+
+describe('dayFactor (B6 Task 2)', () => {
+  it('dayFactor is 1 at noon and 0 deep at night', () => {
+    expect(dayFactor(0.25)).toBe(1);
+    expect(dayFactor(0.75)).toBe(0);
+    expect(dayFactor(0)).toBeGreaterThanOrEqual(0);
+    expect(dayFactor(1)).toBeGreaterThanOrEqual(0);
   });
 });
