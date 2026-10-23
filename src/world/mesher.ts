@@ -12,6 +12,8 @@ export interface MeshData {
   // look exactly like the old one-quad-per-block faces
   texIndex: Float32Array; // 1 per vert (texture-array layer = atlas tile)
   shades: Float32Array; // 1 per vert (face brightness × AO, 0..1 → vertex color)
+  lightSky: Float32Array; // 1 per vert (角落平均的天空光 0..15，B6 Task 4)
+  lightBlock: Float32Array; // 1 per vert (角落平均的方塊光 0..15，B6 Task 4)
   indices: Uint32Array;
   quadCount: number;
 }
@@ -61,26 +63,44 @@ const AXIS_SIZE: readonly [number, number, number] = [CHUNK_SIZE, CHUNK_HEIGHT, 
 /** Per-vertex occlusion levels 0..3 (unshadowed) → shade multiplier. */
 const AO_FACTORS = [0.5, 0.7, 0.85, 1.0];
 
-/** Bit 23 of the signature: start of the packed per-corner AO (2 bits per
- *  corner, emitQuad order). `shadeKey` ≤ 100 occupies 7 bits below it. */
-const AO_SHIFT = 23;
+/**
+ * 合併簽章的位元配置（B6 Task 4 重排——32 bits 剛好塞滿，必須重排才塞得下
+ * 8 位光照鍵）：
+ * ```
+ * bits 0..7   id（8）
+ * bits 8..13  tile（6，貼圖層 0..63；ARRAY_LAYERS = 64）
+ * bits 14..21 lightKey（8）：面向**前面那一格**的光照 byte（sky<<4 | block）
+ * bits 22..29 aoKey（8，4 角 × 2 bits）
+ * bit  30     water flag
+ * bit  31     保留 0（簽章維持正 int32）
+ * ```
+ * 為什麼塞得下：原本的 `shadeKey`（7 bits）是**每個面方向固定**的（FACES 表的
+ * `shade`），而 mask 本來就每方向重建 → `shade` 不需要進簽章，7 bits 直接讓給
+ * 光照；`tile` 再從 8 bits 縮成 6 bits（tile ≤ 63 ✓）多出 2 bits。
+ * 光照鍵進簽章 → 光照邊界自然切開貪心合併的 quad（明暗交界不焊接）。
+ */
+const LIGHT_SHIFT = 14;
+const AO_SHIFT = 22;
 
 /** Signature flag: this face belongs to the water mesh (Task 16 pass).
- *  Bit 31 so the AO bits below it stay intact in the Int32 mask. */
-const WATER_BIT = 1 << 31;
+ *  Bit 30 (bit 31 stays 0 → the packed signature is a positive int32). */
+const WATER_BIT = 1 << 30;
 
-/** Merge signature of one visible face: id | tile<<8 | shadeKey<<16 |
- *  aoKey<<23 | water-bit<<31. Faces merge only on an exact match — different
- *  block ids never merge even when they share a texture, and a per-corner AO
- *  difference keeps differently shadowed faces from welding across the seam. */
+/** Merge signature of one visible face: id | tile<<8 | lightKey<<14 |
+ *  aoKey<<22 | water-bit<<30. Faces merge only on an exact match — different
+ *  block ids never merge even when they share a texture, a per-corner AO
+ *  difference keeps differently shadowed faces from welding across the seam,
+ *  and a light-level difference splits the merge along the light boundary. */
 function faceSignature(
   id: number,
   tile: number,
-  shadeKey: number,
+  lightKey: number,
   aoKey: number,
   isWater: boolean,
 ): number {
-  return id | (tile << 8) | (shadeKey << 16) | (aoKey << AO_SHIFT) | (isWater ? WATER_BIT : 0);
+  return (
+    id | (tile << 8) | (lightKey << LIGHT_SHIFT) | (aoKey << AO_SHIFT) | (isWater ? WATER_BIT : 0)
+  );
 }
 
 /**
@@ -102,7 +122,7 @@ function faceVisible(id: number, neighbor: number): boolean {
 /** The eight neighbouring chunks' data (undefined = not loaded → acts as
  *  AIR). Diagonals exist for the per-vertex AO samples that reach a corner
  *  across both chunk axes at once. */
-interface NeighborChunks {
+export interface NeighborChunks {
   xp: Uint8Array | undefined;
   xm: Uint8Array | undefined;
   zp: Uint8Array | undefined;
@@ -140,7 +160,7 @@ function sampleAt(
 /** The three occluder samples hugging one emitted corner: the edge step
  *  along u, the edge step along v, and their diagonal — all on the face's
  *  front plane (one block off the face). */
-type CornerSamples = [
+export type CornerSamples = [
   readonly [number, number, number],
   readonly [number, number, number],
   readonly [number, number, number],
@@ -202,12 +222,111 @@ function faceAoKey(
   return key;
 }
 
+// ── 頂點光照取樣（B6 Task 4）────────────────────────────────────────────────
+//
+// 資料來源是 `Chunk.light`（每格 1 byte：sky<<4 | block，lighting.ts 維護）。
+// 取樣會越出本區塊 ±1 格（角落取樣踩到對角鄰塊）→ meshChunk 開頭一次把
+// 3×3 群組的光照陣列解析進 lightGrid（索引 (dx+1)*3 + (dz+1)），之後每個
+// 取樣都是 O(1) 陣列讀取——每個可見面要讀 17 次（面前格 1 次＋四角各 4 格），
+// 逐次走 `world.getChunk` 的字串鍵 Map 會吃掉每幀 2 塊的網格預算（Task 3
+// 在 lighting.ts 熱路徑做過同一筆帳）。取樣位移固定為 ±1 → 只會落在 3×3
+// 群組內。缺席／未點光的區塊讀 0（與 lighting.ts 公開讀取的「缺席 = 暗」
+// 規則一致；視距外緣 ring r+1 未點亮造成最外緣暗縫是預期行為，走近即亮）。
+
+/** 3×3 群組的 `Chunk.light` 陣列（null／缺席 → undefined → 讀 0）。 */
+type LightGrid = readonly (Uint8Array | undefined)[];
+
+function resolveLightGrid(world: World, cx: number, cz: number): LightGrid {
+  const grid: (Uint8Array | undefined)[] = new Array(9).fill(undefined);
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      grid[(dx + 1) * 3 + (dz + 1)] = world.getChunk(cx + dx, cz + dz)?.light ?? undefined;
+    }
+  }
+  return grid;
+}
+
+/** Light byte (sky<<4 | block) at chunk-local `cell + d`; the offset may step
+ *  one chunk over (±1 only — the corner samples' reach). Out of world height /
+ *  unlit / missing chunk → 0. */
+function lightByteAt(
+  grid: LightGrid,
+  cell: readonly [number, number, number],
+  d: readonly [number, number, number],
+): number {
+  const nx = cell[0] + d[0];
+  const ny = cell[1] + d[1];
+  const nz = cell[2] + d[2];
+  if (ny < 0 || ny >= CHUNK_HEIGHT) return 0;
+  const sx = nx < 0 ? -1 : nx >= CHUNK_SIZE ? 1 : 0;
+  const sz = nz < 0 ? -1 : nz >= CHUNK_SIZE ? 1 : 0;
+  const light = grid[(sx + 1) * 3 + (sz + 1)];
+  if (!light) return 0;
+  return light[chunkIndex(nx - sx * CHUNK_SIZE, ny, nz - sz * CHUNK_SIZE)];
+}
+
+/** 一個角落的平滑光照：取該角在**面向前面一側**周圍最多 4 格——面前那一格
+ *  本身＋這個角的三個 AO 取樣格——的 sky/block 平均；**不透明格不列入**
+ *  （不透明方塊不持有光，連分母都不佔）；沒有格可平均 → 0。
+ *
+ *  `samples` 是**單一角**的三個取樣位移（faceCornerSamples 的 emit 序），
+ *  每個位移都已內含「向前面一步」的分量 → 面前那格可由三者推出：
+ *  `front = s0 + s1 − s2`（逐分量；faceCornerSamples 的構造保證
+ *  s0 = front + u、s1 = front + v、s2 = front + u + v）。
+ *
+ *  （brief 的 Produces 型別寫 `samples: readonly CornerSamples[]`，但「單格
+ *  參數＋單一回傳」下沒有「第幾角」的選擇子，陣列版只能退成 brief 明文禁止
+ *  的 anchor 平均 → 依 brief 自己的 Step 3 散文與設計決策〈角落平均〉收斂成
+ *  單一 CornerSamples；偏離記錄在 task-4-report.md。） */
+function cornerLightInGrid(
+  grid: LightGrid,
+  data: Uint8Array,
+  cell: readonly [number, number, number],
+  samples: CornerSamples,
+  neighbors: NeighborChunks,
+): { sky: number; block: number } {
+  const front: [number, number, number] = [
+    samples[0][0] + samples[1][0] - samples[2][0],
+    samples[0][1] + samples[1][1] - samples[2][1],
+    samples[0][2] + samples[1][2] - samples[2][2],
+  ];
+  let sky = 0;
+  let block = 0;
+  let n = 0;
+  for (let i = 0; i < 4; i++) {
+    const d = i === 0 ? front : samples[i - 1];
+    if (!isTransparent(sampleAt(data, cell, d, neighbors))) continue; // 不透明格不持有光
+    const b = lightByteAt(grid, cell, d);
+    sky += b >> 4;
+    block += b & 0x0f;
+    n++;
+  }
+  return n === 0 ? { sky: 0, block: 0 } : { sky: sky / n, block: block / n };
+}
+
+/** {@link cornerLightInGrid} 的公開版（測試／跨模組取用）：現場解析 3×3 群組
+ *  的光照陣列再做角落平均。熱路徑（meshChunk）請走內部版＋既有的 lightGrid。 */
+export function cornerLight(
+  world: World,
+  cx: number,
+  cz: number,
+  cell: readonly [number, number, number],
+  samples: CornerSamples,
+  neighbors: NeighborChunks,
+): { sky: number; block: number } {
+  const home = world.getChunk(cx, cz);
+  if (!home) return { sky: 0, block: 0 };
+  return cornerLightInGrid(resolveLightGrid(world, cx, cz), home.data, cell, samples, neighbors);
+}
+
 interface MeshBuilder {
   positions: number[];
   normals: number[];
   uvs: number[];
   texIndex: number[];
   shades: number[];
+  lightSky: number[];
+  lightBlock: number[];
   indices: number[];
   quadCount: number;
 }
@@ -219,6 +338,8 @@ function createBuilder(): MeshBuilder {
     uvs: [],
     texIndex: [],
     shades: [],
+    lightSky: [],
+    lightBlock: [],
     indices: [],
     quadCount: 0,
   };
@@ -231,6 +352,8 @@ function finish(b: MeshBuilder): MeshData {
     uvs: new Float32Array(b.uvs),
     texIndex: new Float32Array(b.texIndex),
     shades: new Float32Array(b.shades),
+    lightSky: new Float32Array(b.lightSky),
+    lightBlock: new Float32Array(b.lightBlock),
     indices: new Uint32Array(b.indices),
     quadCount: b.quadCount,
   };
@@ -242,7 +365,11 @@ function finish(b: MeshBuilder): MeshData {
  *  exact texture it had before greedy merging. `aoKey` is the anchor cell's
  *  packed per-corner AO — the levels for the rect's four corners in emit
  *  order. Every cell of the rect carries the same pack (equal signature), so
- *  those corner levels are exact for all of them, not an approximation. */
+ *  those corner levels are exact for all of them, not an approximation.
+ *
+ *  `cornerSky`／`cornerBlock` 則**不同於 AO**：它們是 caller 已經對「每個角
+ *  所在格」各算一次角落平均的結果（emit 序、每頂點各 1 值，與 positions 同
+ *  步推入）——合併 quad 不能共用 anchor 格的光照取樣（見 greedySweep emit）。 */
 function emitQuad(
   b: MeshBuilder,
   face: GreedyFace,
@@ -253,6 +380,8 @@ function emitQuad(
   v1: number,
   tile: number,
   aoKey: number,
+  cornerSky: readonly number[],
+  cornerBlock: readonly number[],
   baseX: number,
   baseZ: number,
 ): void {
@@ -281,6 +410,8 @@ function emitQuad(
     b.uvs.push(uvs[i][0], uvs[i][1]);
     b.texIndex.push(tile);
     b.shades.push(face.shade * AO_FACTORS[(aoKey >> (2 * i)) & 3]);
+    b.lightSky.push(cornerSky[i]);
+    b.lightBlock.push(cornerBlock[i]);
   }
   b.indices.push(vertBase, vertBase + 1, vertBase + 2, vertBase + 2, vertBase + 1, vertBase + 3);
   b.quadCount++;
@@ -307,6 +438,9 @@ const CROSS_NORMAL = Math.SQRT1_2;
  *  - UV 是 0..1 的**單一** tile（不同於 cube pass 的「以格為單位」的 uv）。
  *  - **不做 AO**：cross 方塊是透明的 → 不是遮蔽者 → 也不會讓鄰邊變暗；
  *    所以每個頂點的 shade 直接填 1.0。
+ *  - **光照（B6 Task 4，brief 指定的簡化）**：植被用**自己那一格**的光照
+ *    （不透明與否同規則；不做角落平均——十字模型四個角都在同一格內，角落
+ *    平均的收益趨近 0，且植被的 smooth lighting 原版也是逐格近似）。
  *  - 索引寫法比照 `emitQuad`（兩片平面各自 4 頂點 2 三角形）。 */
 function emitCrossQuads(
   b: MeshBuilder,
@@ -316,6 +450,8 @@ function emitCrossQuads(
   ly: number,
   lz: number,
   tile: number,
+  lightSky: number,
+  lightBlock: number,
 ): void {
   const x = baseX + lx;
   const y = ly;
@@ -360,6 +496,8 @@ function emitCrossQuads(
       b.uvs.push(uvs[i][0], uvs[i][1]);
       b.texIndex.push(tile);
       b.shades.push(1.0); // cross 不做 AO
+      b.lightSky.push(lightSky);
+      b.lightBlock.push(lightBlock);
     }
     b.indices.push(vertBase, vertBase + 1, vertBase + 2, vertBase + 2, vertBase + 1, vertBase + 3);
     b.quadCount++;
@@ -402,9 +540,10 @@ function greedySweep(
 
 /** Greedy-mesh one chunk. Per face direction (±x/±y/±z) and per slice along
  *  the normal axis, visible faces form a 2D mask keyed by merge signature
- *  (block, tile, face brightness, packed per-corner AO); rectangles of
- *  identical signature collapse into one quad. Water cells are split into
- *  their own mesh (Task 16 renders them translucently). */
+ *  (block, tile, front-cell light, packed per-corner AO); rectangles of
+ *  identical signature collapse into one quad — a light-level difference
+ *  splits the merge along the light boundary (B6 Task 4). Water cells are
+ *  split into their own mesh (Task 16 renders them translucently). */
 export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) {
@@ -426,6 +565,7 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     xmzp: world.getChunk(cx - 1, cz + 1)?.data,
     xmzm: world.getChunk(cx - 1, cz - 1)?.data,
   };
+  const lightGrid = resolveLightGrid(world, cx, cz); // B6 Task 4：3×3 光照陣列一次解析
   const baseX = cx * CHUNK_SIZE;
   const baseZ = cz * CHUNK_SIZE;
   const opaqueB = createBuilder();
@@ -436,9 +576,8 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     const nDim = AXIS_SIZE[face.nAxis];
     const uDim = AXIS_SIZE[face.uAxis];
     const vDim = AXIS_SIZE[face.vAxis];
-    // Face brightness (constant per direction) keeps its signature slots;
-    // the per-cell AO pack sits just above it and can split merges.
-    const shadeKey = Math.round(face.shade * 100);
+    // Face brightness (constant per direction) 不再進簽章（B6 Task 4 重排）：
+    // mask 本來就每方向重建 → shade 在 emitQuad 時由 face.shade 套上即可。
     const samples = faceCornerSamples(face);
     const mask = new Int32Array(uDim * vDim);
     const cell: [number, number, number] = [0, 0, 0];
@@ -457,7 +596,10 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           if (!faceVisible(id, sampleAt(data, cell, face.dir, neighbors))) continue;
           const tile = getBlockDef(id)[face.tileKey];
           const aoKey = faceAoKey(data, cell, samples, neighbors);
-          mask[au + av * uDim] = faceSignature(id, tile, shadeKey, aoKey, id === BLOCK.WATER);
+          // 光照鍵 = 面向**前面那一格**的光（牆面顯示的是它前面那格空氣的光，
+          // 與原版一致——不是方塊自身的光）。byte 本身就是 sky<<4 | block。
+          const lightKey = lightByteAt(lightGrid, cell, face.dir);
+          mask[au + av * uDim] = faceSignature(id, tile, lightKey, aoKey, id === BLOCK.WATER);
           any = true;
         }
       }
@@ -471,13 +613,35 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           vDim,
           (sig) => sig !== 0 && ((sig & WATER_BIT) !== 0) === wantWater,
           (au, av, w, h, sig) => {
-            const tile = (sig >> 8) & 0xff;
+            const tile = (sig >> 8) & 0x3f;
             const aoKey = (sig >> AO_SHIFT) & 0xff;
             const u0 = face.uFlip ? au + w : au;
             const u1 = face.uFlip ? au : au + w;
             const v0 = face.vFlip ? av + h : av;
             const v1 = face.vFlip ? av : av + h;
-            emitQuad(b, face, slicePlane, u0, u1, v0, v1, tile, aoKey, baseX, baseZ);
+            // 合併 quad 的四個角各用「該角所在格」的取樣：emit 角 u0v0／u1v0／
+            // u0v1／u1v1 分別貼著 (uLo,vLo)／(uHi,vLo)／(uLo,vHi)／(uHi,vHi)
+            // 格（uFlip／vFlip 時 uLo/uHi、vLo/vHi 對調）——每個角各算一次
+            // 角落平均，**不得共用 anchor 格的取樣**，否則 16 格大的地板會出
+            // 現一道線性漸層、光邊界錯位。
+            const uLo = face.uFlip ? au + w - 1 : au;
+            const uHi = face.uFlip ? au : au + w - 1;
+            const vLo = face.vFlip ? av + h - 1 : av;
+            const vHi = face.vFlip ? av : av + h - 1;
+            const cu = [uLo, uHi, uLo, uHi];
+            const cv = [vLo, vLo, vHi, vHi];
+            const cornerSky: number[] = [];
+            const cornerBlock: number[] = [];
+            for (let k = 0; k < 4; k++) {
+              const cc: [number, number, number] = [0, 0, 0];
+              cc[face.nAxis] = s;
+              cc[face.uAxis] = cu[k];
+              cc[face.vAxis] = cv[k];
+              const cl = cornerLightInGrid(lightGrid, data, cc, samples[k], neighbors);
+              cornerSky.push(cl.sky);
+              cornerBlock.push(cl.block);
+            }
+            emitQuad(b, face, slicePlane, u0, u1, v0, v1, tile, aoKey, cornerSky, cornerBlock, baseX, baseZ);
           },
         );
       };
@@ -495,7 +659,19 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
         const id = data[chunkIndex(lx, ly, lz)];
         if (id === BLOCK.AIR) continue;
         if (!isCross(id)) continue;
-        emitCrossQuads(foliageB, baseX, baseZ, lx, ly, lz, getBlockDef(id).top);
+        // 植被用自己那一格的光照（不做角落平均 → 見 emitCrossQuads 的註解）
+        const l = chunk.light ? chunk.light[chunkIndex(lx, ly, lz)] : 0;
+        emitCrossQuads(
+          foliageB,
+          baseX,
+          baseZ,
+          lx,
+          ly,
+          lz,
+          getBlockDef(id).top,
+          l >> 4,
+          l & 0x0f,
+        );
       }
     }
   }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { World } from '../world/world';
 import { chunkKey } from '../world/world';
 import { meshChunk, type MeshData } from '../world/mesher';
+import { MIN_LIGHT_FACTOR } from '../world/lighting';
 import { getTextureArray } from './textures';
 
 /** The slice of three's onBeforeCompile shader object this patch touches —
@@ -45,6 +46,63 @@ export function patchTextureArrayShader(
       'vec4 sampledDiffuseColor = texture( mapArray, vec3( vTileUv, vTexIndex ) );\n\tdiffuseColor *= sampledDiffuseColor;',
     );
   shader.uniforms.mapArray = { value: mapArray };
+}
+
+/** B6 Task 4：所有地形材質（opaque／water／foliage／之後的 torch pass）**共用**
+ *  的光照 uniform——同一個物件參考 → `ChunkRenderer.setSkyScale` 改一次、
+ *  全部 pass 同步生效（若每個材質各自保存一份，只有最後編譯的那個材質會在
+ *  夜間變暗——稽核修正點）。 */
+export interface LightUniforms {
+  uSkyScale: { value: number };
+  uMinLight: { value: number };
+}
+
+/** 地形專用 patch：貼圖陣列取樣（共用 patch）＋ 頂點光屬性 ＋ 光照 uniform。
+ *
+ *  **為什麼不直接擴充 `patchTextureArrayShader`**（2026-10-20 稽核修正）：那個
+ *  patch 也被粒子（particles.ts）與手持物（viewmodel.ts）使用，它們的幾何沒有
+ *  `lightSky`／`lightBlock` 屬性（WebGL 缺省值 0）→ `lf = max(0.05, 0) = 0.05`
+ *  → 粒子與手持物只剩 5% 亮度（近乎全黑）。→ 拆成兩個 patch：地形走這個、
+ *  粒子／手持物**維持 plain patch**（行為完全不變）。
+ *
+ *  fragment 端的亮度：`lf = max(天空光/15 × uSkyScale, 方塊光/15)` 再夾
+ *  `uMinLight` 下限——天空光隨日夜縮放、方塊光（火把）不隨日夜 → max 取較亮
+ *  者。乘在 `#include <map_fragment>` 的替換字串尾端（`diffuseColor` 已含貼圖
+ *  與頂點色；乘算可交換 → 結果一致），且在 `alphatest_fragment` 之前 →
+ *  玻璃／葉子的鏤空照常運作。 */
+export function patchTerrainLightShader(
+  shader: TextureArrayShader,
+  mapArray: THREE.DataArrayTexture,
+  light: LightUniforms,
+): void {
+  patchTextureArrayShader(shader, mapArray);
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      '#include <common>',
+      '#include <common>\nattribute float lightSky;\nattribute float lightBlock;\nvarying float vLightSky;\nvarying float vLightBlock;',
+    )
+    .replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\nvLightSky = lightSky;\nvLightBlock = lightBlock;',
+    );
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      '#include <common>',
+      '#include <common>\nuniform float uSkyScale;\nuniform float uMinLight;\nvarying float vLightSky;\nvarying float vLightBlock;',
+    )
+    // plain patch 已吃掉 <map_fragment> → 亮度乘算追加在**它的替換字串尾端**。
+    .replace(
+      'diffuseColor *= sampledDiffuseColor;',
+      [
+        'diffuseColor *= sampledDiffuseColor;',
+        '\tfloat lf = max(vLightSky * (1.0/15.0) * uSkyScale, vLightBlock * (1.0/15.0));',
+        '\tlf = max(lf, uMinLight);',
+        '\tdiffuseColor.rgb *= lf;',
+      ].join('\n'),
+    );
+  // 傳入**外部的 uniform 物件**（不是新建）→ 所有材質共用同一個參考。
+  shader.uniforms.uSkyScale = light.uSkyScale;
+  shader.uniforms.uMinLight = light.uMinLight;
 }
 
 /** Task 16: the translucent water pass contract, as a pure params fn so tests
@@ -98,6 +156,10 @@ function buildMeshGeometry(data: MeshData): THREE.BufferGeometry | null {
   geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
   geometry.setAttribute('texIndex', new THREE.BufferAttribute(data.texIndex, 1));
   geometry.setAttribute('color', new THREE.BufferAttribute(shadeColors(data.shades), 3));
+  // B6 Task 4：頂點光照（每頂點 1 值）。每個走 patchTerrainLightShader 的 pass
+  // 都必須掛這兩個屬性——缺任何一個，該 pass 的屬性缺省 0 → 整片變黑。
+  geometry.setAttribute('lightSky', new THREE.BufferAttribute(data.lightSky, 1));
+  geometry.setAttribute('lightBlock', new THREE.BufferAttribute(data.lightBlock, 1));
   geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geometry.computeBoundingSphere();
   return geometry;
@@ -136,6 +198,14 @@ export class ChunkRenderer {
    *  particles all sample the same upload. Owned by the module memo, so this
    *  class never disposes it (dispose() frees only its own materials). */
   private textureArray: THREE.DataArrayTexture;
+  /** B6 Task 4：所有地形材質**共用**的光照 uniform（單一物件參考）。
+   *  `setSkyScale` 每幀只改 `uSkyScale.value` → 太陽落下時地形即時變暗，
+   *  不觸發重算光照、不重網格（Review Focus #4：日夜切換不得引發重網格風暴）。
+   *  初始值 1 頂著 → 首次 render 前 setSkyScale 也有效。 */
+  private lightUniforms: LightUniforms = {
+    uSkyScale: { value: 1 },
+    uMinLight: { value: MIN_LIGHT_FACTOR },
+  };
 
   constructor(private scene: THREE.Scene) {
     this.textureArray = getTextureArray();
@@ -148,7 +218,7 @@ export class ChunkRenderer {
       fog: true,
     });
     this.material.onBeforeCompile = (shader) => {
-      patchTextureArrayShader(shader, this.textureArray);
+      patchTerrainLightShader(shader, this.textureArray, this.lightUniforms);
     };
     // Task 16: translucent water pass — SAME DataArrayTexture instance as the
     // opaque pass (no second texture array), same onBeforeCompile patch.
@@ -161,7 +231,7 @@ export class ChunkRenderer {
       fog: true,
     });
     this.waterMaterial.onBeforeCompile = (shader) => {
-      patchTextureArrayShader(shader, this.textureArray);
+      patchTerrainLightShader(shader, this.textureArray, this.lightUniforms);
     };
     // B3 Task 4: cross 型植被 pass（花／草）。同一張 DataArrayTexture、同一個
     // onBeforeCompile patch；alphaTest 0.1 讓花莖與草葉的透明背景被裁掉；
@@ -173,8 +243,14 @@ export class ChunkRenderer {
       fog: true,
     });
     this.foliageMaterial.onBeforeCompile = (shader) => {
-      patchTextureArrayShader(shader, this.textureArray);
+      patchTerrainLightShader(shader, this.textureArray, this.lightUniforms);
     };
+  }
+
+  /** 每幀更新天空比例（0..1）：只改 uniform → 不重網格。四個地形 pass 共用
+   *  同一個 `lightUniforms` 物件 → 這一行讓全部 pass 同步變暗。 */
+  setSkyScale(value: number): void {
+    this.lightUniforms.uSkyScale.value = value;
   }
 
   rebuild(world: World, cx: number, cz: number): void {

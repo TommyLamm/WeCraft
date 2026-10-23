@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import {
   ChunkRenderer,
   patchTextureArrayShader,
+  patchTerrainLightShader,
+  type LightUniforms,
   waterMaterialParams,
   WATER_RENDER_ORDER,
 } from './chunk-renderer';
@@ -89,6 +91,63 @@ describe('patchTextureArrayShader', () => {
 });
 
 // ---- Task 16: translucent water pass (pure params) ----
+
+// ---- B6 Task 4: 地形光照 patch（頂點光屬性＋天空比例 uniform）----
+
+/** 與 ChunkRenderer 建構時同一組預設值的 LightUniforms。 */
+function lightUniforms(): LightUniforms {
+  return { uSkyScale: { value: 1 }, uMinLight: { value: 0.05 } };
+}
+
+describe('patchTerrainLightShader (B6 Task 4)', () => {
+  it('the terrain light patch declares the light attributes and uniforms', () => {
+    const shader = fakeShader();
+    const light = lightUniforms();
+    patchTerrainLightShader(shader, new THREE.DataArrayTexture(), light);
+    expect(shader.vertexShader).toContain('attribute float lightSky;');
+    expect(shader.vertexShader).toContain('attribute float lightBlock;');
+    expect(shader.vertexShader).toContain('vLightSky = lightSky;');
+    expect(shader.vertexShader).toContain('vLightBlock = lightBlock;');
+    expect(shader.fragmentShader).toContain('uniform float uSkyScale;');
+    expect(shader.fragmentShader).toContain('uniform float uMinLight;');
+    // 塞進來的是**外部 uniform 物件本身**（不是複製品）→ setSkyScale 一次全部生效
+    expect(shader.uniforms.uSkyScale).toBe(light.uSkyScale);
+    expect(shader.uniforms.uMinLight).toBe(light.uMinLight);
+
+    // hook 必須落在 REAL lambert sources（include 改名會靜默 no-op → 夜間不變暗）
+    const real = {
+      uniforms: {} as Record<string, { value: unknown }>,
+      vertexShader: THREE.ShaderLib.lambert.vertexShader,
+      fragmentShader: THREE.ShaderLib.lambert.fragmentShader,
+    };
+    patchTerrainLightShader(real, new THREE.DataArrayTexture(), light);
+    expect(real.vertexShader).toContain('attribute float lightSky;');
+    expect(real.fragmentShader).toContain('diffuseColor.rgb *= lf;');
+  });
+
+  it('the fragment multiplies the diffuse colour by the light factor', () => {
+    const shader = fakeShader();
+    patchTerrainLightShader(shader, new THREE.DataArrayTexture(), lightUniforms());
+    // lf = max(天空光/15 × 天空比例, 方塊光/15)，再夾 uMinLight 下限
+    expect(shader.fragmentShader).toContain(
+      'max(vLightSky * (1.0/15.0) * uSkyScale, vLightBlock * (1.0/15.0))',
+    );
+    expect(shader.fragmentShader).toContain('lf = max(lf, uMinLight);');
+    expect(shader.fragmentShader).toContain('diffuseColor.rgb *= lf;');
+  });
+
+  it('the plain texture patch does not touch the light attributes', () => {
+    // 粒子（particles.ts）與手持物（viewmodel.ts）用的就是這個 patch：它們的
+    // 幾何沒有 lightSky／lightBlock 屬性 → 若掛上光照 patch，缺省屬性 0 →
+    // lf = max(0.05, 0) = 0.05 → 只剩 5% 亮度（近乎全黑）→ 不得掛上。
+    const shader = fakeShader();
+    patchTextureArrayShader(shader, new THREE.DataArrayTexture());
+    expect(shader.vertexShader).not.toContain('lightSky');
+    expect(shader.vertexShader).not.toContain('lightBlock');
+    expect(shader.fragmentShader).not.toContain('uSkyScale');
+    expect(shader.fragmentShader).not.toContain('uMinLight');
+  });
+});
 
 describe('waterMaterialParams', () => {
   it('is the exact translucent-water contract', () => {
@@ -314,5 +373,29 @@ describe('ChunkRenderer', () => {
     a.dispose();
     b.dispose();
     expect(disposed).toBe(false); // chunk teardown must not break the shared array
+  });
+
+  // ---- B6 Task 4：日夜只改 uniform，四個 pass 一起變暗 ----
+  it('setSkyScale updates every material of the renderer', () => {
+    // jsdom 沒有 WebGL → 材質從不 render → onBeforeCompile 永不執行 →
+    // 依照既有慣例**手動呼叫**每個材質的 onBeforeCompile（fake shader）。
+    const { scene, renderer } = setup();
+    renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
+    const mats = [0, 1, 2].map(
+      (i) => (scene.children[i] as THREE.Mesh).material as THREE.MeshLambertMaterial,
+    );
+    const shaders = mats.map(() => fakeShader());
+    mats.forEach((m, i) => (m.onBeforeCompile as (s: typeof shaders[0]) => void)(shaders[i]));
+    // 三個 pass 共用**同一個** uniform 物件 → setSkyScale 一次全部生效
+    // （若每個材質各自保存一份、只指到最後編譯的那個 → 其餘 pass 夜間不變暗）。
+    for (const s of shaders.slice(1)) {
+      expect(s.uniforms.uSkyScale).toBe(shaders[0].uniforms.uSkyScale);
+    }
+    renderer.setSkyScale(0.5);
+    for (const s of shaders) expect(s.uniforms.uSkyScale.value).toBe(0.5);
+    // 首次 render 前呼叫也要有效（uniform 初始值 1 頂著，不依賴 onBeforeCompile）
+    renderer.setSkyScale(1);
+    expect(shaders[0].uniforms.uSkyScale.value).toBe(1);
+    renderer.dispose();
   });
 });

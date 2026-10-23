@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { meshChunk, type MeshData } from './mesher';
+import { meshChunk, cornerLight, type MeshData, type CornerSamples } from './mesher';
 import { World } from './world';
 import { Chunk, CHUNK_SIZE } from './chunk';
 import { BLOCK, type BlockId } from './blocks';
+import { setLight } from './lighting';
 
 function worldWithBlock(x: number, y: number, z: number, id: BlockId): World {
   const w = new World();
@@ -584,5 +585,140 @@ describe('per-vertex AO', () => {
     expect(nz).toHaveLength(1);
     for (let i = 0; i < 4; i++)
       expect(nz[0].shades[i]).toBeCloseTo(nz[0].verts[i][0] === 1 ? 0.86 * 0.85 : 0.86);
+  });
+});
+
+// ---- B6 Task 4: 頂點光照（lightSky／lightBlock 屬性、光照鍵切分合併、角落平均）----
+
+describe('mesh lighting (B6 Task 4)', () => {
+  /** meshChunk 同款的鄰塊取樣窗（供 cornerLight 直測用）。 */
+  function neighborsOf(w: World, cx: number, cz: number) {
+    return {
+      xp: w.getChunk(cx + 1, cz)?.data,
+      xm: w.getChunk(cx - 1, cz)?.data,
+      zp: w.getChunk(cx, cz + 1)?.data,
+      zm: w.getChunk(cx, cz - 1)?.data,
+      xpzp: w.getChunk(cx + 1, cz + 1)?.data,
+      xpzm: w.getChunk(cx + 1, cz - 1)?.data,
+      xmzp: w.getChunk(cx - 1, cz + 1)?.data,
+      xmzm: w.getChunk(cx - 1, cz - 1)?.data,
+    };
+  }
+
+  /** y=65 面上唯一一個朝上的 quad：四個頂點座標＋每頂點的兩條光照。 */
+  function topQuadAt65(m: MeshData): {
+    verts: number[][];
+    sky: number[];
+    block: number[];
+  } {
+    for (let q = 0; q < m.quadCount; q++) {
+      const verts = quadVerts(m, q);
+      if (quadNormal(m, q)[1] === 1 && verts.every((p) => p[1] === 65)) {
+        return {
+          verts,
+          sky: [0, 1, 2, 3].map((i) => m.lightSky[q * 4 + i]),
+          block: [0, 1, 2, 3].map((i) => m.lightBlock[q * 4 + i]),
+        };
+      }
+    }
+    throw new Error('no up-facing quad at y=65');
+  }
+
+  it('faces with different light do not merge', () => {
+    // 地板左半（x=0..1）上方的空氣格亮 14（火把旁）、右半全暗 → 光照鍵取
+    // 「面向前面那一格」的光 → 兩半的合併簽章不同 → 朝上的面切成兩個 quad。
+    const w = layer(BLOCK.GRASS, 64);
+    for (let z = 0; z < CHUNK_SIZE; z++) {
+      setLight(w, 0, 65, z, { sky: 0, block: 14 });
+      setLight(w, 1, 65, z, { sky: 0, block: 14 });
+    }
+    expect(countQuads(opaque(w), [0, 1, 0])).toBe(2);
+    // control：沒有光照差異的同一層仍是一整片 → 切分只來自光照鍵
+    expect(countQuads(opaque(layer(BLOCK.GRASS, 64)), [0, 1, 0])).toBe(1);
+  });
+
+  it('vertex light is the corner average of the non opaque neighbours', () => {
+    // 單一地板方塊，對角上方的空氣格亮 14（模擬火把光）→ 頂面唯一一個 quad，
+    // 靠近亮格的頂點拿到角落平均 (0+0+0+14)/4 = 3.5，對角的頂點為 0。
+    const w = worldWithBlock(0, 64, 0, BLOCK.GRASS);
+    setLight(w, 1, 65, 1, { sky: 0, block: 14 });
+    const { verts, sky, block } = topQuadAt65(opaque(w));
+    for (const v of [...sky, ...block]) {
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(15);
+    }
+    const nearAt = verts.findIndex((p) => p[0] === 1 && p[2] === 1);
+    const farAt = verts.findIndex((p) => p[0] === 0 && p[2] === 0);
+    expect(nearAt).toBeGreaterThanOrEqual(0);
+    expect(farAt).toBeGreaterThanOrEqual(0);
+    expect(block[nearAt]).toBeGreaterThan(0);
+    expect(block[nearAt]).toBeLessThan(15);
+    expect(block[nearAt]).toBeCloseTo(3.5, 5); // (front 0 + u 0 + v 0 + diag 14) / 4
+    expect(block[farAt]).toBeLessThan(block[nearAt]); // 背對光源的一端較暗
+    expect(sky[nearAt]).toBe(0); // 只設了方塊光 → 天空光通道不受影響
+  });
+
+  it('a merged quad uses each corner cell light, not the anchor cell', () => {
+    // 2×2 地板、火把在西側（鄰塊的空氣格亮 14）：四格的「面前格光」都是 0 →
+    // 頂面仍合併成**一個** quad；但每個頂點要取「該角所在格」的角落平均 ——
+    // 若實作誤用 anchor 格的取樣，四個角會是同一組值。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.addChunk(new Chunk(-1, 0)); // 火把亮格住在西側鄰塊（必須先存在）
+    for (let x = 0; x <= 1; x++)
+      for (let z = 0; z <= 1; z++) w.setBlock(x, 64, z, BLOCK.GRASS);
+    setLight(w, -1, 65, 0, { sky: 0, block: 14 });
+    setLight(w, -1, 65, 1, { sky: 0, block: 14 });
+    const { verts, sky, block } = topQuadAt65(opaque(w));
+    // 前置：真的合併成一個 quad（否則這條測試什麼都沒釘到）
+    expect(verts).toHaveLength(4);
+    expect(new Set(block).size).toBeGreaterThan(1); // 四個角不是同一組值
+    for (let i = 0; i < 4; i++) {
+      if (verts[i][0] === 0) {
+        // 兩個靠火把的角（西緣）：(front 0 + 西側 14 + 其餘 0) / 4
+        expect(block[i]).toBeCloseTo(3.5, 5);
+      } else {
+        // 兩個背對的角：全 0
+        expect(block[i]).toBe(0);
+      }
+      expect(sky[i]).toBe(0);
+    }
+  });
+
+  it('the mesh carries one light attribute per vertex', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.GRASS);
+    w.setBlock(7, 65, 5, BLOCK.DANDELION);
+    const m = meshChunk(w, 0, 0);
+    for (const mesh of [m.opaque, m.water, m.foliage]) {
+      expect(mesh.lightSky.length).toBe(mesh.positions.length / 3);
+      expect(mesh.lightBlock.length).toBe(mesh.positions.length / 3);
+    }
+    // 植被 pass 同樣帶光照（用自己那一格的光、不做角落平均 → 8 頂點各一值）
+    expect(m.foliage.quadCount).toBe(2);
+    expect(m.foliage.lightBlock.length).toBe(8);
+  });
+
+  it('cornerLight averages the corner cells and skips opaque ones', () => {
+    // 地板 (0,64,0) 頂面的 (x=0,z=0) 角：取樣 = 前方 (0,65,0) ＋ u 鄰 (−1,65,0)
+    // ＋ v 鄰 (0,65,−1) ＋ 對角 (−1,65,−1)。西側鄰塊的空氣格亮 14 → 平均 3.5。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.addChunk(new Chunk(-1, 0));
+    w.setBlock(0, 64, 0, BLOCK.GRASS);
+    setLight(w, -1, 65, 0, { sky: 0, block: 14 });
+    // 頂面 corner 2 的三個取樣（su=−1、sv=−1；已內含 +y 的面前位移）
+    const samples: CornerSamples = [
+      [-1, 1, 0],
+      [0, 1, -1],
+      [-1, 1, -1],
+    ];
+    const lit = cornerLight(w, 0, 0, [0, 64, 0], samples, neighborsOf(w, 0, 0));
+    expect(lit.sky).toBe(0);
+    expect(lit.block).toBeCloseTo(3.5, 5);
+    // 不透明格**不列入**平均（連分母都不佔）：把亮格換成石頭（光值仍在——
+    // setBlock 不清 light）→ 若實作把不透明格算進分母，這裡會是 14/4 而非 0
+    w.setBlock(-1, 65, 0, BLOCK.STONE);
+    const dark = cornerLight(w, 0, 0, [0, 64, 0], samples, neighborsOf(w, 0, 0));
+    expect(dark.block).toBe(0);
   });
 });

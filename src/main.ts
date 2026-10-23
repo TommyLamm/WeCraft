@@ -15,7 +15,7 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 // B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
 // 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
-import { computeChunkLight, computeChunkTopY, markLightDirty } from './world/lighting';
+import { computeChunkLight, computeChunkTopY, markLightDirty, skyLightScale } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -2618,6 +2618,9 @@ gs.renderer.setAnimationLoop(() => {
     };
     gs.setDayNight(sunDir, tinted);
     sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
+    // B6 Task 4：天空比例只進著色器 uniform（每幀一行）→ 太陽落下時地形即時
+    // 變暗，不觸發重算光照、不重網格（Review Focus #4：不得引發重網格風暴）。
+    chunkRenderer.setSkyScale(skyLightScale(clock.t));
     if (phase !== prevPhase) {
       bus.emit('time-changed', { phase, t: clock.t });
       // Task 12: phase events feed first_night (day after a seen night).

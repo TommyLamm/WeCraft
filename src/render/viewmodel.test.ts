@@ -117,6 +117,23 @@ describe('createViewmodel', () => {
     expect(iconMesh.visible).toBe(false);
   });
 
+  it('the viewmodel block material keeps the plain patch (no terrain light uniforms)', () => {
+    // B6 Task 4 守門：手持方塊的幾何沒有 lightSky／lightBlock 屬性 → 掛上地形
+    // 光照 patch 會讓缺省屬性 0 → lf = 0.05 → 只剩 5% 亮度（近乎全黑）。
+    const { blockMesh } = setup();
+    const mat = blockMesh.material as THREE.MeshBasicMaterial;
+    const shader = {
+      uniforms: {} as Record<string, { value: unknown }>,
+      vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+      fragmentShader: ['#include <common>', '#include <map_fragment>'].join('\n'),
+    };
+    (mat.onBeforeCompile as (s: typeof shader) => void)(shader);
+    expect(shader.vertexShader).not.toContain('lightSky');
+    expect(shader.vertexShader).not.toContain('lightBlock');
+    expect(shader.fragmentShader).not.toContain('uSkyScale');
+    expect(shader.fragmentShader).not.toContain('uMinLight');
+  });
+
   it('startSwing + update: the group swings, then horSpeed drives the walk bob', () => {
     const { viewmodel, group } = setup();
     viewmodel.setItem('grass');

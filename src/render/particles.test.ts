@@ -108,6 +108,19 @@ describe('createParticleRenderer', () => {
     expect(real.fragmentShader).not.toContain('#include <map_fragment>');
   });
 
+  it('the particle material keeps the plain patch (no terrain light uniforms)', () => {
+    // B6 Task 4 守門：粒子幾何沒有 lightSky／lightBlock 屬性 → 若掛上地形光照
+    // patch，缺省屬性 0 → lf = max(0.05, 0) = 0.05 → 粒子只剩 5% 亮度（近乎全黑）。
+    const { mesh } = setup();
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    const shader = fakeShader();
+    (mat.onBeforeCompile as (s: typeof shader) => void)(shader);
+    expect(shader.vertexShader).not.toContain('lightSky');
+    expect(shader.vertexShader).not.toContain('lightBlock');
+    expect(shader.fragmentShader).not.toContain('uSkyScale');
+    expect(shader.fragmentShader).not.toContain('uMinLight');
+  });
+
   it('dispose: detaches the mesh and never disposes the shared texture array', () => {
     const { scene, renderer, camera } = setup();
     renderer.sync([particle()], camera);

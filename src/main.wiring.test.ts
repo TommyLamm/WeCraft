@@ -784,3 +784,17 @@ describe('main.ts 接線（B5 Task 7b：跨地形版本不還原被動生物）'
     expect(countOf('needsWorldgenNotice(')).toBe(4);
   });
 });
+
+// ---- B6 Task 4 接線：每幀把天空比例餵給地形著色器（只改 uniform、不重網格）--
+// Review Focus #4：日夜切換不得引發重網格風暴——太陽落下時地形只准即時變暗
+// （uniform），不得重算光照、不得重建網格。
+describe('main.ts 接線（B6 Task 4：每幀更新天空比例 uniform）', () => {
+  it('the playing branch feeds skyLightScale(clock.t) into the chunk renderer every frame', () => {
+    const playing = playingBranchBody();
+    // 呼叫必須在 playing 分支的晝夜區塊內、吃的是**當幀**的 clock.t。
+    expect(playing).toContain('chunkRenderer.setSkyScale(skyLightScale(clock.t))');
+    // 全檔唯一呼叫點（每幀一次；寫死數值或只在開局呼叫都會紅）。
+    expect(countOf('setSkyScale(')).toBe(1);
+    expect(countOf('skyLightScale(')).toBe(1);
+  });
+});
