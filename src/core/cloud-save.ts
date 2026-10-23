@@ -2,15 +2,19 @@
 // This module owns the serializable progress payload and the guard/classify
 // semantics Task 4 wires to the platform SDK. Modified voxels are NOT part of
 // the payload (brief ruling); the cap keeps uploads within the 64 KiB budget.
-// B1.3: format 1 stays — per-mode stash support is a purely ADDITIVE optional
-// field (old payloads without one are still valid and derive it on accept).
-// B3 Task 7：同一套路再來一次——`worldgenVersion` 是 format 1 之下的**附加**
-// optional 欄位（格式號本身**不變**）。
-// B4 Task 10：再來一次——`passiveMobs` 也是 format 1 之下的**附加** optional
-// 欄位（格式號**不變**，`game.json` 的 `cloudSave` 一字不動）。
+// B1.3→B4：format 1 時代（0.4.0–0.7.0）一路只用**附加** optional 欄位
+// （per-mode stash／`worldgenVersion`／`passiveMobs`）→ 格式號維持 1。
+// B5 Task 9：**一次升到 format 2**——36 格背包改變了 `inventory`（與 stash
+// 兩側）的語義（舊欄位語義無法保留），所以這次不是附加欄位、是格式升版：
+// - `readableFormats` 累積 [1, 2]（只累積、不縮）；format 1 的 9 格 payload
+//   讀入時經 {@link migrateInventorySlots} 遷移成 36 格（舊物品留在前 9 格
+//   ＝熱鍵列、其餘 27 格補 null），下一次檢查點即以 format 2 覆寫（升級路徑）。
+// - **回退限制**：0.8.0 寫出的 format 2 資料，0.7.0（只宣告 [1]）讀不到 →
+//   平台會擋不相容回退（`SAVE_FORMAT_INCOMPATIBLE`）。此點寫進發布說明。
+// - `game.json` 的 `cloudSave` 同步宣告（測試釘死兩邊一致）。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
-import type { ItemStack } from './items';
+import { INVENTORY_SLOTS, type ItemStack } from './items';
 import { sanitizeAdvancements, type AdvancementState } from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
@@ -22,8 +26,39 @@ import {
 } from '../world/passive-save';
 import type { PassiveMob } from '../world/passive-mobs';
 
-/** Payload schema version. Must match game.json `writeFormat` (Task 5). */
-export const CLOUD_FORMAT_VERSION = 1 as const;
+/** Payload schema version. Must match game.json `writeFormat` (Task 5).
+ *  B5 Task 9：36 格背包改變 `inventory` 語義 → 由 1 升到 **2**。 */
+export const CLOUD_FORMAT_VERSION = 2 as const;
+
+/** 本版本能讀的格式（**只累積、不縮**）。format 1 = 9 格背包（≤0.7.0）；
+ *  format 2 = 36 格背包（B5 起）。main.ts 的三處讀取檢查用
+ *  {@link isReadableCloudFormat}（不再與單一版本號比較）→ 讀到 format 1 照常
+ *  套用（接受路徑完成 9→36 遷移），下一次檢查點即以 format 2 覆寫。 */
+export const CLOUD_READABLE_FORMATS: ReadonlyArray<number> = [1, 2] as const;
+
+/** 是否為本版可讀的雲端格式（main.ts 三處讀取檢查的單一真值）。 */
+export function isReadableCloudFormat(v: number): boolean {
+  return CLOUD_READABLE_FORMATS.includes(v);
+}
+
+/**
+ * 把 inventory 陣列正規化到 36 格（format 1 → format 2 的遷移核心）。
+ *
+ * 規則：逐格深拷貝 → 不足 36 格補 `null`、超過截斷到 36。**未知 item id 仍
+ * 保留為字串**（沿用既有語意，由主線的 inventory model 丟棄）。回傳全新陣列
+ * → 改動結果不會回寫呼叫端的資料。format 1 的 9 格舊資料落在**前 9 格**
+ * （熱鍵列語義不變），其餘 27 格留空。
+ */
+export function migrateInventorySlots(
+  x: ReadonlyArray<ItemStack | null>,
+): Array<ItemStack | null> {
+  const out: Array<ItemStack | null> = [];
+  for (let i = 0; i < INVENTORY_SLOTS; i++) {
+    const s = i < x.length ? x[i] : null;
+    out.push(s === null ? null : { ...s });
+  }
+  return out;
+}
 
 /** Upload budget: 64 KiB of UTF-8 JSON. */
 export const CLOUD_MAX_BYTES = 65536 as const;
@@ -45,6 +80,8 @@ export interface CloudData {
   yaw: number;
   vitals: Vitals | null;
   clockT: number;
+  /** 背包槽位（B5 起 format 2：**36 格**——前 9 格熱鍵列＋27 格主背包）。
+   *  format 1 的 9 格 payload 讀入時由 `acceptCloudData` 遷移成 36 格。 */
   inventory: (ItemStack | null)[];
   advancements: AdvancementState;
   settings: CloudSettings;
@@ -108,7 +145,9 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
     yaw,
     vitals: src.vitals === null ? null : { ...src.vitals },
     clockT: src.clockT,
-    inventory: src.inventory.map((s) => (s === null ? null : { ...s })),
+    // B5 Task 9：加上保險——活陣列已是 36 格，`migrateInventorySlots` 負責
+    // 逐格深拷貝＋寬度保證（不足補 null／超過截斷）。
+    inventory: migrateInventorySlots(src.inventory),
     advancements: { done: { ...src.advancements.done }, nightSeen: src.advancements.nightSeen },
     settings: {
       renderDistance: src.settings.renderDistance,
@@ -210,7 +249,9 @@ export function acceptCloudData(x: unknown): CloudData | null {
     yaw: x.yaw,
     vitals: x.vitals === null ? null : normalizeVitals(x.vitals),
     clockT: x.clockT,
-    inventory: x.inventory.map((s) => (s === null ? null : { ...s })),
+    // B5 Task 9：format 1 的 9 格（或更短）payload 在這裡完成 9→36 遷移；
+    // format 2 的 36 格原樣通過（仍逐格拷貝）。
+    inventory: migrateInventorySlots(x.inventory),
     advancements: sanitizeAdvancements(x.advancements),
     stash: normalizeModeStash(x.stash, {
       mode: clamped.mode, // the clamped mode decides which side the legacy fields feed

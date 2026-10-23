@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   CLOUD_FORMAT_VERSION,
   CLOUD_MAX_BYTES,
+  CLOUD_READABLE_FORMATS,
   buildCloudData,
   byteSizeOf,
+  isReadableCloudFormat,
+  migrateInventorySlots,
   validateCloudData,
   acceptCloudData,
   shouldAllowSave,
@@ -16,6 +19,9 @@ import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
 import { WORLDGEN_VERSION } from '../world/worldgen';
 import { createPassiveMob } from '../world/passive-mobs';
+// B5 Task 9：manifest 同步測試——`?raw` 由 Vite 在轉譯期內嵌成字串（本專案沒有
+// @types/node，與 main.wiring.test.ts 同一套作法）。
+import rawManifest from '../../game.json?raw';
 
 function validSettings(): Settings {
   return {
@@ -149,9 +155,62 @@ describe('cloud-save', () => {
     expect(built.stash?.survivalVitals).not.toBe(stash.survivalVitals);
   });
 
-  it('exposes format version 1 and a 64 KiB cap', () => {
-    expect(CLOUD_FORMAT_VERSION).toBe(1);
+  it('exposes format version 2, reads formats 1 and 2, and a 64 KiB cap', () => {
+    expect(CLOUD_FORMAT_VERSION).toBe(2);
+    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2]);
+    expect(isReadableCloudFormat(1)).toBe(true);
+    expect(isReadableCloudFormat(2)).toBe(true);
+    expect(isReadableCloudFormat(3)).toBe(false);
+    expect(isReadableCloudFormat(0)).toBe(false);
     expect(CLOUD_MAX_BYTES).toBe(65536);
+  });
+
+  it('a format 1 payload migrates into the 36-slot layout', () => {
+    // format 1（≤0.7.0）的 inventory 只有 9 格（甚至更少）：讀入時遷移成 36 格
+    // ——舊物品留在前 9 格（熱鍵列語義不變）、其餘 27 格補 null。
+    const legacy = { ...rawValid(), inventory: [{ item: 'stone', count: 32 }, { item: 'dirt', count: 2 }] };
+    const accepted = acceptCloudData(legacy);
+    expect(accepted).not.toBeNull();
+    expect(accepted!.inventory).toHaveLength(36);
+    expect(accepted!.inventory[0]).toEqual({ item: 'stone', count: 32 });
+    expect(accepted!.inventory[1]).toEqual({ item: 'dirt', count: 2 });
+    expect(accepted!.inventory[2]).toBeNull();
+  });
+
+  it('migrateInventorySlots pads and trims to 36', () => {
+    expect(migrateInventorySlots([])).toHaveLength(36);
+    expect(migrateInventorySlots(new Array(40).fill({ item: 'stone', count: 1 }))).toHaveLength(36);
+    // 補的是 null、截斷不影響前 36 格、每一格都是新物件（深拷貝）。
+    expect(migrateInventorySlots([]).every((s) => s === null)).toBe(true);
+    const src: Array<ItemStack | null> = [{ item: 'stone', count: 7 }];
+    const out = migrateInventorySlots(src);
+    expect(out[0]).toEqual({ item: 'stone', count: 7 });
+    out[0]!.count = 9;
+    expect(src[0]!.count).toBe(7); // 改動結果不回寫呼叫端的陣列
+  });
+
+  it('buildCloudData writes 36 slots', () => {
+    const built = buildCloudData({
+      seed: 1,
+      pos: [0, 64, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: new Array(36).fill(null),
+      advancements: { done: {}, nightSeen: false },
+      settings: validSettings(),
+      stash: createModeStash(),
+      passiveMobs: [],
+    });
+    expect(built.inventory).toHaveLength(36);
+  });
+
+  it('the manifest declares the same cloud format as the code', () => {
+    const manifest = JSON.parse(rawManifest) as {
+      cloudSave: { writeFormat: number; readableFormats: number[] };
+    };
+    expect(manifest.cloudSave.writeFormat).toBe(CLOUD_FORMAT_VERSION);
+    expect(manifest.cloudSave.readableFormats).toEqual([...CLOUD_READABLE_FORMATS]);
   });
 
   /**
@@ -375,7 +434,11 @@ describe('cloud-save', () => {
       clouds: false,
     });
     // Illegal item ids are kept here; the main-side inventory model drops them.
-    expect(accepted?.inventory).toEqual([{ item: 'not_a_real_item', count: 3 }]);
+    // B5 Task 9：acceptCloudData 一律回 36 格（不足補 null）。cast ＝刻意模擬
+    // 型別系統不認得的 id（本測試的主題就是「未知 id 原樣保留為字串」）。
+    expect(accepted?.inventory).toEqual(
+      slots({ item: 'not_a_real_item', count: 3 } as unknown as ItemStack),
+    );
     // Fresh copy, not a reference into the input.
     expect(accepted).not.toBe(raw);
     expect(validateCloudData(raw)).toBe(true);
@@ -419,6 +482,9 @@ describe('cloud-save', () => {
       creative: starterSlots('creative'),
       survivalVitals: { ...createVitals() },
     });
+    // B5 Task 7/9：stash 兩側都是 36 格（寬度跟著 INVENTORY_SLOTS 走）。
+    expect(accepted?.stash?.survival).toHaveLength(36);
+    expect(accepted?.stash?.creative).toHaveLength(36);
     expect(accepted?.stash?.survivalVitals).not.toBe(raw.vitals);
   });
 
@@ -431,7 +497,8 @@ describe('cloud-save', () => {
     };
     const accepted = acceptCloudData(raw);
     // The legacy inventory/vitals still land where they always did…
-    expect(accepted?.inventory).toEqual([{ item: 'stone', count: 64 }, null]);
+    // B5 Task 9：一律 36 格（前 9 格＝熱鍵列語義不變，其餘補 null）。
+    expect(accepted?.inventory).toEqual(slots({ item: 'stone', count: 64 }));
     // …but the stash comes from the payload's stash: unknown ids and
     // non-positive counts read as empty slots, vitals clamp to model bounds.
     expect(accepted?.stash).toEqual({

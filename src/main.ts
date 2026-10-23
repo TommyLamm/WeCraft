@@ -177,6 +177,9 @@ import {
   byteSizeOf,
   shouldAllowSave,
   classifyCloudError,
+  // B5 Task 9：讀取檢查改用「可讀格式集合」；`CLOUD_FORMAT_VERSION` 只剩
+  // 寫入端（checkpoint 上傳）在用。
+  isReadableCloudFormat,
   CLOUD_FORMAT_VERSION,
   CLOUD_MAX_BYTES,
   type CloudData,
@@ -1876,7 +1879,10 @@ async function sendPendingCloud(): Promise<void> {
 async function resolveCloudConflict(): Promise<void> {
   try {
     const fresh = await cloud.load();
-    if (fresh && fresh.formatVersion !== CLOUD_FORMAT_VERSION) {
+    // B5 Task 9：格式檢查改「可讀格式集合」——format 1 的舊資料照常套用
+    // （`acceptCloudData` 已完成 9→36 遷移；熱鍵列保留舊物品、其餘 27 格留空），
+    // 下一次檢查點就會以 format 2 覆寫（升級路徑）。只有**集合外**的格式才鎖。
+    if (fresh && !isReadableCloudFormat(fresh.formatVersion)) {
       cloudLocked = true;
       cloudFailureKind = 'FORMAT';
       cloudRetryable = false;
@@ -1929,7 +1935,8 @@ async function retryCloudRead(): Promise<void> {
       cloudRetryable = false;
       return;
     }
-    if (res.formatVersion !== CLOUD_FORMAT_VERSION) {
+    // B5 Task 9：同 resolveCloudConflict——「可讀格式集合」取代單一版本比較。
+    if (!isReadableCloudFormat(res.formatVersion)) {
       cloudLocked = true;
       cloudFailureKind = 'FORMAT';
       cloudRetryable = false;
@@ -2483,7 +2490,7 @@ void (async () => {
       const res = await cloud.load();
       if (!res) {
         cloudRevision = 0; // empty slot — the first checkpoint may claim it
-      } else if (res.formatVersion !== CLOUD_FORMAT_VERSION) {
+      } else if (!isReadableCloudFormat(res.formatVersion)) {
         cloudLocked = true;
         cloudFailureKind = 'FORMAT';
         cloudRevision = null; // never overwrite an unreadable-format slot

@@ -10,5 +10,5 @@
   "tags": ["體素", "沙盒", "生存", "創造"],
   "instructions": "點擊畫面鎖定視角。WASD移動，空白鍵跳躍，滑鼠左鍵挖掘/攻擊，右鍵放置方塊/開啟工作台（按住右鍵可連續放置），雙擊W疾跑，Q丟棄選取格物品（Ctrl+Q丟整疊），E鍵開啟背包/合成，F5切換視角（第一人稱/面後/面前），Esc鍵開啟選單。",
   "devices": ["desktop"],
-  "cloudSave": { "readableFormats": [1], "writeFormat": 1 }
+  "cloudSave": { "readableFormats": [1, 2], "writeFormat": 2 }
 }
