@@ -503,6 +503,12 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     // 冰原版要絲絨觸碰才掉；本作沒有絲絨 → 不掉
     expect(dropItemFor(BLOCK.ICE)).toBeNull();
   });
+
+  // B6 Task 5：火把走既有的 itemFromBlock fallback → 掉自身
+  // （原版：「Torches can be broken instantly using anything, and drop themselves as an item.」）
+  it('a broken torch drops itself', () => {
+    expect(dropItemFor(BLOCK.TORCH)).toBe('torch');
+  });
 });
 
 // ---- B4 Task 4：機率掉落（樹葉 0.5% 蘋果） ------------------------------

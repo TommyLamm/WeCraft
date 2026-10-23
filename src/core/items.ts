@@ -41,7 +41,11 @@ export type ItemId =
   | 'raw_gold' | 'gold_ingot' | 'diamond'
   | 'wooden_shovel' | 'stone_shovel' | 'iron_shovel'
   | 'golden_pickaxe' | 'golden_axe' | 'golden_sword' | 'golden_shovel'
-  | 'diamond_pickaxe' | 'diamond_axe' | 'diamond_sword' | 'diamond_shovel';
+  | 'diamond_pickaxe' | 'diamond_axe' | 'diamond_sword' | 'diamond_shovel'
+  // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上 → 挖掉的火把能
+  // 放回世界）。與方塊同一個 commit：`itemFromBlock` 的兩條守門（每個 block 都
+  // 要有物品形式、每個 PLACEABLE 都要有物品形式）會在方塊落地後立刻紅。
+  | 'torch';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -74,11 +78,13 @@ const ITEM_IDS: Record<ItemId, true> = {
   wooden_shovel: true, stone_shovel: true, iron_shovel: true,
   golden_pickaxe: true, golden_axe: true, golden_sword: true, golden_shovel: true,
   diamond_pickaxe: true, diamond_axe: true, diamond_sword: true, diamond_shovel: true,
+  // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上）
+  torch: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 72 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 73 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
- *  ＋ B5 Task 2 補的 3 個原料與 11 把工具）。 */
+ *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack { item: ItemId; count: number }
@@ -123,6 +129,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['diamond_ore', BLOCK.DIAMOND_ORE],
   ['spruce_planks', BLOCK.SPRUCE_PLANKS],
   ['birch_planks', BLOCK.BIRCH_PLANKS],
+  // B6 Task 5：火把的方塊物品形式（挖掉的火把掉自身 → 要能放回世界裡）
+  ['torch', BLOCK.TORCH],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

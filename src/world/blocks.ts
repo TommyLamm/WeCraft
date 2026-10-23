@@ -42,14 +42,20 @@ export const BLOCK = {
   DIAMOND_ORE: 29,
   SPRUCE_PLANKS: 30,
   BIRCH_PLANKS: 31,
+  // B6 Task 5：火把（跨批編號表：B6 火把 = 32；B8 箱子 = 33）。
+  // 同樣只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓舊存檔變形；
+  // 舊版遇到未知 id 32 時 `getBlockDef(32)` fallback 空氣，不崩（存檔格式不動）。
+  TORCH: 32,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
 
 /** 方塊的幾何形狀：`cube` 是滿格的立方體；`cross` 是原版花／草那種
- *  「兩片對角平面」的十字模型（不碰撞、不遮擋、單獨一條 foliage pass 渲染）。
- *  幾何細節與「與原版內縮模型的差異」見 `mesher.ts` 的 `emitCrossQuads`。 */
-export type BlockShape = 'cube' | 'cross';
+ *  「兩片對角平面」的十字模型（不碰撞、不遮擋、單獨一條 foliage pass 渲染）；
+ *  `torch` 是火把的小型無碰撞模型（B6 Task 6 接上專屬 mesher pass；在此之前
+ *  走 cube 路徑以整張 tile 暫渲染）。幾何細節與「與原版內縮模型的差異」見
+ *  `mesher.ts` 的 `emitCrossQuads`。 */
+export type BlockShape = 'cube' | 'cross' | 'torch';
 
 /** Tool families. Only pickaxe/axe exist as items today (`ItemId` has no
  *  shovel), so shovel-fast blocks currently mine at bare-hand speed. */
@@ -77,7 +83,13 @@ export interface BlockDef {
   emission?: number;
 }
 
-const T = {
+/** Atlas tile indices. **Exported** (B6 Task 5): `textures.ts` 用 `T.TORCH`
+ *  畫貼圖，不寫死數字 → 「最高 tile ＋ 1」的規則維持單一真相。
+ *  Tiles `T` defines (0..TILE_COUNT-1) — `TORCH` is the highest tile.
+ *  drawAtlas paints exactly these; the texture array fills every layer past
+ *  them with the magenta debug color, so adding a tile to T without drawing it
+ *  fails loudly instead of silently sampling magenta in-game. */
+export const T = {
   GRASS_TOP: 0, GRASS_SIDE: 1, DIRT: 2, STONE: 3,
   SAND: 4, LOG_SIDE: 5, LOG_TOP: 6, LEAVES: 7,
   PLANKS: 8, COBBLE: 9, WATER: 10, BEDROCK: 11,
@@ -93,16 +105,18 @@ const T = {
   CACTUS_SIDE: 30, CACTUS_TOP: 31, ICE: 32,
   // B4 Task 1：羊毛（跨批編號：本批 = 33 → TILE_COUNT = 34；B5 用 34–38）
   WOOL: 33,
-  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（跨批編號：本批 = 34–38 → TILE_COUNT = 39；
-  // 下一批從 39 起）。同樣只能往後追加——tile 索引是「哪一格貼圖」的唯一鑰匙。
+  // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（跨批編號：本批 = 34–38）
   GRAVEL: 34, GOLD_ORE: 35, DIAMOND_ORE: 36, SPRUCE_PLANKS: 37, BIRCH_PLANKS: 38,
+  // B6 Task 5：火把（跨批編號：本批 = 39 → TILE_COUNT = 40；B8 的 CHEST = 40，
+  // **不得撞號**——箱子被渲染成火把）。同樣只能往後追加——tile 索引是
+  // 「哪一格貼圖」的唯一鑰匙。
+  TORCH: 39,
 } as const;
 
-/** Tiles `T` defines (0..TILE_COUNT-1) — `BIRCH_PLANKS` is the highest tile.
- *  drawAtlas paints exactly these; the texture array fills every layer past
- *  them with the magenta debug color, so adding a tile to T without drawing it
- *  fails loudly instead of silently sampling magenta in-game. */
-export const TILE_COUNT = T.BIRCH_PLANKS + 1;
+/** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
+ *  (currently `T.TORCH`), so appending a tile and pointing `TILE_COUNT` at it
+ *  is the only change needed to grow the atlas. */
+export const TILE_COUNT = T.TORCH + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -167,6 +181,13 @@ const DEFS: Record<number, BlockDef> = {
   29: { id: 29, name: 'diamond_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.DIAMOND_ORE, side: T.DIAMOND_ORE, bottom: T.DIAMOND_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
   30: { id: 30, name: 'spruce_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_PLANKS, side: T.SPRUCE_PLANKS, bottom: T.SPRUCE_PLANKS, requiredTool: null, fastTool: 'axe' },
   31: { id: 31, name: 'birch_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_PLANKS, side: T.BIRCH_PLANKS, bottom: T.BIRCH_PLANKS, requiredTool: null, fastTool: 'axe' },
+  // B6 Task 5：火把。原版數值（minecraft.wiki/Torch，2026-10-20 抓 raw 全文）：
+  // 「Torches are non-solid blocks that emit light.」＋infobox `Hardness: 0`、
+  // `Luminous: Yes (14)`、`Transparent: Yes` → 硬度 0（任何東西瞬破）、非實心
+  // （不碰撞）、透明（不遮光、不擋鄰面）、emission 14（光照引擎的播種來源）。
+  // `shape: 'torch'`＝小型無碰撞模型（mesher pass 屬 Task 6；在此之前走 cube
+  // 路徑以整張 tile 暫渲染）。三個面共用火把 tile（T.TORCH = 39）。
+  32: { id: 32, name: 'torch', hardness: 0, solid: false, transparent: true, shape: 'torch', top: T.TORCH, side: T.TORCH, bottom: T.TORCH, requiredTool: null, fastTool: null, emission: 14 },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -196,6 +217,9 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.WOOL,
   // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材（物品形式隨方塊一起補上 → 創造清單自動出現）
   BLOCK.GRAVEL, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE, BLOCK.SPRUCE_PLANKS, BLOCK.BIRCH_PLANKS,
+  // B6 Task 5：火把（物品形式隨方塊一起補上 → 創造清單自動出現；
+  // HOTBAR_DEFAULT 不加——火把是做出來的（煤＋木棍），不是初始物品）
+  BLOCK.TORCH,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

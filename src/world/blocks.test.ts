@@ -8,6 +8,7 @@ import {
   isTargetable,
   PLACEABLE,
   HOTBAR_DEFAULT,
+  T,
   TILE_COUNT,
   type BlockDef,
 } from './blocks';
@@ -67,6 +68,8 @@ describe('blocks', () => {
       [BLOCK.DIAMOND_ORE, 3.0],
       [BLOCK.SPRUCE_PLANKS, 2.0],
       [BLOCK.BIRCH_PLANKS, 2.0],
+      // B6 Task 5 新增：火把硬度 0（原版「Torches can be broken instantly using anything」）
+      [BLOCK.TORCH, 0],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -113,6 +116,8 @@ describe('blocks', () => {
       [BLOCK.DIAMOND_ORE, { kind: 'pickaxe', level: 2 }, 'pickaxe'],
       [BLOCK.SPRUCE_PLANKS, null, 'axe'],
       [BLOCK.BIRCH_PLANKS, null, 'axe'],
+      // B6 Task 5 新增：火把徒手瞬破（不用工具、無加速工具）
+      [BLOCK.TORCH, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -381,9 +386,12 @@ describe('blocks', () => {
     expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
     expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
     expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
-    // TILE_COUNT ＝ 最高 tile ＋ 1（B5 落地後 = 39）
-    expect(TILE_COUNT).toBe(39);
-    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.BIRCH_PLANKS).top + 1);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B5 落地時最高 tile 是 BIRCH_PLANKS（38）
+    // → 絕對值 39；B6 的火把 tile 接在後面成為新的最高 → 絕對值由 B6 火把自己的
+    // 「the torch tile is the last declared tile」把關，這裡釘住不變式與本批範圍
+    // （與羊毛測試的相對寫法同一套，之後批次成長不會誤紅）。
+    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.TORCH).top + 1);
+    expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.BIRCH_PLANKS).top);
   });
 
   it('no two blocks share an id', () => {
@@ -428,5 +436,46 @@ describe('blocks', () => {
     expect(PLACEABLE).toContain(BLOCK.GRAVEL);
     expect(PLACEABLE).toContain(BLOCK.SPRUCE_PLANKS);
     expect(PLACEABLE).toContain(BLOCK.BIRCH_PLANKS);
+  });
+
+  // ---- B6 Task 5：火把（跨批編號：BLOCK.TORCH = 32 / T.TORCH = 39）----
+  // id 與 tile 都只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓
+  // 舊存檔的方塊全部變形。原版數值（minecraft.wiki/Torch，2026-10-20）：硬度 0、
+  // 非實心、透明、光照 14。
+
+  it('the torch is id 32, non solid, transparent and emits 14', () => {
+    expect(BLOCK.TORCH).toBe(32);
+    const def = getBlockDef(BLOCK.TORCH);
+    expect(def.id).toBe(32);
+    expect(def.name).toBe('torch');
+    expect(def.hardness).toBe(0); // 瞬破（任何工具／徒手）
+    expect(def.solid).toBe(false); // 非實心（不碰撞）
+    expect(def.transparent).toBe(true); // 透明（不遮光、不擋鄰面）
+    expect(def.requiredTool).toBeNull();
+    expect(def.fastTool).toBeNull();
+    expect(def.emission).toBe(14); // 「Torches give off a light level of 14.」
+    expect(def.shape).toBe('torch'); // 小型無碰撞模型（mesher pass 屬 Task 6）
+    // 三個面共用火把 tile
+    expect(def.top).toBe(T.TORCH);
+    expect(def.side).toBe(T.TORCH);
+    expect(def.bottom).toBe(T.TORCH);
+    // 可放置（創造清單以 PLACEABLE 為 Palette）；不進 HOTBAR_DEFAULT——火把是
+    // 做出來的（煤＋木棍），不是初始物品
+    expect(PLACEABLE).toContain(BLOCK.TORCH);
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
+  });
+
+  it('the torch tile is the last declared tile', () => {
+    // 不綁死數字：上游 tile 表變動不會誤報；T.TORCH 的絕對值（39）由上面的
+    // 方塊測試（def.top === T.TORCH）與這條的相對關係一起把關。
+    expect(T.TORCH).toBe(TILE_COUNT - 1);
+    expect(TILE_COUNT).toBeLessThanOrEqual(64); // 紋理陣列 64 層
+  });
+
+  it('the torch tile does not collide with the chest tile', () => {
+    // B8 的 T.CHEST = 40（跨批編號表）→ 火把接 39，不得撞號
+    // （撞號 = 箱子被渲染成火把，且「the torch tile is the last declared tile」
+    // 這條相對斷言抓不到跨批撞號，所以要另外釘）。
+    expect(T.TORCH).not.toBe(40);
   });
 });

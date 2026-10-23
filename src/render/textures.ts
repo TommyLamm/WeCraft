@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TILE_COUNT } from '../world/blocks';
+import { T, TILE_COUNT } from '../world/blocks';
 
 export const ATLAS_SIZE = 512;
 export const TILE_PX = 16;
@@ -326,6 +326,24 @@ export function drawAtlas(): AtlasImage {
     const d = seam + cross;
     return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
   }); // birch_planks
+  // ---- B6 Task 5：火把（tile 39）----
+  // 火把模型是一根 2/16 寬、10/16 高的細柱（Task 6 的小模型）→ 整張 tile 會被
+  // 壓縮，圖樣畫成「中央 4 欄深棕細棒（底部到 3/4 高）＋ 頂端亮黃／橘火苗」，
+  // 其餘透明（alpha 0 → 材質的 alphaTest 0.1 裁掉），壓縮後仍看得出是火把。
+  // 位置用固定資料（不逐像素亂數）→ 貼圖決定性，與 B5 的碎石點同一套紀律。
+  put(T.TORCH, (x, y) => {
+    const stick = x >= 6 && x <= 9 && y >= 4; // 細棒：底部到 3/4 高（y 4..15）
+    if (stick) {
+      const edge = x === 6 || x === 9 ? -24 : 0; // 兩側暗一階 → 圓柱感
+      return [clamp255(110 + edge), clamp255(84 + edge), clamp255(50 + edge), 255];
+    }
+    const flame = x >= 6 && x <= 9 && y >= 1 && y <= 3; // 頂端火苗（3 列）
+    if (flame) {
+      const core = (x === 7 || x === 8) && y === 2; // 內芯亮黃、外圈橘
+      return core ? [255, 230, 120, 255] : [240, 150, 40, 255];
+    }
+    return [0, 0, 0, 0]; // 其餘透明（alphaTest 0.1 裁掉）
+  }); // torch
 
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;

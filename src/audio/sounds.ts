@@ -64,6 +64,9 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.DIAMOND_ORE]: 'stone',
   [BLOCK.SPRUCE_PLANKS]: 'wood',
   [BLOCK.BIRCH_PLANKS]: 'wood',
+  // B6 Task 5：火把是木頭 → 挖掘／腳步／放置音效走 wood 材質
+  // （沒有這筆 → materialGroup 落到預設 'dirt'，火把的音效是泥土聲）
+  [BLOCK.TORCH]: 'wood',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

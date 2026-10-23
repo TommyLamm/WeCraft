@@ -36,15 +36,12 @@ const fill = (
       for (let x = x0; x <= x1; x++) w.setBlock(x, y, z, id as BlockId);
 };
 
-// 真正的火把方塊（BLOCK.TORCH = 32 ＋ DEFS[32].emission = 14）依跨任務釘點在
-// Task 5 才落地（id 表／貼圖／物品／配方都屬 T5）；本 task 只交付引擎讀取
-// `getBlockDef(id).emission ?? 0` 的接縫。測試需要一個「透明、非實心」、
-// emission = 14 的方塊當光源 → 借 POPPY 的 BlockDef 物件暫補 `emission`
-// （def 物件可變；Vitest 每個測試檔有獨立的 module registry，不會影響其他
-// 檔案；本檔內 POPPY 只以光源身份出現）。Task 5 之後可換成 BLOCK.TORCH，
-// 底下所有斷言不變。
-const TORCH = BLOCK.POPPY;
-getBlockDef(TORCH).emission = TORCH_LIGHT;
+// 真正的火把方塊（BLOCK.TORCH = 32 ＋ DEFS[32].emission = 14）已由 Task 5 落地
+// → 測試光源直接用真方塊（task-1-report 偏離 1 的「借 POPPY 暫補 emission」
+// workaround 在此收口）。刻意**不**在此手動補 emission——否則會掩蓋 DEFS[32]
+// 的回歸；emission = 14 由 blocks.ts 的真實資料與 blocks.test.ts 釘住。
+// 底下的斷言與引擎路徑不變。
+const TORCH = BLOCK.TORCH;
 
 describe('block light engine (B6 Task 1)', () => {
   it('a torch lights its neighbours with the vanilla decay', () => {
@@ -167,7 +164,7 @@ describe('block light engine (B6 Task 1)', () => {
   it('light constants match vanilla (minecraft.wiki/Light, 2026-10-20)', () => {
     expect(MAX_LIGHT).toBe(15); // 16 個等級 0..15
     expect(TORCH_LIGHT).toBe(14); // 「Torches give off a light level of 14.」
-    expect(getBlockDef(TORCH).emission).toBe(TORCH_LIGHT); // 測試光源已接上 emission 接縫
+    expect(getBlockDef(TORCH).emission).toBe(TORCH_LIGHT); // 真火把的 DEFS[32].emission（Task 5 落地）
   });
 
   it('setLight writes nothing and reports false when the chunk is missing', () => {
@@ -358,45 +355,39 @@ describe('light lifecycle (B6 Task 3)', () => {
   });
 
   it('relighting 16 chunks stays inside the generation budget', { timeout: 30000 }, () => {
-    // 本檔在模組載入時把 POPPY 暫補成 emission 14 當測試光源；真實地形會長花
-    // （decorations 的 dandelion／poppy）→ 量測前歸零、finally 還原，花不會變火把。
-    const poppy = getBlockDef(BLOCK.POPPY);
-    const savedEmission = poppy.emission;
-    poppy.emission = 0;
-    try {
-      // 明確取法（2026-10-20 稽核修正）：cx,cz = 0..3 × 0..3 共 16 塊、種子 1337。
-      // 量三次取最快（B3 Task 9 的同款紀律）：vitest 平行跑檔時牆鐘會被同 CPU
-      // 上十幾個檔案的數值迴圈抖高 → 單次量測會假紅；取最快量到的是管線本身，
-      // 真退化時三次都超標 → 守護力不變、門檻一毫秒都沒放寬。
-      const w = new World();
-      let best = Number.POSITIVE_INFINITY;
-      const rounds: string[] = [];
-      for (let round = 0; round < 3; round++) {
-        const t0 = performance.now();
-        for (let cx = 0; cx <= 3; cx++) {
-          for (let cz = 0; cz <= 3; cz++) {
-            const chunk = new Chunk(cx, cz, generateChunk(cx, cz, 1337));
-            w.addChunk(chunk);
-            chunk.topY = computeChunkTopY(chunk); // 生成接線：地形整塊寫入、不經 setBlock
-            computeChunkLight(w, cx, cz); // 生成後立即點光（等價於光照佇列跑完該塊）
-          }
-        }
-        const ms = performance.now() - t0;
-        best = Math.min(best, ms);
-        rounds.push(`${ms.toFixed(0)} ms`);
-      }
-      // 先印後斷言（B3 同款）：門檻被觸發時也要留下實測數字才知道是退化還是機器忙
-      console.log(`gen+light 16 chunks: best ${best.toFixed(0)} ms (rounds: ${rounds.join(' | ')})`);
-      expect(best).toBeLessThan(1500); // 門檻沿用 B3 的 16 區塊預算（1500 ms）
-      // 正確性抽檢（量測不得靠 no-op 變綠）：16 塊的天空柱全高種滿、旗標清乾淨
+    // Task 5 之後測試光源是真火把（BLOCK.TORCH），真實地形不會長火把 →
+    // 先前「把暫補 emission 的 POPPY 歸零、finally 還原」的 workaround 不再需要
+    // （POPPY 從未帶 emission，花不會變火把）。
+    // 明確取法（2026-10-20 稽核修正）：cx,cz = 0..3 × 0..3 共 16 塊、種子 1337。
+    // 量三次取最快（B3 Task 9 的同款紀律）：vitest 平行跑檔時牆鐘會被同 CPU
+    // 上十幾個檔案的數值迴圈抖高 → 單次量測會假紅；取最快量到的是管線本身，
+    // 真退化時三次都超標 → 守護力不變、門檻一毫秒都沒放寬。
+    const w = new World();
+    let best = Number.POSITIVE_INFINITY;
+    const rounds: string[] = [];
+    for (let round = 0; round < 3; round++) {
+      const t0 = performance.now();
       for (let cx = 0; cx <= 3; cx++) {
         for (let cz = 0; cz <= 3; cz++) {
-          expect(skyLightAt(w, cx * CHUNK_SIZE + 8, 200, cz * CHUNK_SIZE + 8)).toBe(15);
-          expect(w.getChunk(cx, cz)!.lightDirty).toBe(false);
+          const chunk = new Chunk(cx, cz, generateChunk(cx, cz, 1337));
+          w.addChunk(chunk);
+          chunk.topY = computeChunkTopY(chunk); // 生成接線：地形整塊寫入、不經 setBlock
+          computeChunkLight(w, cx, cz); // 生成後立即點光（等價於光照佇列跑完該塊）
         }
       }
-    } finally {
-      poppy.emission = savedEmission;
+      const ms = performance.now() - t0;
+      best = Math.min(best, ms);
+      rounds.push(`${ms.toFixed(0)} ms`);
+    }
+    // 先印後斷言（B3 同款）：門檻被觸發時也要留下實測數字才知道是退化還是機器忙
+    console.log(`gen+light 16 chunks: best ${best.toFixed(0)} ms (rounds: ${rounds.join(' | ')})`);
+    expect(best).toBeLessThan(1500); // 門檻沿用 B3 的 16 區塊預算（1500 ms）
+    // 正確性抽檢（量測不得靠 no-op 變綠）：16 塊的天空柱全高種滿、旗標清乾淨
+    for (let cx = 0; cx <= 3; cx++) {
+      for (let cz = 0; cz <= 3; cz++) {
+        expect(skyLightAt(w, cx * CHUNK_SIZE + 8, 200, cz * CHUNK_SIZE + 8)).toBe(15);
+        expect(w.getChunk(cx, cz)!.lightDirty).toBe(false);
+      }
     }
   });
 });

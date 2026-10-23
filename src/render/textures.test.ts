@@ -11,7 +11,7 @@ import {
   tileIndexAt,
   type AtlasImage,
 } from './textures';
-import { TILE_COUNT } from '../world/blocks';
+import { T, TILE_COUNT } from '../world/blocks';
 
 const GRASS_SIDE = 1;
 const STONE = 3;
@@ -410,6 +410,24 @@ describe('textures', () => {
     const brightest = birchCols.indexOf(Math.max(...birchCols));
     expect(brightest % 4).toBe(3);
     expect(birchCols[brightest]).toBeGreaterThan(birch.luma + 8);
+  });
+
+  // ---- B6 Task 5：火把（tile 39）----
+  it('the torch tile is drawn', () => {
+    // 沿用羊毛釘子（blocks.test.ts）的同一套判斷：宣告了 tile 卻沒畫 → 洋紅除錯色，
+    // 沒有任何測試紅。火把 tile 有透明背景（alphaTest 0.1 裁掉）→ 用「非洋紅像素
+    // 存在＋有非透明像素」而不是「整塊不透明」。
+    const atlas = drawAtlas();
+    let magenta = 0;
+    let painted = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [r, g, b, a] = tilePixel(atlas, T.TORCH, x, y);
+        if (r === 255 && g === 0 && b === 255) magenta++;
+        if (a > 0) painted++;
+      }
+    expect(magenta, `tile ${T.TORCH} magenta`).toBeLessThan(TILE_PX * TILE_PX);
+    expect(painted, `tile ${T.TORCH} painted`).toBeGreaterThan(0);
   });
 });
 

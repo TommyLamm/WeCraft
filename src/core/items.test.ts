@@ -30,6 +30,8 @@ const BLOCK_ITEMS: ItemId[] = [
   // B5 Task 1：本批 4 個新方塊物品（礫石 'gravel' 早就在 union 裡（B1 的 dead id）
   // → 本批只是把它接上方塊，不新增 id）
   'gold_ore', 'diamond_ore', 'spruce_planks', 'birch_planks',
+  // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上 → 挖掉的火把能放回世界）
+  'torch',
 ];
 /** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
 const B5_TOOL_ITEMS: ItemId[] = [
@@ -69,9 +71,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B4 Task 1 再補 13 個（9 個食物 ＋ 3 個材料 ＋ 1 個羊毛方塊物品）＝ 54。
  *  B5 Task 1 再補 4 個（本批 5 個新方塊的物品形式；礫石 'gravel' 是 B1 留下的 dead id，
  *  **不新增** id，只是接上方塊）→ 58。
- *  B5 Task 2 再補 14 個（3 個原料 ＋ 11 把工具）→ **72**。
+ *  B5 Task 2 再補 14 個（3 個原料 ＋ 11 把工具）→ 72。
+ *  B6 Task 5 再補 1 個（火把的物品形式，隨 BLOCK.TORCH = 32 一起落地）→ **73**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 72;
+const TOTAL_ITEM_COUNT = 73;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -121,6 +124,16 @@ describe('items', () => {
     expect(blockFromItem('wool')).toBe(BLOCK.WOOL);
     expect(itemFromBlock(BLOCK.WOOL)).toBe('wool');
     expect(stackFromBlock(BLOCK.WOOL)).toEqual({ item: 'wool', count: 64 });
+  });
+
+  // ---- B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起落地）----
+
+  it('torch is the item form of the torch block', () => {
+    expect(blockFromItem('torch')).toBe(BLOCK.TORCH);
+    expect(itemFromBlock(BLOCK.TORCH)).toBe('torch');
+    // 火把可堆疊（64）——不進 STACK_ONE
+    expect(stackFromBlock(BLOCK.TORCH)).toEqual({ item: 'torch', count: 64 });
+    expect(maxStack('torch')).toBe(64);
   });
 
   // ---- B5 Task 1：本批 5 個新方塊的物品形式（礫石／金礦／鑽石礦／雲杉板材／白樺板材）----

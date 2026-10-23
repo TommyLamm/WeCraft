@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion: exactly 31) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch: exactly 32) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -43,11 +43,14 @@ const ANY_PLANKS: PatternCell = ['oak_planks', 'spruce_planks', 'birch_planks'];
 const P: PatternCell = ANY_PLANKS;
 const S: PatternCell = 'stick';
 const C: PatternCell = 'cobblestone';
+// B6 Task 5：火把的煤。**不可重用既有的 `C`**——那已經是 'cobblestone'；
+// 照原計畫寫 `pattern: [[C], [S]]` 會做出「圓石上放木棍」的錯誤配方。
+const COAL: PatternCell = 'coal';
 const I: PatternCell = 'iron_ingot';
 const G: PatternCell = 'gold_ingot';
 const D: PatternCell = 'diamond';
 
-/** The settled recipe table — exactly 31 entries, checked by tests. */
+/** The settled recipe table — exactly 32 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -301,6 +304,15 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [C, C, C],
     ],
     result: { item: 'furnace', count: 1 },
+  },
+  // B6 Task 5：coal over stick → 4 torches（原版「Coal or Charcoal + Stick → 4」；
+  // 本作物品表沒有 charcoal → 只收煤一條）。2×1 直排（上煤下棍），位置可平移
+  // （shaped bbox offset），顛倒（棍上煤下）不匹配。
+  {
+    id: 'torch',
+    kind: 'shaped',
+    pattern: [[COAL], [S]],
+    result: { item: 'torch', count: 4 },
   },
 ];
 

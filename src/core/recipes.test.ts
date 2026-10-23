@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 31). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 32). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 31 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(31);
+  it('holds exactly the 32 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(32);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -48,6 +48,8 @@ describe('recipe table', () => {
         'diamond_sword',
         'diamond_shovel',
         'furnace',
+        // B6 Task 5：煤＋木棍 → 4 火把
+        'torch',
       ].sort(),
     );
   });
@@ -360,6 +362,24 @@ describe('matchRecipe — shaped', () => {
       s('cobblestone'), null, s('cobblestone'),
     ];
     expect(matchRecipe(missing, 3)).toBeNull(); // 7 stones is not the ring
+  });
+});
+
+describe('torch recipe (B6 Task 5)', () => {
+  it('a torch is crafted from coal over a stick', () => {
+    // 2×2（row-major）：cell 0 = 左上（coal）、cell 2 = 左下（stick）→ [[COAL], [S]]
+    const grid = emptyGrid(2);
+    grid[0] = s('coal');
+    grid[2] = s('stick');
+    expect(matchRecipe(grid, 2)).toEqual({ item: 'torch', count: 4 });
+  });
+
+  it('the torch recipe needs the coal above the stick', () => {
+    // 位置顛倒（stick 在上、coal 在下）→ 不是火把配方
+    const grid = emptyGrid(2);
+    grid[0] = s('stick');
+    grid[2] = s('coal');
+    expect(matchRecipe(grid, 2)).toBeNull();
   });
 });
 
