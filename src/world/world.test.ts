@@ -120,6 +120,64 @@ describe('World', () => {
   });
 });
 
+/** B6 T1b（B4 分診①收口）：`World.getBlock`／`setBlock` 的座標契約——
+ *  x/y/z 一律 `Math.floor` 到整數格，呼叫端可以直接傳玩家／實體的浮點
+ *  位置，讀寫落在該點所在的格。這是世界層**唯一的**取整點（`Chunk.get`／
+ *  `Chunk.set` 仍假設整數；保證由世界層提供）。負座標必測：floor 向 −∞
+ *  取整，與 trunc 在分數負座標上分道（-2.1 → -3，不是 -2）。 */
+describe('World 座標契約（B6 T1b：getBlock/setBlock 一律 Math.floor）', () => {
+  it('正座標分數：讀寫落在該點所在的格', () => {
+    const w = new World();
+    expect(w.setBlock(3, 64, 5, BLOCK.STONE)).toBe(true);
+    expect(w.getBlock(3.7, 64, 5.9)).toBe(BLOCK.STONE); // floor → (3,64,5)
+    // modified 鍵必須是取整後的整數座標（存檔 applyModified 只收整數鍵）
+    expect(w.modified.get('3,64,5')).toBe(BLOCK.STONE);
+    expect(w.modified.has('3.7,64,5.9')).toBe(false);
+  });
+
+  it('負座標分數：floor 向 −∞，落在正確的格（-2.1→-3、-4.2→-5）', () => {
+    const w = new World();
+    expect(w.setBlock(-3, 64, -5, BLOCK.STONE)).toBe(true);
+    expect(w.getBlock(-2.1, 64, -4.2)).toBe(BLOCK.STONE);
+    expect(w.getBlock(-3, 64, -5)).toBe(BLOCK.STONE);
+    expect(w.modified.get('-3,64,-5')).toBe(BLOCK.STONE);
+  });
+
+  it('分數 y：讀寫同樣 floor；topY／modified 以整數記錄', () => {
+    const w = new World();
+    expect(w.setBlock(3, 64, 5, BLOCK.STONE)).toBe(true);
+    expect(w.getBlock(3, 64.9, 5)).toBe(w.getBlock(3, 64, 5)); // 讀：分數 y → 同格
+    expect(w.setBlock(3, 64.9, 5, BLOCK.DIRT)).toBe(true); // 寫：floor(64.9)=64
+    expect(w.getBlock(3, 64, 5)).toBe(BLOCK.DIRT);
+    expect(w.modified.get('3,64,5')).toBe(BLOCK.DIRT);
+    // B4 債務收口：topY 的 y+1 以 floor 後的整數 y 計算（65，不是 65.9）
+    expect(w.getChunk(0, 0)!.topY).toBe(65);
+  });
+
+  it('區塊邊界：15.9 讀本區塊 (15,15)；16.1 落鄰區塊 (0,0)', () => {
+    const w = new World();
+    w.setBlock(15, 64, 15, BLOCK.STONE);
+    w.setBlock(16, 64, 0, BLOCK.STONE);
+    expect(w.getBlock(15.9, 64, 15.9)).toBe(BLOCK.STONE);
+    expect(w.getBlock(16.1, 64, 0.9)).toBe(BLOCK.STONE); // floor(16.1)=16 → chunk (1,0) local (0,0)
+  });
+
+  it('既有行為不變：y 越界（含 floor 後越界的分數）→ AIR/false；未載入區塊 → AIR', () => {
+    const w = new World();
+    // 整數越界（契約在 floor 之後檢查，行為與既有測試一致）
+    expect(w.setBlock(0, 300, 0, BLOCK.STONE)).toBe(false);
+    expect(w.getBlock(0, -1, 0)).toBe(BLOCK.AIR);
+    // 分數 floor 後越界：floor(-0.5)=-1、floor(256.5)=256
+    expect(w.getBlock(3, -0.5, 5)).toBe(BLOCK.AIR);
+    expect(w.getBlock(3, 256.5, 5)).toBe(BLOCK.AIR);
+    expect(w.setBlock(3, -0.5, 5, BLOCK.STONE)).toBe(false);
+    expect(w.setBlock(3, 256.5, 5, BLOCK.STONE)).toBe(false);
+    expect(w.getChunk(0, 0)).toBeUndefined(); // 越界寫入不建區塊
+    // 未載入區塊 → AIR（分數座標同理）
+    expect(w.getBlock(1000.5, 64, 1000.5)).toBe(BLOCK.AIR);
+  });
+});
+
 /** B3 Task 5：`isTargetable` ＝「可被瞄準／挖掘命中」＝實心方塊 ＋ cross 植被。
  *  水與空氣不可命中；植被不碰撞但必須能被挖掉（見 `blocks.ts` 的 `isTargetable`）。 */
 describe('World.isTargetable (B3 Task 5)', () => {

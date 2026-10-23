@@ -32,7 +32,16 @@ export class World {
     this.chunks.delete(chunkKey(cx, cz));
   }
 
+  /** 讀取方塊 id（`BLOCK.AIR` 當 y 越界或區塊未載入）。
+   *
+   *  座標契約（B6 T1b，B4 分診①收口）：x/y/z 一律 `Math.floor` 到整數格——
+   *  呼叫端可以傳玩家／實體的浮點位置，讀寫落在該點所在的格。這是唯一的
+   *  取整點（`Chunk.get`／`Chunk.set` 仍假設整數；由世界層保證）。y 範圍
+   *  檢查在 floor 之後：floor(-0.5)=-1、floor(256.5)=256 → 越界 → AIR。 */
   getBlock(x: number, y: number, z: number): number {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
     if (y < 0 || y >= CHUNK_HEIGHT) return BLOCK.AIR;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
@@ -41,7 +50,17 @@ export class World {
     return chunk.get(x - cx * CHUNK_SIZE, y, z - cz * CHUNK_SIZE);
   }
 
+  /** 寫入方塊 id：自動建立缺漏的區塊、邊界格標記鄰塊重網格、記入
+   *  `modified` 並標記光照重算（八鄰）／推進 `topY`。回 false 當 y 越界
+   *  （不建區塊、不記 modified）。
+   *
+   *  座標契約同 `getBlock`（B6 T1b）：x/y/z 一律 `Math.floor` 到整數格，
+   *  這是唯一的取整點。y 範圍檢查在 floor 之後；`modified` 鍵與 `topY`
+   *  （y+1）都以取整後的整數座標記錄（存檔鍵因此永遠是整數格式）。 */
   setBlock(x: number, y: number, z: number, id: BlockId): boolean {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
     if (y < 0 || y >= CHUNK_HEIGHT) return false;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
