@@ -5,6 +5,7 @@ import {
   isSolid as blockIsSolid,
   isTargetable as blockIsTargetable,
 } from './blocks';
+import { markLightDirty } from './lighting';
 
 export function chunkKey(cx: number, cz: number): string {
   return `${cx},${cz}`;
@@ -57,6 +58,12 @@ export class World {
     if (lz === 0) this.markDirty(cx, cz - 1);
     if (lz === CHUNK_SIZE - 1) this.markDirty(cx, cz + 1);
     this.modified.set(`${x},${y},${z}`, id);
+    // B6 光照：(a) 天空光柱掃描上界只增不減；(b) 本區塊與八個鄰塊（含對角）
+    // 標記需要重算光照——BFS 走 6 鄰居時會經過正交鄰塊寫進對角區塊，只標
+    // 4 個正交鄰塊會在對角留下永久幽靈光（由 markLightDirty 內處理八鄰）。
+    // 注意這是光照專用的旗標，與上面網格用的 markDirty 是兩套，不混用。
+    chunk.topY = Math.max(chunk.topY, y + 1);
+    markLightDirty(this, cx, cz);
     return true;
   }
 

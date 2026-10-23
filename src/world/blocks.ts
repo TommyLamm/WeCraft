@@ -72,6 +72,9 @@ export interface BlockDef {
   /** Kind that mines this block faster (`interact.ts` `toolSpeed`); `null` =
    *  no fast tool. Never a gate — the block breaks either way. */
   fastTool: ToolKind | null;
+  /** 光照發射等級（B6 光照引擎）：0..15，未列＝0。引擎一律經
+   *  `getBlockDef(id).emission ?? 0` 讀取（原版火把 = 14，Task 5 落地）。 */
+  emission?: number;
 }
 
 const T = {
