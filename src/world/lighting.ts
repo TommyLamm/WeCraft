@@ -1,4 +1,4 @@
-/** B6 方塊光引擎（Task 1）：方塊光的儲存、傳播、衰減與遮蔽。
+/** B6 光照引擎：方塊光（Task 1）＋天空光（Task 2）＋生命週期（Task 3）。
  *
  *  資料模型：每格 1 byte（存在 `Chunk.light`，延遲配置）——bit 7..4 天空光、
  *  bit 3..0 方塊光。所有讀寫走**世界座標**；目標區塊不存在時讀 0、寫不進去
@@ -8,6 +8,7 @@
  *  原文摘錄見 docs/superpowers/plans/2026-10-20-wecraft-b6-lighting.md §1）：
  *  - 16 個等級 0..15；火把 = 14。
  *  - 方塊光每格 −1（taxi-cab：6 方向各 −1，斜對角 = −2）。
+ *  - 天空光垂直下傳不衰減（直曝柱），其餘每格 −1。
  *  - 「Opaque blocks can prevent the spread of sky light」→ 不透明方塊擋光，
  *    且**不持有光**（值恆 0）——光源格本身除外：種子寫入不受遮蔽檢查限制。
  *
@@ -15,9 +16,21 @@
  *  **絕對不可把該格 push 進佇列**——否則「寫不進去 → 讀回恆 0 → 永遠比 next
  *  小 → 每次 pop 再生 6 個新項」→ 佇列無限膨脹 → RangeError／OOM。
  *
- *  已知簡化（寫進 README〈與原版的差異〉）：本引擎的 BFS 只從「種子格」往外
- *  傳播——天空光的水平傳播必須先被某個格「照亮」才會發生 → 從未被水平照到的
- *  開闊天空柱永遠是 0（天空光在 Task 2 接上時同理；垂直直曝柱由柱掃描種下）。 */
+ *  生命週期（Task 3，重算粒度＝**區塊**）：放置／破壞方塊 → `World.setBlock`
+ *  標 `lightDirty`（本區塊＋八鄰）→ 下一幀由 main 的光照佇列重算（每幀 2 區塊
+ *  預算、近→遠排序）並重網格化。**不做逐格 remove-BFS**：逐格版本要處理
+ *  「光要往回吸」的邊界條件，錯誤率高、難測；區塊重算的量級見下方效能註記。
+ *
+ *  效能註記（Task 3 實測）：BFS 內層每個候選格要解析「屬於哪個區塊」2-3 次，
+ *  逐格走 `world.getChunk` 的字串鍵 Map（`${cx},${cz}` 組合＋雜湊）時，單次
+ *  群組天空播種實測 ~150 ms、16 區塊生成＋點光 ~6.2 s（超出 B3 預算 4 倍）。
+ *  → 熱迴圈（柱掃描＋兩條 BFS）改走「4 槽 parity 區塊快取＋直寫 light 陣列」
+ *  （見下方解析快取），寫入內容與公開逐格 API **逐位元相同**；公開 API
+ *  （`lightAt`／`setLight`／`isOpaqueAt`…）維持原路徑，供測試與冷路徑使用。
+ *
+ *  已知簡化（寫進 README〈與原版的差異〉）：透明格（水／玻璃／葉／植被）不做
+ *  過濾衰減（原版每格再 −1）。Task 1 時代「從未被水平照到的開闊天空柱恆 0」
+ *  的簡化已隨 Task 2 的全高柱掃描（R-T2-1）消失——開闊柱一律種滿 15。 */
 
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkIndex, type Chunk } from './chunk';
 import { BLOCK, getBlockDef, isTransparent } from './blocks';
@@ -29,20 +42,33 @@ export const MAX_LIGHT = 15;
 /** 火把的發光等級（minecraft.wiki/Torch：Luminous 14；Task 5 落地方塊）。 */
 export const TORCH_LIGHT = 14;
 
+/** 透明度查表（**熱路徑專用**）：模組載入時從 DEFS 快照。BFS 內層每個候選格
+ *  都要問一次「擋不擋光」，逐格 `getBlockDef(id).transparent` 是 Record 查找＋
+ *  屬性存取；Uint8Array 查表是單次陣列讀取。快照安全的原因：執行期只會變異
+ *  `emission`（lighting.test.ts 借 POPPY 暫補 14 當測試光源），`transparent`
+ *  從不被改動 → 方塊光／天空光的 emission 仍走逐格 `getBlockDef(...).emission
+ *  ?? 0` 正是為了尊重這類執行期變異。未知 id → fallback 空氣（透明）＝與
+ *  `isTransparent` 同義。 */
+const TRANSPARENT = new Uint8Array(256);
+for (let id = 0; id < TRANSPARENT.length; id++) {
+  TRANSPARENT[id] = getBlockDef(id).transparent ? 1 : 0;
+}
+
 export interface LightLevels {
   sky: number;
   block: number;
 }
 
-/** 6 方向鄰居（±x ±y ±z）。 */
-const NEIGHBORS6: ReadonlyArray<readonly [number, number, number]> = [
-  [1, 0, 0],
-  [-1, 0, 0],
-  [0, 1, 0],
-  [0, -1, 0],
-  [0, 0, 1],
-  [0, 0, -1],
-];
+/** 6 方向鄰居（±x ±y ±z），攤平儲存——熱迴圈以索引取用，避免 iterator／
+ *  解構的每格開銷（順序與原本的陣列一致，傳播結果不變）。 */
+const NEIGHBORS6 = new Int8Array([
+  1, 0, 0, // +x
+  -1, 0, 0, // −x
+  0, 1, 0, // +y
+  0, -1, 0, // −y
+  0, 0, 1, // +z
+  0, 0, -1, // −z
+]);
 
 /** 把世界座標收斂成「整數格 + 區塊引用」。本引擎**內部一律用整數格座標**
  *  （入口處 Math.floor；`World.getBlock`／`setBlock` 的座標契約由 T1b 收口，
@@ -130,6 +156,46 @@ function resetQueue(): void {
   queueTail = 0;
 }
 
+// ── 熱路徑的區塊解析快取（Task 3）────────────────────────────────────────────
+//
+// 每個「會解析區塊」的公開入口先 `resetResolveCache()`：公開呼叫之間區塊可能
+// 被新增／移除（gen 回應、視距卸載、resetWorld）；而單一同步操作內部引擎從不
+// 增刪區塊 → 操作內的快取命中絕對安全。
+//
+// 4 槽 direct-mapped，槽號 = (cx&1) | (cz&1)<<1：**3×3 群組的九個區塊恰好每個
+// parity 槽各一塊** → 群組掃描零碰撞；光最多再往群組外傳 15 格，最壞情況驅逐
+// 群組內的槽 → 退回一次 Map 查詢，只損速度、不損正確性。
+const RESOLVE_SLOTS = 4;
+const rcWorld: Array<World | null> = new Array(RESOLVE_SLOTS).fill(null);
+const rcCx = new Int32Array(RESOLVE_SLOTS);
+const rcCz = new Int32Array(RESOLVE_SLOTS);
+const rcChunk: Array<Chunk | undefined> = new Array(RESOLVE_SLOTS).fill(undefined);
+
+function resetResolveCache(): void {
+  rcWorld.fill(null);
+}
+
+/** 帶快取的 `world.getChunk`。只能在公開入口 reset 之後的同步操作內使用。 */
+function chunkCached(world: World, cx: number, cz: number): Chunk | undefined {
+  const s = (cx & 1) | ((cz & 1) << 1);
+  if (rcWorld[s] === world && rcCx[s] === cx && rcCz[s] === cz) return rcChunk[s];
+  const chunk = world.getChunk(cx, cz);
+  rcWorld[s] = world;
+  rcCx[s] = cx;
+  rcCz[s] = cz;
+  rcChunk[s] = chunk;
+  return chunk;
+}
+
+// 位元位移（`>> CHUNK_SHIFT`／`& CHUNK_MASK`）取代 floor 除法／取模：負座標下
+// 算術右移正是 floor 除法（-1 >> 4 = -1）、遮罩取出的是正餘數（-1 & 15 = 15），
+// 與 `Math.floor(x / CHUNK_SIZE)` 逐值相同。載入時靜態檢查守住「2 的冪」前提。
+const CHUNK_SHIFT = Math.round(Math.log2(CHUNK_SIZE));
+const CHUNK_MASK = CHUNK_SIZE - 1;
+if ((1 << CHUNK_SHIFT) !== CHUNK_SIZE) {
+  throw new Error(`lighting.ts: CHUNK_SIZE must be a power of two, got ${CHUNK_SIZE}`);
+}
+
 /** 由光源做 flood-fill 傳播（方塊光通道）：6 方向每格 −1（taxi-cab），
  *  不透明方塊擋光，只寫入比現值高的格。
  *
@@ -142,8 +208,22 @@ export function propagateBlockLight(
   sz: number,
   level: number,
 ): void {
+  resetResolveCache();
   resetQueue(); // 保險：即使前一次 propagate 異常中斷也從乾淨狀態開始
   pushQueue(Math.floor(sx), Math.floor(sy), Math.floor(sz), level);
+  expandBlockQueue(world);
+  resetQueue();
+}
+
+/** 方塊光 BFS 主循環（由 {@link propagateBlockLight} 驅動）：pop 一格 → 6 鄰居
+ *  擴張。衰減＝每格 −1（taxi-cab）；不透明擋光；只寫比現值高的格；目標區塊
+ *  不存在 → **不寫也不 push**（見檔頭的佇列終止規則）。
+ *
+ *  與逐格呼叫公開 API（`isOpaqueAt`／`blockLightAt`／`setLight`）**逐位元等價**，
+ *  但內層走解析快取＋直寫 light 陣列（見解析快取註記）；`chunk.dirty = true`
+ *  與 `setLight` 尾端的 `world.markDirty` 同義（markDirty = getChunk + dirty
+ *  = true，而這裡的 chunk 正是剛解析出來的那一個）。 */
+function expandBlockQueue(world: World): void {
   while (queueHead < queueTail) {
     const px = queue[queueHead * 4];
     const py = queue[queueHead * 4 + 1];
@@ -151,22 +231,25 @@ export function propagateBlockLight(
     const lv = queue[queueHead * 4 + 3];
     queueHead += 1;
     if (lv <= 1) continue; // 再傳就是 0，不值得寫
-    for (const [dx, dy, dz] of NEIGHBORS6) {
-      const nx = px + dx;
-      const ny = py + dy;
-      const nz = pz + dz;
+    for (let n = 0; n < 6; n++) {
+      const nx = px + NEIGHBORS6[n * 3];
+      const ny = py + NEIGHBORS6[n * 3 + 1];
+      const nz = pz + NEIGHBORS6[n * 3 + 2];
       if (ny < 0 || ny >= CHUNK_HEIGHT) continue;
-      if (isOpaqueAt(world, nx, ny, nz)) continue; // 不透明方塊擋光（也不持有光）
+      const cx = nx >> CHUNK_SHIFT;
+      const cz = nz >> CHUNK_SHIFT;
+      const chunk = chunkCached(world, cx, cz);
+      if (!chunk) continue; // ★ 缺席區塊：不寫、也不 push（與 setLight 回 false 同義）
+      const idx = chunkIndex(nx & CHUNK_MASK, ny, nz & CHUNK_MASK);
+      if (TRANSPARENT[chunk.data[idx]] === 0) continue; // 不透明方塊擋光（也不持有光）
+      const cur = chunk.light ? chunk.light[idx] : 0;
       const next = lv - 1; // 每格 −1（taxi-cab）
-      if (blockLightAt(world, nx, ny, nz) >= next) continue; // 只寫比現值高的格
-      // ★ 目標區塊不存在 → setLight 回 false → 不寫、也不 push（否則佇列無限膨脹）
-      if (!setLight(world, nx, ny, nz, { sky: skyLightAt(world, nx, ny, nz), block: next })) {
-        continue;
-      }
+      if ((cur & 0x0f) >= next) continue; // 只寫比現值高的格
+      chunk.ensureLight()[idx] = (cur & 0xf0) | next; // 方塊光進低位、天空光保留
+      chunk.dirty = true; // 光變了 → 該區塊要重網格（等價於 setLight 的 markDirty）
       pushQueue(nx, ny, nz, next);
     }
   }
-  resetQueue();
 }
 
 /** (cx,cz) 與其八個鄰塊（含對角）中**已存在**的區塊（沒有就略過）。
@@ -189,14 +272,22 @@ export function groupChunks(world: World, cx: number, cz: number): Chunk[] {
  *  - 播種時掃描周圍 3×3 群組（含對角）內所有已存在區塊的發光來源；
  *    鄰塊不存在就跳過 → 光寫不進不存在的區塊（後生成時由它自己的重算拉回）。
  *  - 天空光（Task 2）：3×3 群組的**開闊天空柱**也是來源——鄰塊的開闊柱會
- *    水平餵光進本區塊（只掃本區塊會讓邊界少一階，稽核修正）；柱掃描上界
- *    用各區塊自己的 `topY`。 */
+ *    水平餵光進本區塊（只掃本區塊會讓邊界少一階，稽核修正）；柱掃描上界＝
+ *    全高（R-T2-1：topY 只增不減 ⇒ 其上必為空氣 ⇒ 全高掃描即物理正確值，
+ *    光照不再依賴 topY）。
+ *
+ *  效能（Task 3）：天空播種收斂成「群組整體一次播種＋一次多來源 BFS」——
+ *  種子先全部寫滿再擴張，開闊格（=15）在擴張時直接跳過；與「逐塊
+ *  seedSkyColumns」收斂到同一個 fixed point（寫入規則「只寫更高」⇒ 收斂值與
+ *  播種順序無關），但省掉逐塊重複擴張的交叉級聯。 */
 export function computeChunkLight(world: World, cx: number, cz: number): void {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) return;
+  resetResolveCache(); // 公開入口：下面的熱迴圈（BFS）要用解析快取
   chunk.ensureLight().fill(0); // ★ 只清本區塊；鄰塊由它們自己的重算負責
+  const group = groupChunks(world, cx, cz);
   const cells = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
-  for (const src of groupChunks(world, cx, cz)) {
+  for (const src of group) {
     for (let i = 0; i < cells; i++) {
       const emission = getBlockDef(src.data[i]).emission ?? 0;
       if (emission <= 0) continue;
@@ -214,9 +305,13 @@ export function computeChunkLight(world: World, cx: number, cz: number): void {
       }
       propagateBlockLight(world, wx, ly, wz, emission);
     }
-    // 天空光：該群組區塊的開闊柱播種＋多來源 BFS（Task 2）
-    seedSkyColumns(world, src.cx, src.cz);
   }
+  // 天空光：3×3 群組的開闊柱**一次**播種＋**一次**多來源 BFS（Task 2 的
+  // 播種語意不變；群組整體收斂見上方效能註記）
+  resetQueue();
+  for (const src of group) seedColumnsIntoQueue(src);
+  expandSkyQueue(world);
+  resetQueue();
   chunk.lightDirty = false;
 }
 
@@ -235,7 +330,8 @@ export function markLightDirty(world: World, cx: number, cz: number): void {
 
 /** 掃一次區塊資料 → 最高的非空氣格 y + 1（生成完成時呼叫，呼叫端寫回
  *  `chunk.topY`）。地形是整塊寫入（`chunk.data.set(terrain)`、不經 setBlock），
- *  沒有這一步，生成出來的區塊 topY 會是 0 → 天空光柱不會往下掃（Task 2/3）。 */
+ *  沒有這一步，生成出來的區塊 topY 會停在 0。**光照已不依賴 topY**（R-T2-1：
+ *  柱掃描改全高），此值保留給 topY 的其他消費者與除錯。 */
 export function computeChunkTopY(chunk: Chunk): number {
   for (let ly = CHUNK_HEIGHT - 1; ly >= 0; ly--) {
     const base = ly * CHUNK_SIZE * CHUNK_SIZE;
@@ -265,10 +361,11 @@ export function internalSkyLight(skyLevel: number, t: number): number {
   return Math.max(0, Math.round(base - (MAX_LIGHT - skyLevel)));
 }
 
-/** 天空光 BFS 共用骨架：pop 一格 → 6 鄰居擴張。衰減規則與方塊光唯一的差別：
+/** 天空光 BFS 主循環：pop 一格 → 6 鄰居擴張。衰減規則與方塊光唯一的差別：
  *  **往下且 level = 15 時不衰減**（垂直下傳，minecraft.wiki/Light 的 sky light
  *  直曝柱）；其餘每格 −1。只寫比現值高的格；不透明擋光；目標區塊不存在 →
- *  setLight 回 false → **不寫也不 push**（與方塊光同一條終止規則）。 */
+ *  **不寫也不 push**（與方塊光同一條終止規則）。內層與 {@link expandBlockQueue}
+ *  同樣走解析快取＋直寫 light 陣列（逐位元等價於公開逐格 API）。 */
 function expandSkyQueue(world: World): void {
   while (queueHead < queueTail) {
     const px = queue[queueHead * 4];
@@ -277,18 +374,24 @@ function expandSkyQueue(world: World): void {
     const lv = queue[queueHead * 4 + 3];
     queueHead += 1;
     if (lv <= 1) continue; // 再傳就是 0，不值得寫
-    for (const [dx, dy, dz] of NEIGHBORS6) {
+    for (let n = 0; n < 6; n++) {
+      const dx = NEIGHBORS6[n * 3];
+      const dy = NEIGHBORS6[n * 3 + 1];
       const nx = px + dx;
       const ny = py + dy;
-      const nz = pz + dz;
+      const nz = pz + NEIGHBORS6[n * 3 + 2];
       if (ny < 0 || ny >= CHUNK_HEIGHT) continue;
-      if (isOpaqueAt(world, nx, ny, nz)) continue; // 不透明方塊擋光（也不持有光）
+      const cx = nx >> CHUNK_SHIFT;
+      const cz = nz >> CHUNK_SHIFT;
+      const chunk = chunkCached(world, cx, cz);
+      if (!chunk) continue; // ★ 缺席區塊：不寫、也不 push（佇列必終止）
+      const idx = chunkIndex(nx & CHUNK_MASK, ny, nz & CHUNK_MASK);
+      if (TRANSPARENT[chunk.data[idx]] === 0) continue; // 不透明方塊擋光（也不持有光）
+      const cur = chunk.light ? chunk.light[idx] : 0;
       const next = dy === -1 && lv === MAX_LIGHT ? MAX_LIGHT : lv - 1;
-      if (skyLightAt(world, nx, ny, nz) >= next) continue; // 只寫比現值高的格
-      // ★ 目標區塊不存在 → setLight 回 false → 不寫、也不 push（佇列必終止）
-      if (!setLight(world, nx, ny, nz, { sky: next, block: blockLightAt(world, nx, ny, nz) })) {
-        continue;
-      }
+      if ((cur >> 4) >= next) continue; // 只寫比現值高的格
+      chunk.ensureLight()[idx] = (next << 4) | (cur & 0x0f); // 天空進高位、方塊光保留
+      chunk.dirty = true; // 光變了 → 重網格（等價於 setLight 的 markDirty）
       pushQueue(nx, ny, nz, next);
     }
   }
@@ -303,15 +406,86 @@ export function propagateSkyLight(
   sz: number,
   level: number,
 ): void {
+  resetResolveCache(); // 公開入口：熱迴圈（expandSkyQueue）要用解析快取
   resetQueue(); // 保險：即使前一次異常中斷也從乾淨狀態開始
   pushQueue(Math.floor(sx), Math.floor(sy), Math.floor(sz), level);
   expandSkyQueue(world);
   resetQueue();
 }
 
-/** 逐柱播種天空光 15（遇到第一個不透明方塊即停；透明格含水、玻璃、葉、
- *  植被——簡化：不做過濾衰減），**整區塊一次多來源 BFS**（結果與「每個種子
- *  各跑一次 BFS」完全相同，但快約 15 倍）。
+/** 逐柱斷點高度（模組層暫存，`seedColumnsIntoQueue` 專用；引擎為單執行緒、
+ *  無重入）。值 = 該柱從頂往下掃到的第一個**不透明**格 y（開闊格 = y > 值）；
+ *  全柱開闊 = −1。 */
+const colBreak = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
+
+/** 單一區塊的開闊天空柱掃描＋播種（種子進共用佇列；BFS 由呼叫端統一驅動）。
+ *  回傳是否有種子寫入（→ 呼叫端據此標記網格髒）。**全部在本區塊自己的陣列上
+ *  直讀直寫**：世界座標版的 isOpaqueAt／setLight 每格要組字串鍵查 Map（probe
+ *  實測單次 ~150 ms），本地陣列版寫入內容逐位元相同（見 expandSkyQueue 的
+ *  等價說明）。
+ *
+ *  播種修剪（Task 3 效能；**最終光值與「全部推進佇列」完全相同**，只刪掉
+ *  註定空轉的佇列項）：開闊格（=15）只有在「某個水平鄰格可能收到光」時才需要
+ *  進 BFS——上鄰必同柱更上方（開闊 15）、下鄰要嘛開闊 15 要嘛不透明擋光，
+ *  都收不到；唯一收得到的是「水平鄰柱在 ly 之上還有不透明方塊」（屋簷／懸崖
+ *  下的陰影格）→ 用階段一記下的逐柱斷點高度判斷：`hb(鄰柱) > ly` 且該格透明
+ *  才推進。水平越出本區塊的鄰柱斷點未知 → 整柱保守推進（寧多勿漏；收斂值
+ *  不變，只多花幾個佇列項）。 */
+function seedColumnsIntoQueue(chunk: Chunk): boolean {
+  const baseX = chunk.cx * CHUNK_SIZE;
+  const baseZ = chunk.cz * CHUNK_SIZE;
+  const data = chunk.data;
+  let light = chunk.light;
+  let seeded = false;
+  // ── 階段一：逐柱掃描，寫入 15、記錄斷點高度（不進佇列）──
+  for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      let ly = CHUNK_HEIGHT - 1;
+      for (; ly >= 0; ly--) {
+        const idx = chunkIndex(lx, ly, lz);
+        if (TRANSPARENT[data[idx]] === 0) break; // 第一個不透明方塊 → 柱結束
+        if (!light) light = chunk.ensureLight(); // 維持「有種子才配置」的延遲語意
+        light[idx] = (MAX_LIGHT << 4) | (light[idx] & 0x0f); // 種子保留既有方塊光
+        seeded = true;
+      }
+      colBreak[lx * CHUNK_SIZE + lz] = ly; // 迴圈退出時：不透明格 y（全開 = −1）
+    }
+  }
+  if (seeded) chunk.dirty = true; // 等價於原逐格 setLight → world.markDirty（冪等）
+  // ── 階段二：只把「有鄰格可能收光」的開闊格推進佇列（見上方修剪說明）──
+  for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      const hb = colBreak[lx * CHUNK_SIZE + lz];
+      const west = lx > 0;
+      const east = lx < CHUNK_SIZE - 1;
+      const north = lz > 0;
+      const south = lz < CHUNK_SIZE - 1;
+      for (let ly = hb + 1; ly < CHUNK_HEIGHT; ly++) {
+        // 邊界柱（鄰柱跨區塊、斷點未知）→ 保守推進
+        let need = !(west && east && north && south);
+        if (!need) {
+          need =
+            (colBreak[(lx - 1) * CHUNK_SIZE + lz] > ly &&
+              TRANSPARENT[data[chunkIndex(lx - 1, ly, lz)]] === 1) ||
+            (colBreak[(lx + 1) * CHUNK_SIZE + lz] > ly &&
+              TRANSPARENT[data[chunkIndex(lx + 1, ly, lz)]] === 1) ||
+            (colBreak[lx * CHUNK_SIZE + (lz - 1)] > ly &&
+              TRANSPARENT[data[chunkIndex(lx, ly, lz - 1)]] === 1) ||
+            (colBreak[lx * CHUNK_SIZE + (lz + 1)] > ly &&
+              TRANSPARENT[data[chunkIndex(lx, ly, lz + 1)]] === 1);
+        }
+        if (need) pushQueue(baseX + lx, ly, baseZ + lz, MAX_LIGHT);
+      }
+    }
+  }
+  return seeded;
+}
+
+/** 逐柱播種單一區塊的開闊天空光 15（遇第一個不透明方塊即停；透明格含水、
+ *  玻璃、葉、植被——簡化：不做過濾衰減），**整區塊一次多來源 BFS**（結果與
+ *  「每個種子各跑一次 BFS」完全相同）。掃描／修剪本體見
+ *  {@link seedColumnsIntoQueue}；computeChunkLight 的群組播種走的則是「整個
+ *  3×3 群組一次播種＋一次 BFS」（同一收斂點，見該函式的效能註記）。
  *
  *  **掃描上界 = CHUNK_HEIGHT−1（全高），不是 `chunk.topY`**（2026-10-23 裁決，
  *  覆寫稽核的 topY 上界）：topY 只涵蓋「地形最高方塊 + 1」，其上的開闊天空柱
@@ -323,19 +497,9 @@ export function propagateSkyLight(
 export function seedSkyColumns(world: World, cx: number, cz: number): void {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) return;
+  resetResolveCache();
   resetQueue();
-  for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
-      const wx = cx * CHUNK_SIZE + lx;
-      const wz = cz * CHUNK_SIZE + lz;
-      for (let ly = CHUNK_HEIGHT - 1; ly >= 0; ly--) {
-        if (isOpaqueAt(world, wx, ly, wz)) break; // 第一個不透明方塊 → 柱結束
-        // 種子寫入保留該格既有的方塊光（兩條通道互不覆蓋）
-        if (!setLight(world, wx, ly, wz, { sky: 15, block: blockLightAt(world, wx, ly, wz) })) break;
-        pushQueue(wx, ly, wz, 15); // 種子進同一個佇列
-      }
-    }
-  }
+  seedColumnsIntoQueue(chunk);
   expandSkyQueue(world);
   resetQueue();
 }

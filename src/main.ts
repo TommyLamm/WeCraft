@@ -13,6 +13,9 @@ import { createViewmodel } from './render/viewmodel';
 import { createPlayerModel } from './render/player-model';
 import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
+// B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
+// 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
+import { computeChunkLight, computeChunkTopY, markLightDirty } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -1089,6 +1092,9 @@ audio.setVolume(settings.volume);
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
 const pendingMesh: Array<[number, number]> = [];
+// B6 Task 3：光照重算佇列（[cx, cz, distSq]）——lightDirty 的區塊進這裡，
+// 每幀重算最多 2 塊（先有光再建網格；見 processQueues 的光照預算）。
+const pendingLight: Array<[number, number, number]> = [];
 const generated = new Set<string>();
 const genInFlight = new Set<string>();
 
@@ -1144,6 +1150,18 @@ function spawnPoint(): { x: number; y: number; z: number } {
     // recorded before the chunk existed as generated (e.g. Continue's
     // applyModified auto-creating (0,0) ahead of this line).
     world.reapplyModifiedInChunk(0, 0);
+    // B6 Task 3 生成接線（與 worker 回應 handler 同一套）：整塊寫入不經
+    // setBlock → topY 與 lightDirty 要自己補。
+    chunk.topY = computeChunkTopY(chunk);
+    markLightDirty(world, 0, 0);
+    // 開局同步點亮出生區（玩家所在區塊半徑 2 的 5×5 = 25 塊）：開局時實際
+    // 存在的只有 (0,0)（其餘 24 塊對 computeChunkLight 是 no-op）→ 玩家眼前
+    // 第一幀就是正確的光；周圍區塊由生成回應的 markLightDirty 進佇列，以每幀
+    // 2 塊、近→遠的預算補齊。放在 markLightDirty 之後：computeChunkLight
+    // 收尾會清掉 (0,0) 的 lightDirty → 不會再進佇列重算一次。
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dx = -2; dx <= 2; dx++) computeChunkLight(world, dx, dz);
+    }
   }
   generated.add(chunkKey(0, 0));
   // **為什麼用 `(0.5, 0.5)` 而不是整數**：柱（column）是 1×1 的格子，**整數座標
@@ -1288,6 +1306,7 @@ function refreshQueues(): void {
   const rg = r + 1; // gen one ring past mesh radius so edge chunks have all 4 neighbors
   pendingGen.length = 0;
   pendingMesh.length = 0;
+  pendingLight.length = 0;
 
   for (let dz = -rg; dz <= rg; dz++) {
     for (let dx = -rg; dx <= rg; dx++) {
@@ -1298,12 +1317,15 @@ function refreshQueues(): void {
       // generated-keyed, not hasChunk (Task 6 deviation)
       if ((c?.generated !== true) && !generated.has(key)) {
         pendingGen.push([cx, cz]);
-      } else if (
-        Math.abs(dx) <= r &&
-        Math.abs(dz) <= r &&
-        c?.dirty
-      ) {
-        pendingMesh.push([cx, cz]);
+      } else if (Math.abs(dx) <= r && Math.abs(dz) <= r && c) {
+        // B6 Task 3：光照佇列與 mesh **同一個 ring**，且各自獨立收集——同一塊
+        // 可以同時待重光＋待重網格。若用 else-if 串接，同時髒的區塊只會進
+        // 網格佇列，而網格迴圈的守門（!lightDirty，見 processQueues）會永遠
+        // 等不到重光 → 死鎖不渲染。
+        if (c.lightDirty) {
+          pendingLight.push([cx, cz, (cx - pcx) ** 2 + (cz - pcz) ** 2]);
+        }
+        if (c.dirty) pendingMesh.push([cx, cz]);
       }
     }
   }
@@ -1311,6 +1333,10 @@ function refreshQueues(): void {
   // 近→遠排序，優先載入腳下
   pendingGen.sort((a, b) => dist2(a, pcx, pcz) - dist2(b, pcx, pcz));
   pendingMesh.sort((a, b) => dist2(a, pcx, pcz) - dist2(b, pcx, pcz));
+  // 光照佇列同樣近→遠（2026-10-20 稽核修正）：原設計的 ring 掃描順序會讓遠處
+  // 角落優先點亮、玩家附近最後才亮；依「區塊中心到玩家的距離平方」排序後，
+  // 玩家周圍先亮，其餘在後續幀以每幀 2 塊的預算補齊。
+  pendingLight.sort((a, b) => a[2] - b[2]);
 
   for (const key of [...world.chunks.keys()]) {
     const [cx, cz] = key.split(',').map(Number);
@@ -1338,7 +1364,22 @@ function neighborsReady(cx: number, cz: number): boolean {
 
 function processQueues(): void {
   let budgetGen = 2;
+  let budgetLight = 2;
   let budgetMesh = 2;
+  // B6 Task 3：先跑光照預算，再跑網格預算——lightDirty 尚未清除的區塊不能
+  // 建網格（會用 0 光烘焙出全黑 mesh）。重算粒度＝區塊（不做逐格 remove-BFS：
+  // 逐格版本要處理「光要往回吸」的邊界條件，錯誤率高、難測；區塊重算冪等，
+  // 語意由 lighting.test.ts 釘住）。
+  while (budgetLight > 0 && pendingLight.length > 0) {
+    const [cx, cz] = pendingLight.shift()!;
+    const c = world.getChunk(cx, cz);
+    if (c?.lightDirty) {
+      computeChunkLight(world, cx, cz); // 收尾會把 lightDirty 清掉（lighting.ts）
+      budgetLight--;
+    }
+    // 過期項（旗標已被開局同步點亮清掉／區塊已卸載）→ 丟棄不重推：
+    // refreshQueues 每幀從旗標重建佇列，重推只會空轉（與網格迴圈同一條紀律）。
+  }
   while (budgetGen > 0 && pendingGen.length > 0) {
     const [cx, cz] = pendingGen[0];
     const key = chunkKey(cx, cz);
@@ -1374,6 +1415,19 @@ function processQueues(): void {
       // auto-creates generated=false chunks; unloaded chunks re-fill on
       // return) — saved/player edits must always win over regenerated terrain.
       world.reapplyModifiedInChunk(cx, cz);
+      // B6 Task 3 生成接線（與 spawnPoint 的同步生成分支同一套）：
+      //  - 地形是整塊寫入（data.set / new Chunk(data)、不經 setBlock）→
+      //    `topY` 不會被 setBlock 的維護推進 → 這裡自己掃一次（放在 reapply
+      //    之後：玩家編輯經 setBlock 也會推 topY，這裡重掃冪等）。
+      //  - `markLightDirty`（本區塊＋存在的八鄰）：新地形可能擋掉／改變鄰塊
+      //    既有的光，鄰塊也要重算才一致；本區塊則由光照佇列在後續幀點亮。
+      //    （reapply 的 setBlock 本身也會標記——這裡的標記是冪等的，且在
+      //    「沒有任何編輯」的常規路徑上是唯一的標記點。）
+      const relit = world.getChunk(cx, cz);
+      if (relit) {
+        relit.topY = computeChunkTopY(relit);
+        markLightDirty(world, cx, cz);
+      }
     }).catch(() => genInFlight.delete(key));
     budgetGen--;
   }
@@ -1382,7 +1436,9 @@ function processQueues(): void {
     const c = world.getChunk(cx, cz);
     // drop-not-ready entries (NO re-push): readiness cannot change mid-pass,
     // and refreshQueues re-queues dirty chunks next frame — re-pushing would spin forever.
-    if (c?.dirty && neighborsReady(cx, cz)) {
+    // B6 Task 3：`!c.lightDirty` 守門——先有光再網格（光照預算在上面已先跑，
+    // 同一幀內剛重算完的區塊可以立刻建網格）。
+    if (c?.dirty && !c.lightDirty && neighborsReady(cx, cz)) {
       chunkRenderer.rebuild(world, cx, cz);
       c.dirty = false;
       budgetMesh--;
@@ -2064,6 +2120,7 @@ function resetWorld(): void {
   genInFlight.clear();
   pendingGen.length = 0;
   pendingMesh.length = 0;
+  pendingLight.length = 0; // B6 Task 3：光照佇列與其他佇列同樣不跨世界沿用
   resetSessionEntities();
   clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
   hazardState = createHazardState(); // B3 Task 6: 仙人掌的接觸計時不跨世界沿用

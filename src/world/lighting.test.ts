@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { CHUNK_HEIGHT, CHUNK_SIZE, Chunk, chunkIndex } from './chunk';
 import { World } from './world';
 import { BLOCK, getBlockDef, type BlockId } from './blocks';
+import { generateChunk } from './terrain';
 import {
   MAX_LIGHT,
   SKY_SCALE_NIGHT,
@@ -297,5 +298,105 @@ describe('sky light engine (B6 Task 2)', () => {
     expect(skyLightScale(0.25)).toBe(1);
     expect(skyLightScale(0.75)).toBe(SKY_SCALE_NIGHT);
     expect(skyLightScale(0.25)).toBeGreaterThan(skyLightScale(0.75));
+  });
+});
+
+// ══ 光照生命週期（B6 Task 3）════════════════════════════════════════════════
+
+// brief Step 1 列的五條裡，兩條已由 Task 1 以**更強**的斷言落地、不重複新增：
+// - 'a late neighbour pulls light back across the border' ≡ 上方
+//   'light spreads back into a late neighbour'（同一情境，且多釘中間態 0、
+//   來源重種 14、新鄰塊內部 12）；
+// - 'a chunk is fully relit after a block change' ≡ 上方
+//   'breaking a torch removes its light'（同一情境，且多釘光源格歸 0）。
+describe('light lifecycle (B6 Task 3)', () => {
+  it('a recompute does not re-dirty its neighbours', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.addChunk(new Chunk(1, 0));
+    w.setBlock(15, 64, 0, TORCH); // 邊界火把：setBlock 已把兩塊標 lightDirty＋(1,0) 網格髒
+    // 隔離「重算本身」的副作用：旗標手動收斂成乾淨狀態，只看 compute 的行為。
+    for (const [cx, cz] of [
+      [0, 0],
+      [1, 0],
+    ] as const) {
+      w.getChunk(cx, cz)!.lightDirty = false;
+      w.getChunk(cx, cz)!.dirty = false;
+    }
+    computeChunkLight(w, 0, 0);
+    // 先證明觸發路徑是真的：BFS 越過 x=15→16 的區塊邊界把光寫進了鄰塊
+    expect(blockLightAt(w, 16, 64, 0)).toBe(13);
+    // ★ brief 斷言：寫光 ≠ 標髒——重算不得把鄰塊排進光照佇列（避免無限迴圈）；
+    //   但網格旗標要標（光變了 → 鄰塊的 mesh 要跟上）——兩套旗標各司其職。
+    expect(w.getChunk(1, 0)!.lightDirty).toBe(false);
+    expect(w.getChunk(1, 0)!.dirty).toBe(true);
+    // 鄰塊自己重算時（它的 3×3 群組含 (0,0)），也不得把已算完的 (0,0) 標回髒
+    // → 否則兩塊互相標記 → 光照佇列永不耗盡。
+    computeChunkLight(w, 1, 0);
+    expect(w.getChunk(0, 0)!.lightDirty).toBe(false);
+    expect(blockLightAt(w, 16, 64, 0)).toBe(13); // 重算後光不變（冪等）
+  });
+
+  it('a corner torch leaves no ghost light in the diagonal neighbour', () => {
+    const w = new World();
+    // 3×3 的九個區塊全部先存在——火把在 (0,0) 的角落，光會寫進全部八鄰
+    for (let cx = -1; cx <= 1; cx++)
+      for (let cz = -1; cz <= 1; cz++) w.addChunk(new Chunk(cx, cz));
+    w.setBlock(0, 64, 0, BLOCK.STONE); // 不透明支撐
+    w.setBlock(0, 65, 0, TORCH); // 區塊角落（世界原點）
+    computeChunkLight(w, 0, 0);
+    expect(blockLightAt(w, -1, 65, -1)).toBe(12); // 對角格被照到（14 − 1 − 1）
+    w.setBlock(0, 65, 0, BLOCK.AIR); // 挖掉火把 → markLightDirty 把九塊全部標髒（含對角）
+    // 模擬光照佇列：對每個 lightDirty === true 的區塊重算
+    for (let cx = -1; cx <= 1; cx++)
+      for (let cz = -1; cz <= 1; cz++)
+        if (w.getChunk(cx, cz)!.lightDirty) computeChunkLight(w, cx, cz);
+    // 對角不留幽靈光（稽核 Critical #3：只標 4 個正交鄰塊時這裡會殘留 12）
+    expect(blockLightAt(w, -1, 65, -1)).toBe(0);
+    expect(blockLightAt(w, -1, 65, 0)).toBe(0);
+    expect(blockLightAt(w, 0, 65, 0)).toBe(0);
+  });
+
+  it('relighting 16 chunks stays inside the generation budget', { timeout: 30000 }, () => {
+    // 本檔在模組載入時把 POPPY 暫補成 emission 14 當測試光源；真實地形會長花
+    // （decorations 的 dandelion／poppy）→ 量測前歸零、finally 還原，花不會變火把。
+    const poppy = getBlockDef(BLOCK.POPPY);
+    const savedEmission = poppy.emission;
+    poppy.emission = 0;
+    try {
+      // 明確取法（2026-10-20 稽核修正）：cx,cz = 0..3 × 0..3 共 16 塊、種子 1337。
+      // 量三次取最快（B3 Task 9 的同款紀律）：vitest 平行跑檔時牆鐘會被同 CPU
+      // 上十幾個檔案的數值迴圈抖高 → 單次量測會假紅；取最快量到的是管線本身，
+      // 真退化時三次都超標 → 守護力不變、門檻一毫秒都沒放寬。
+      const w = new World();
+      let best = Number.POSITIVE_INFINITY;
+      const rounds: string[] = [];
+      for (let round = 0; round < 3; round++) {
+        const t0 = performance.now();
+        for (let cx = 0; cx <= 3; cx++) {
+          for (let cz = 0; cz <= 3; cz++) {
+            const chunk = new Chunk(cx, cz, generateChunk(cx, cz, 1337));
+            w.addChunk(chunk);
+            chunk.topY = computeChunkTopY(chunk); // 生成接線：地形整塊寫入、不經 setBlock
+            computeChunkLight(w, cx, cz); // 生成後立即點光（等價於光照佇列跑完該塊）
+          }
+        }
+        const ms = performance.now() - t0;
+        best = Math.min(best, ms);
+        rounds.push(`${ms.toFixed(0)} ms`);
+      }
+      // 先印後斷言（B3 同款）：門檻被觸發時也要留下實測數字才知道是退化還是機器忙
+      console.log(`gen+light 16 chunks: best ${best.toFixed(0)} ms (rounds: ${rounds.join(' | ')})`);
+      expect(best).toBeLessThan(1500); // 門檻沿用 B3 的 16 區塊預算（1500 ms）
+      // 正確性抽檢（量測不得靠 no-op 變綠）：16 塊的天空柱全高種滿、旗標清乾淨
+      for (let cx = 0; cx <= 3; cx++) {
+        for (let cz = 0; cz <= 3; cz++) {
+          expect(skyLightAt(w, cx * CHUNK_SIZE + 8, 200, cz * CHUNK_SIZE + 8)).toBe(15);
+          expect(w.getChunk(cx, cz)!.lightDirty).toBe(false);
+        }
+      }
+    } finally {
+      poppy.emission = savedEmission;
+    }
   });
 });
