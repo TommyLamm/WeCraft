@@ -404,7 +404,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1357 tests / 74 files 全綠
+npm test           # vitest run — 1358 tests / 74 files 全綠
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -472,7 +472,7 @@ npm run lint       # eslint .
   回填）；創造**可捲動全物品清單**（72 項）；**4 個新進度**（累計 **17** 項）；
   **本機 payload v4**（舊 9 格遷移到熱鍵列）、**雲端 format 2**（`readableFormats
   [1,2]`；舊進度自動遷移）；**跨地形版本不還原被動生物**（B4 交接）。
-  驗證：**1357 tests / 74 files**、typecheck／lint／build 全綠、pinned 工具
+  驗證：**1358 tests / 74 files**、typecheck／lint／build 全綠、pinned 工具
   pack＋validate 通過；批末真實瀏覽器驗收與未驗證清單見
   `docs/releases/v0.8.0.md` 的〈已知問題〉。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
