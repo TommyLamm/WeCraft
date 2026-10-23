@@ -179,7 +179,6 @@ describe('cloud-save', () => {
 
   it('migrateInventorySlots pads and trims to 36', () => {
     expect(migrateInventorySlots([])).toHaveLength(36);
-    expect(migrateInventorySlots(new Array(40).fill({ item: 'stone', count: 1 }))).toHaveLength(36);
     // 補的是 null、截斷不影響前 36 格、每一格都是新物件（深拷貝）。
     expect(migrateInventorySlots([]).every((s) => s === null)).toBe(true);
     const src: Array<ItemStack | null> = [{ item: 'stone', count: 7 }];
@@ -187,6 +186,12 @@ describe('cloud-save', () => {
     expect(out[0]).toEqual({ item: 'stone', count: 7 });
     out[0]!.count = 9;
     expect(src[0]!.count).toBe(7); // 改動結果不回寫呼叫端的陣列
+    // **整合審查 M-3**：截斷案例的內容要可辨別——40 格各有不同 count，留下的是
+    // 「**前** 36 格」（若是「從前面截」，out[35] 會是 count 40 → 紅）。
+    const wide = Array.from({ length: 40 }, (_, i) => ({ item: 'stone', count: i + 1 }) as ItemStack);
+    const trimmed = migrateInventorySlots(wide);
+    expect(trimmed).toHaveLength(36);
+    expect(trimmed[35]).toEqual({ item: 'stone', count: 36 });
   });
 
   it('buildCloudData writes 36 slots', () => {

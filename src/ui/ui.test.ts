@@ -486,6 +486,38 @@ describe('inventory panel (B5 Task 8: 36 slots + cursor stacks)', () => {
     inv.close();
     expect(total(s)).toBe(before); // 總數回到原值：沒有消失、沒有複製
   });
+
+  it('a fully returned cursor (null) is gone after reopening (??-mutation guard)', () => {
+    // **2026-10-23 整合審查 I-1**：把 close 路徑突變回計畫明文禁止的
+    // `const remainder = opts?.onReturnCursor?.(cursor) ?? cursor;`（`null`＝「已
+    // 全數放回」被誤判成「沒有回傳」→ 同一疊**同時**在背包與游標上＝複製物品）
+    // 時，本測試必須轉紅（重開面板後游標仍持有該疊）。
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s: Array<ItemStack | null> = new Array(INVENTORY_SLOTS).fill(null);
+    s[0] = { item: 'stone', count: 5 };
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+      onReturnCursor: (st) => {
+        s[0] = st; // 模擬 main.ts 的 giveItem：真的放回背包
+        return null; // null ＝ 已全數放回 → UI 的游標必須清空
+      },
+    });
+    (root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement).click(); // 拿起 5 個
+    expect(s[0]).toBeNull(); // 格子清空、物品在游標上
+    inv.close(); // onReturnCursor 放回 → 游標清空
+    expect(s[0]).toEqual({ item: 'stone', count: 5 }); // 背包拿回全部
+    // 重開面板：游標必須是空的（突變版會在這裡看到 .ui-cursor-stack → 紅）。
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+    });
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(0);
+    inv.close();
+  });
 });
 
 describe('inventory backdrop close', () => {
