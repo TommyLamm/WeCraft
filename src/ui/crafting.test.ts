@@ -21,15 +21,15 @@ const resultSlot = (): HTMLElement => root().querySelector('.ui-craft-result') a
 
 interface Harness {
   grid: Array<ItemStack | null>;
-  hotbar: Array<ItemStack | null>;
+  slots: Array<ItemStack | null>;
   params: CraftingParams;
 }
 
-/** A size-`size` grid + a 9-slot hotbar (planks in 0, sticks in 1) wired to
+/** A size-`size` grid + a 36-slot inventory (planks in 0, sticks in 1) wired to
  *  mutation callbacks that behave like main.ts's inventory wiring. */
 function harness(size: 2 | 3, overrides: Partial<CraftingParams> = {}): Harness {
   const grid: Array<ItemStack | null> = new Array(size * size).fill(null);
-  const hotbar: Array<ItemStack | null> = [
+  const slots: Array<ItemStack | null> = [
     { item: 'oak_planks', count: 3 },
     { item: 'stick', count: 2 },
     null, null, null, null, null, null, null,
@@ -37,26 +37,26 @@ function harness(size: 2 | 3, overrides: Partial<CraftingParams> = {}): Harness 
   const params: CraftingParams = {
     size,
     grid,
-    hotbar,
+    slots,
     selected: 0,
     onSlotSelect: vi.fn(),
     onSpend: vi.fn((slot: number, item: ItemId) => {
-      const s = hotbar[slot];
+      const s = slots[slot];
       if (!s || s.item !== item || s.count < 1) return false;
-      hotbar[slot] = s.count > 1 ? { item: s.item, count: s.count - 1 } : null;
+      slots[slot] = s.count > 1 ? { item: s.item, count: s.count - 1 } : null;
       return true;
     }),
     onGiveBack: vi.fn((item: ItemId) => {
       const cap = item === 'wooden_pickaxe' ? 1 : 64;
-      for (const s of hotbar) {
+      for (const s of slots) {
         if (s && s.item === item && s.count < cap) {
           s.count += 1;
           return 0;
         }
       }
-      for (let i = 0; i < hotbar.length; i++) {
-        if (!hotbar[i]) {
-          hotbar[i] = { item, count: 1 };
+      for (let i = 0; i < slots.length; i++) {
+        if (!slots[i]) {
+          slots[i] = { item, count: 1 };
           return 0;
         }
       }
@@ -65,7 +65,7 @@ function harness(size: 2 | 3, overrides: Partial<CraftingParams> = {}): Harness 
     onTake: vi.fn(() => true),
     ...overrides,
   };
-  return { grid, hotbar, params };
+  return { grid, slots, params };
 }
 
 /** Click a grid cell `n` times, re-querying each time (elements are replaced). */
@@ -86,19 +86,39 @@ describe('crafting section (embedded)', () => {
   });
 
   it('renders only the first 9 source slots when the inventory is 36 wide', () => {
-    // B5 Task 7：背包變成 36 格，但合成來源列在 Task 8 之前暫時維持前 9 格
-    // （熱鍵列）——不能把 27 格主背包也畫進來。
+    // B5 Task 8：`sourceCount` 未傳 → 預設 9（熱鍵列），36 格陣進來也只渲染前 9 格
+    // （不能把 27 格主背包也畫進來）。
     const { params } = harness(2);
     const wide: Array<ItemStack | null> = [
-      ...params.hotbar,
-      ...new Array(INVENTORY_SLOTS - params.hotbar.length).fill(null),
+      ...params.slots,
+      ...new Array(INVENTORY_SLOTS - params.slots.length).fill(null),
     ];
     wide[INVENTORY_SLOTS - 1] = { item: 'diamond', count: 64 };
     expect(wide).toHaveLength(INVENTORY_SLOTS);
-    mountCrafting(root(), { ...params, hotbar: wide });
+    mountCrafting(root(), { ...params, slots: wide });
     expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
     expect(root().querySelector('[data-slot="9"]')).toBeNull();
     expect(root().querySelector('[data-slot="35"]')).toBeNull();
+  });
+
+  it('the source row shows only the first sourceCount slots', () => {
+    // 傳 sourceCount: 36 → 來源列整個背包（工作台 3×3 面板取得到主背包）；
+    // 不傳 → 預設 9（熱鍵列）。slot 索引都是 slots 的索引（0..35）。
+    const { params } = harness(2);
+    const wide: Array<ItemStack | null> = [
+      ...params.slots,
+      ...new Array(INVENTORY_SLOTS - params.slots.length).fill(null),
+    ];
+    wide[INVENTORY_SLOTS - 1] = { item: 'diamond', count: 64 };
+    const unmount = mountCrafting(root(), { ...params, slots: wide, sourceCount: INVENTORY_SLOTS });
+    expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(INVENTORY_SLOTS);
+    const tail = root().querySelector('[data-slot="35"]') as HTMLElement;
+    expect(tail).not.toBeNull();
+    expect(tail.title).toBe('Diamond'); // 第 35 格的 diamond 是可選的來源
+    // 不傳 → 預設 9 格（熱鍵列）
+    unmount();
+    mountCrafting(root(), { ...params, slots: wide });
+    expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
   });
 
   it('3×3 renders 9 grid slots', () => {
@@ -115,7 +135,7 @@ describe('crafting section (embedded)', () => {
     expect(inv.isOpen()).toBe(true);
     expect(root().querySelectorAll('.ui-craft-grid .ui-slot').length).toBe(4);
     expect(root().querySelector('.ui-craft-result')).not.toBeNull();
-    expect(root().querySelector('.ui-inv-grid')).not.toBeNull(); // palette still there
+    expect(root().querySelector('.ui-inv-list')).not.toBeNull(); // 創造清單還在
     inv.close();
     expect(root().querySelector('.ui-craft')).toBeNull();
     expect(inv.isOpen()).toBe(false);
@@ -128,23 +148,23 @@ describe('crafting section (embedded)', () => {
     expect(inv.isOpen()).toBe(true);
     expect(root().querySelector('.ui-craft')).toBeNull();
     expect(root().querySelectorAll('.ui-craft-grid .ui-slot').length).toBe(0);
-    expect(root().querySelector('.ui-inv-grid')).not.toBeNull(); // palette untouched
+    expect(root().querySelector('.ui-inv-list')).not.toBeNull(); // 創造清單未被動到
     inv.close();
   });
 
   it('clicking an empty cell moves 1 item from the selected hotbar slot into the grid', () => {
-    const { grid, hotbar, params } = harness(2);
+    const { grid, slots, params } = harness(2);
     mountCrafting(root(), params);
     clickCell(0);
     expect(params.onSpend).toHaveBeenCalledWith(0, 'oak_planks');
     expect(grid[0]).toEqual({ item: 'oak_planks', count: 1 });
-    expect(hotbar[0]).toEqual({ item: 'oak_planks', count: 2 }); // 3 → 2
+    expect(slots[0]).toEqual({ item: 'oak_planks', count: 2 }); // 3 → 2
     // hotbar slot 1 is a different item: switching source selects it first
     hotbarSlot(1).click();
     expect(params.onSlotSelect).toHaveBeenCalledWith(1);
     clickCell(1);
     expect(grid[1]).toEqual({ item: 'stick', count: 1 });
-    expect(hotbar[1]).toEqual({ item: 'stick', count: 1 });
+    expect(slots[1]).toEqual({ item: 'stick', count: 1 });
   });
 
   it('clicking a filled cell returns one item to the inventory', () => {

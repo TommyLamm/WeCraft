@@ -234,31 +234,64 @@
   font-size: 14px;
   color: #3f3f3f;
 }
-.ui-inv-grid {
+/* B5 Task 8：36 格背包面板 —— 27 格主背包（slots[9..35]）＋ 9 格熱鍵列
+   （slots[0..8]）。舊的 .ui-inv-grid（B1 7 欄調色盤）／.ui-inv-grid-hotbar
+   （B1.2 的 9 格唯讀熱鍵列）隨舊面板整段移除，不留同名規則互相覆蓋。 */
+.ui-inv-main {
   display: grid;
-  grid-template-columns: repeat(7, 44px);
+  grid-template-columns: repeat(9, 44px);
   gap: 4px;
 }
-.ui-inv-grid .ui-slot {
+.ui-inv-bar {
+  display: grid;
+  grid-template-columns: repeat(9, 44px);
+  gap: 4px;
+  margin-top: 6px;
+}
+/* 創造模式的可捲動全物品清單（生存面板不渲染這一節）；max-height 之內捲動、
+   超出才出 scrollbar。 */
+.ui-inv-list {
+  display: grid;
+  grid-template-columns: repeat(9, 44px);
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding-right: 4px;
+}
+.ui-inv-main .ui-slot,
+.ui-inv-bar .ui-slot,
+.ui-inv-list .ui-slot {
   width: 44px;
   height: 44px;
   background: #8b8b8b;
   cursor: pointer;
 }
-.ui-inv-grid .ui-slot:hover {
+.ui-inv-main .ui-slot:hover,
+.ui-inv-bar .ui-slot:hover,
+.ui-inv-list .ui-slot:hover {
   outline: 2px solid #fff;
 }
-/* B1.2 survival panel: this grid lists the 9-slot hotbar (not the 7-wide
-   palette) and every slot is read-only — no pointer affordance. Placed after
-   the palette rules, whose specificity ties on the slot selectors. */
-.ui-inv-grid.ui-inv-grid-hotbar {
-  grid-template-columns: repeat(9, 44px);
+/* 游標堆疊懸停高亮（inventory.ts 的 mousemove 加上／mouseleave 移除）——
+   與 :hover 的 outline 同款，但只由游標模型狀態驅動（游標有貨時視覺一致）。 */
+.ui-slot.ui-cursor-target {
+  outline: 2px solid #fff;
 }
-.ui-inv-grid-hotbar .ui-slot {
-  cursor: default;
+/* 游標上的堆疊：跟著滑鼠走的圖示＋計數。pointer-events 關掉 → 不攔事件、
+   不擋底下格子的 click／contextmenu；z-index 30 → 蓋過面板與所有格線。
+   left/top 由 mousemove 填，translate(-22px, -22px) 讓圖示置中於指標。 */
+.ui-cursor-stack {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  width: 44px;
+  height: 44px;
+  transform: translate(-22px, -22px);
 }
-.ui-inv-grid-hotbar .ui-slot:hover {
-  outline: none;
+.ui-cursor-stack canvas {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
 }
 
 /* Crafting section (Task 11): grid + arrow + result slot, then the hotbar row

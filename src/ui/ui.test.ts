@@ -3,8 +3,16 @@ import { createHud, formatDebugLines } from './hud';
 import { createMenus } from './menus';
 import type { CloudStatus } from '../platform/playroom';
 import { createInventory } from './inventory';
-import { HOTBAR_DEFAULT, PLACEABLE, BLOCK, type BlockId } from '../world/blocks';
-import { itemFromBlock, maxStack, stackFromBlock, stackName, type ItemStack } from '../core/items';
+import { HOTBAR_DEFAULT, BLOCK, type BlockId } from '../world/blocks';
+import {
+  ALL_ITEM_IDS,
+  INVENTORY_SLOTS,
+  itemFromBlock,
+  maxStack,
+  stackFromBlock,
+  stackName,
+  type ItemStack,
+} from '../core/items';
 import { loadSettings, saveSettings } from '../core/settings';
 
 /** Build the stack form of a block list (every placeable block has an item). */
@@ -12,6 +20,11 @@ function stacksOf(blocks: BlockId[]): Array<ItemStack | null> {
   return blocks.map((b) => stackFromBlock(b));
 }
 const DEFAULT_STACKS = stacksOf(HOTBAR_DEFAULT);
+
+/** B5 Task 8 面板的標準輸入形狀：36 格活陣列（前 9 格熱鍵列、其餘主背包）。 */
+function slots36(): Array<ItemStack | null> {
+  return Array.from({ length: INVENTORY_SLOTS }, () => null);
+}
 
 beforeEach(() => {
   localStorage.clear();
@@ -284,19 +297,194 @@ describe('formatDebugLines', () => {
   });
 });
 
-describe('inventory pick', () => {
-  it('clicking a placeable calls onPick with a full stack for the selected slot', () => {
+describe('inventory panel (B5 Task 8: 36 slots + cursor stacks)', () => {
+  it('the survival panel shows 27 main slots and 9 hotbar slots', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
     const onPick = vi.fn();
-    inv.open(DEFAULT_STACKS, 2, onPick);
-    const slot = root.querySelector('.ui-inv-grid .ui-slot') as HTMLElement;
-    expect(slot).not.toBeNull();
-    expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(PLACEABLE.length);
-    slot.click();
-    const picked = itemFromBlock(PLACEABLE[0])!;
-    expect(onPick).toHaveBeenCalledWith(2, { item: picked, count: maxStack(picked) });
+    const s = slots36();
+    s[0] = { item: 'stone', count: 3 };
+    inv.open(s, 0, onPick, undefined, undefined, 'survival');
+    const main = root.querySelectorAll('.ui-inv-main .ui-slot');
+    const bar = root.querySelectorAll('.ui-inv-bar .ui-slot');
+    expect(main.length).toBe(27);
+    expect(bar.length).toBe(9);
+    expect(root.querySelectorAll('.ui-inv-list').length).toBe(0); // 生存沒有免費清單
+    expect(root.querySelector('.ui-inventory')?.textContent).toContain('背包');
+    // 原測試的 mint 保證保留：點擊持有格不得憑空發放整疊（B1.2 契約）
+    (bar[0] as HTMLElement).click();
+    expect(onPick).not.toHaveBeenCalled();
     inv.close();
+  });
+
+  it('the creative panel lists every item in a scrollable list', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const onPick = vi.fn();
+    inv.open(slots36(), 0, onPick, undefined, undefined, 'creative');
+    const list = root.querySelectorAll<HTMLElement>('.ui-inv-list .ui-slot');
+    expect(list.length).toBe(ALL_ITEM_IDS.length);
+    list[0].click();
+    const first = ALL_ITEM_IDS[0];
+    expect(onPick).toHaveBeenCalledWith(0, { item: first, count: maxStack(first) });
+    expect(list[0].title).toBe(stackName(first));
+    inv.close();
+  });
+
+  it('the creative list writes into the held hotbar slot', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const onPick = vi.fn();
+    inv.open(slots36(), 3, onPick, undefined, undefined, 'creative');
+    const list = root.querySelectorAll<HTMLElement>('.ui-inv-list .ui-slot');
+    list[0].click();
+    expect(onPick).toHaveBeenCalledWith(3, expect.objectContaining({ item: ALL_ITEM_IDS[0] }));
+    inv.close();
+  });
+
+  it('left click picks a stack up and the next click places it', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone', count: 5 };
+    s[10] = { item: 'dirt', count: 3 };
+    const changes: Array<[number, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      onSlotChange: (i, st) => changes.push([i, st]),
+    });
+    const hot0 = root.querySelectorAll('.ui-inv-bar .ui-slot')[0];
+    const main0 = root.querySelectorAll('.ui-inv-main .ui-slot')[0];
+    hot0.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(changes).toEqual([[0, null]]); // 拿起來 → 格子清空
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1); // 游標堆疊出現
+    main0.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(changes[1][0]).toBe(9); // 放到主背包第 0 格（索引 9）
+    expect(changes[1][1]).toEqual({ item: 'stone', count: 5 });
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(0); // 游標清空
+    inv.close();
+  });
+
+  it('left click on an occupied slot swaps the two stacks', () => {
+    // 原版語義：空手點 A → 整疊上游標（A 清空）；再點 B（有貨）→ 交換：B 收下
+    // A 的物品、B 原本的堆疊上到游標；點回空著的 A 把游標那疊放下之後，兩格
+    // 內容互換、總數不變（不得遺失或複製）。
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone', count: 5 };
+    s[9] = { item: 'dirt', count: 3 };
+    const before = s.reduce((n, x) => n + (x ? x.count : 0), 0);
+    const changes: Array<[number, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      // 擁有者照 main.ts 的寫法把變動寫回活模型
+      onSlotChange: (i, st) => {
+        changes.push([i, st]);
+        s[i] = st;
+      },
+    });
+    const bar0 = root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement;
+    const main0 = root.querySelectorAll('.ui-inv-main .ui-slot')[0] as HTMLElement;
+    bar0.dispatchEvent(new MouseEvent('click', { bubbles: true })); // 撿起 stone
+    expect(changes).toEqual([[0, null]]);
+    main0.dispatchEvent(new MouseEvent('click', { bubbles: true })); // stone ↔ dirt
+    expect(changes[1]).toEqual([9, { item: 'stone', count: 5 }]);
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1); // dirt 在游標上
+    bar0.dispatchEvent(new MouseEvent('click', { bubbles: true })); // dirt 回 A
+    expect(changes[2]).toEqual([0, { item: 'dirt', count: 3 }]);
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(0);
+    expect(s[0]).toEqual({ item: 'dirt', count: 3 });
+    expect(s[9]).toEqual({ item: 'stone', count: 5 });
+    expect(s.reduce((n, x) => n + (x ? x.count : 0), 0)).toBe(before);
+    inv.close();
+  });
+
+  it('right click takes half and right click places one', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone', count: 5 };
+    const changes: Array<[number, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        changes.push([i, st]);
+        s[i] = st;
+      },
+    });
+    const hot0 = root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement;
+    const main0 = root.querySelectorAll('.ui-inv-main .ui-slot')[0] as HTMLElement;
+    hot0.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    // 游標拿到 ceil(5/2)=3 個，格子留 2 個
+    expect(changes[0]).toEqual([0, { item: 'stone', count: 2 }]);
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1);
+    main0.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    // 游標剩 2 個（放 1 個進去）
+    expect(changes[1]).toEqual([9, { item: 'stone', count: 1 }]);
+    expect(
+      (root.querySelector('.ui-cursor-stack .count') as HTMLElement).textContent,
+    ).toBe('2');
+    inv.close();
+  });
+
+  it('closing the panel hands the cursor stack back', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone', count: 5 };
+    const returned: ItemStack[] = [];
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', {
+      onReturnCursor: (st) => {
+        returned.push(st);
+        return null; // null ＝ 已全數放回
+      },
+    });
+    (root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement).click(); // 拿起來
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1);
+    inv.close();
+    expect(returned).toEqual([{ item: 'stone', count: 5 }]);
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(0);
+  });
+
+  it('a cursor stack that cannot be placed is kept for the next open', () => {
+    // 背包滿 → onReturnCursor 回同一疊 → UI 保留游標，下次開面板仍看得到
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone', count: 5 };
+    const keep = (st: ItemStack): ItemStack | null => st;
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', { onReturnCursor: keep });
+    (root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement).click();
+    inv.close();
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', { onReturnCursor: keep });
+    const cursor = root.querySelector('.ui-cursor-stack') as HTMLElement;
+    expect(cursor).not.toBeNull();
+    expect(cursor.getAttribute('title')).toBe(stackName('stone'));
+    expect(cursor.querySelector('.count')?.textContent).toBe('5');
+    inv.close();
+  });
+
+  it('closing the panel never changes the total item count', () => {
+    // 游標不吞物品：拿起來 → 關閉歸還 → 總數守恆（沒有消失、沒有複製）。
+    // UI 只透過 onSlotChange 回報變動；測試的「擁有者」把它寫回 s（照 main.ts）。
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const total = (arr: ReadonlyArray<ItemStack | null>) =>
+      arr.reduce((n, st) => n + (st ? st.count : 0), 0);
+    const s: Array<ItemStack | null> = new Array(INVENTORY_SLOTS).fill(null);
+    s[0] = { item: 'stone', count: 5 };
+    const before = total(s);
+    inv.open(s, 0, () => {}, () => {}, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+      onReturnCursor: (st) => {
+        s[0] = st; // 模擬 main.ts 的 giveItem：真的把它放回去
+        return null; // null ＝ 全數放回
+      },
+    });
+    (root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement).click(); // 拿起 5 個
+    expect(total(s)).toBe(before - 5); // 物品在游標上，不在格子上
+    inv.close();
+    expect(total(s)).toBe(before); // 總數回到原值：沒有消失、沒有複製
   });
 });
 
@@ -318,43 +506,28 @@ describe('inventory backdrop close', () => {
 });
 
 describe('inventory mode split (B1.2)', () => {
-  /** Nine hotbar slots with one 3× stone stack in slot 0 (the rest empty). */
+  /** 36 格背包、第 0 格一疊 3× stone（其餘空）——B5 Task 8 的面板輸入形狀。 */
   function survivalStacks(): Array<ItemStack | null> {
-    const slots: Array<ItemStack | null> = Array.from({ length: 9 }, () => null);
+    const slots: Array<ItemStack | null> = Array.from({ length: INVENTORY_SLOTS }, () => null);
     slots[0] = { item: 'stone', count: 3 };
     return slots;
   }
-
-  it('survival panel shows owned slots and cannot pick free blocks', () => {
-    const root = document.getElementById('ui-root')!;
-    const inv = createInventory(root);
-    const onPick = vi.fn();
-    inv.open(survivalStacks(), 0, onPick, undefined, undefined, 'survival');
-    const slots = [...root.querySelectorAll<HTMLElement>('.ui-inv-grid .ui-slot')];
-    expect(slots.length).toBe(9);
-    expect(slots[0].querySelector('canvas')).not.toBeNull(); // owned stack → icon
-    expect(slots[0].title).toBe(stackName('stone'));
-    expect(slots[1].querySelector('canvas')).toBeNull(); // empty slot stays empty
-    expect(root.querySelector('.ui-inventory')?.textContent).toContain('背包');
-    slots[0].click(); // no palette in survival: clicking must not mint a stack
-    expect(onPick).not.toHaveBeenCalled();
-    inv.close();
-  });
 
   it('survival panel closes cleanly with no click handlers left behind', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);
     const onPick = vi.fn();
     inv.open(survivalStacks(), 0, onPick, undefined, undefined, 'survival');
-    expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(9); // survival panel is mounted
+    expect(root.querySelectorAll('.ui-inv-main .ui-slot').length).toBe(27); // panel mounted
+    expect(root.querySelectorAll('.ui-inv-bar .ui-slot').length).toBe(9);
     inv.close();
     expect(inv.isOpen()).toBe(false);
     expect(root.querySelector('.ui-inv-backdrop')).toBeNull();
     expect(root.innerHTML).toBe('');
-    // re-opening without a mode still yields the full creative palette (no
-    // survival leftovers / stale handlers on the shared root)
+    // re-opening without a mode still yields the scrollable creative list
+    // （清單有 ALL_ITEM_IDS.length 項）— no survival leftovers / stale handlers
     inv.open(DEFAULT_STACKS, 0, onPick);
-    expect(root.querySelectorAll('.ui-inv-grid .ui-slot').length).toBe(PLACEABLE.length);
+    expect(root.querySelectorAll('.ui-inv-list .ui-slot').length).toBe(ALL_ITEM_IDS.length);
     inv.close();
     expect(onPick).not.toHaveBeenCalled();
   });
@@ -387,19 +560,19 @@ describe('inventory mode split (B1.2)', () => {
       vi.resetModules();
       const { createInventory: freshInventory } = await import('./inventory');
       const root = document.getElementById('ui-root')!;
-      const stacks: Array<ItemStack | null> = Array.from({ length: 9 }, () => null);
+      const stacks: Array<ItemStack | null> = Array.from({ length: INVENTORY_SLOTS }, () => null);
       stacks[0] = { item: 'dirt', count: 3 }; // two ordinary dirt stacks (mining
-      stacks[1] = { item: 'dirt', count: 3 }; // 65 blocks spills 64 + 1)
+      stacks[1] = { item: 'dirt', count: 3 }; // 65 blocks spills 64 + 1) — 熱鍵列前兩格
       const inv = freshInventory(root);
       inv.open(stacks, 0, () => {}, undefined, undefined, 'survival');
-      const els = [...root.querySelectorAll<HTMLElement>('.ui-inv-grid .ui-slot')];
+      const els = [...root.querySelectorAll<HTMLElement>('.ui-inv-bar .ui-slot')]; // 熱鍵列
       const own = els.map((el) => el.querySelector('canvas'));
       expect(own[0]).not.toBeNull(); // both slots must render an icon
       expect(own[1]).not.toBeNull();
       expect(own[0]).not.toBe(own[1]); // cached node shared → second append moves it
       expect(els[0].contains(own[0]!)).toBe(true);
       expect(els[1].contains(own[1]!)).toBe(true);
-      expect(root.querySelectorAll('.ui-inv-grid canvas').length).toBe(2);
+      expect(root.querySelectorAll('.ui-inv-bar canvas').length).toBe(2);
       inv.close();
     } finally {
       proto.getContext = original;

@@ -7,32 +7,38 @@ import { ICON_PX, getContext2d, itemIcon } from './icons';
 // ---- Crafting UI (Task 11) ----
 //
 // Click model (settled — no drag-and-drop, no cursor stack):
-//   - click an EMPTY grid cell  → move 1 item from the selected hotbar slot in;
+//   - click an EMPTY grid cell  → move 1 item from the selected source slot in;
 //   - click a FILLED grid cell  → return 1 item to the inventory (stays put
 //     when the inventory is full);
-//   - click a hotbar slot       → select it as the transfer source;
+//   - click a source slot       → select it as the transfer source;
 //   - click the result slot     → take the craft: `onTake` must accept it
 //     (overflow → blocked, grid untouched), then each grid cell −1.
-// The grid + hotbar arrays are LIVE references owned by the caller — the UI
-// mutates the grid in place and re-reads the hotbar on every render, so the
+// The grid + slots arrays are LIVE references owned by the caller — the UI
+// mutates the grid in place and re-reads `slots` on every render, so the
 // caller keeps its own view in sync without change events (Decision A: this
 // module imports no bus; everything happens through the callbacks below).
 
 export interface CraftingParams {
   /** Grid side length: 2 (inventory screen) or 3 (crafting table). */
   size: 2 | 3;
-  /** Live backing grid, length `size²`, row-major like the hotbar slots.
+  /** Live backing grid, length `size²`, row-major like the inventory slots.
    *  The UI writes into it directly (set by the owner, read back on close). */
   grid: Array<ItemStack | null>;
-  /** Live hotbar slots (read-only for the UI — mutations go through callbacks). */
-  hotbar: ReadonlyArray<ItemStack | null>;
-  /** Hotbar slot the grid draws from; the UI tracks it from here on. */
+  /** 背包的活陣列（36 格，唯讀給 UI——變動一律走 callbacks）；
+   *  來源列取前 `sourceCount` 格。 */
+  slots: ReadonlyArray<ItemStack | null>;
+  /** 來源列顯示幾格（預設 9 ＝ 熱鍵列；工作台 3×3 可傳 36 讓主背包也當來源）。 */
+  sourceCount?: number;
+  /** Source slot the grid draws from; the UI tracks it from here on.
+   *  `onSpend` 的 `slot` 以 `slots` 的索引（0..35）傳回 —— 來源列只顯示前
+   *  `sourceCount` 格，所以實際傳回的索引也在這範圍內。 */
   selected: number;
   /** Player picked another hotbar slot in the panel — notify-only: the source
    *  selection is LOCAL to the widget (Minecraft-like) and does not move the
    *  game's hotbar selection; owners that don't care simply omit it. */
   onSlotSelect?(slot: number): void;
-  /** Remove 1 `item` from hotbar `slot`; false → nothing moved (wrong/empty). */
+  /** Remove 1 `item` from `slots[slot]`（slot 是背包活陣列的索引 0..35）;
+   *  false → nothing moved (wrong/empty). */
   onSpend(slot: number, item: ItemId): boolean;
   /** Put 1 `item` back into the inventory; returns overflow (1 = didn't fit). */
   onGiveBack(item: ItemId): number;
@@ -45,9 +51,9 @@ export type CraftingOpenParams = CraftingParams & { onClose?(): void };
 const validStack = (s: ItemStack | null | undefined): s is ItemStack =>
   !!s && Number.isFinite(s.count) && s.count >= 1;
 
-/** B5 Task 7：背包已是 36 格，但合成來源列在 Task 8 之前只顯示前 9 格
- *  （熱鍵列）。Task 8 會把它升級成 `params.slots.slice(0, params.sourceCount)`。 */
-const SOURCE_SLOTS = 9;
+/** B5 Task 8：來源列寬度來自呼叫端（預設 9 ＝ 熱鍵列；工作台 3×3 傳 36）。
+ *  每次 render 都重新 slice —— `params.slots` 是活的 36 格陣列。 */
+const DEFAULT_SOURCE_SLOTS = 9;
 
 /** Copy a stack into a slot element (own canvas — `itemIcon` caches ONE canvas
  *  per item, which cannot sit in several cells at once; mirrors hud's draw). */
@@ -70,7 +76,7 @@ function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
  *  Returns an unmount function. The section re-renders itself after every
  *  interaction — all state lives in the params' live arrays + local `selected`. */
 export function mountCrafting(host: HTMLElement, params: CraftingParams): () => void {
-  const sourceCount = Math.min(params.hotbar.length, SOURCE_SLOTS);
+  const sourceCount = params.sourceCount ?? DEFAULT_SOURCE_SLOTS;
   let selected =
     Number.isInteger(params.selected) && params.selected >= 0 && params.selected < sourceCount
       ? params.selected
@@ -112,8 +118,9 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
 
     const bar = document.createElement('div');
     bar.className = 'ui-craft-hotbar';
-    // 只渲染熱鍵列（前 9 格）；每次 render 重讀活的陣列。
-    params.hotbar.slice(0, SOURCE_SLOTS).forEach((stack, i) => {
+    // 來源列：每次 render 重新 slice —— params.slots 是活的 36 格陣列，
+    // 取前 sourceCount 格（預設 9 ＝ 熱鍵列；工作台傳 36）。
+    params.slots.slice(0, sourceCount).forEach((stack, i) => {
       const slot = document.createElement('div');
       slot.className = i === selected ? 'ui-slot selected' : 'ui-slot';
       slot.dataset.slot = String(i);
@@ -140,7 +147,7 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
       }
       params.grid[i] = cellStack.count > 1 ? { item: cellStack.item, count: cellStack.count - 1 } : null;
     } else {
-      const src = params.hotbar[selected];
+      const src = params.slots[selected];
       if (!validStack(src)) return; // nothing selected to pull from
       if (!params.onSpend(selected, src.item)) return; // slot changed underneath
       params.grid[i] = { item: src.item, count: 1 };

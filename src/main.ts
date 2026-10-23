@@ -19,7 +19,7 @@ import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
-import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, type ItemId, type ItemStack } from './core/items';
+import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
@@ -536,8 +536,9 @@ function craftingParams(size: 2 | 3): CraftingParams {
   return {
     size,
     grid: craftGrid, // live array — the UI writes cells in place
-    // 傳同一個活的 36 格陣列（不要 slice）：crafting.ts 每次 render 重讀前 9 格。
-    hotbar: slots,
+    // 傳同一個活的 36 格陣列（不要 slice）：crafting.ts 每次 render 依
+    // `sourceCount` 重新 slice（來自 inventory 面板內嵌的 2×2 只取 9 格）。
+    slots,
     selected, // source slot for the first transfer (UI-local afterwards)
     // no onSlotSelect: the craft row's source selection is local to the widget.
     // Syncing it into `selected` would desync the inventory palette, whose
@@ -1539,12 +1540,10 @@ function setState(next: GameState): void {
     // Flush leftovers from a previous session (items never lost) — this runs in
     // creative too, where the 2×2 section below does NOT mount (plan 12.4).
     resetCraftGrid(2);
-    // B5 Task 7: the survival panel still lists the pre-B5 9-slot hotbar until
-    // Task 8 rebuilds it for the full 36-slot inventory. Pass a view, not the
-    // live model array: the panel only reads, and `inventory.setSlot` below
-    // still receives the real 0..8 indices.
+    // B5 Task 8：面板已重構成 36 格（27 主背包＋9 熱鍵列）。slots 是活的模型
+    // 陣列（UI 只讀）：所有變動走 options 的 callbacks 寫回，並即時刷新 HUD。
     inv.open(
-      slots.slice(0, 9),
+      slots,
       selected,
       (slot, stack) => {
         inventory.setSlot(slot, stack);
@@ -1559,8 +1558,22 @@ function setState(next: GameState): void {
       // Task 11: 2×2 crafting section embedded at the top of the panel.
       // creative: crafting hidden (plan 12.4) → no params, no section mounted.
       currentMode === 'survival' ? craftingParams(2) : undefined,
-      // B1.2: survival lists the OWNED slots; creative keeps the palette.
+      // B1.2: survival 走純 36 格面板（無免費清單）；creative 另有全物品清單。
       currentMode,
+      {
+        // 面板不持有任何副本：槽位變動一律寫回 inventory model＋刷新 HUD。
+        onSlotChange: (index, stack) => {
+          inventory.setSlot(index, stack);
+          hud.setHotbar(slots, selected);
+        },
+        // 關閉面板 → 把游標上的堆疊交回背包；回傳放不下的餘量（null ＝ 全部
+        // 放回了）。背包滿時餘量留在 UI 上，下次開面板還看得到（不再憑空消失）。
+        onReturnCursor: (stack) => {
+          const overflow = giveItem(stack.item, stack.count);
+          hud.setHotbar(slots, selected);
+          return overflow > 0 ? { item: stack.item, count: overflow } : null;
+        },
+      },
     );
   } else if (next === 'crafting') {
     // Task 11: right-click on a placed crafting table → standalone 3×3 overlay.
@@ -1569,6 +1582,9 @@ function setState(next: GameState): void {
     resetCraftGrid(3);
     craftUi.open({
       ...craftingParams(3),
+      // 工作台 3×3 面板裡沒有背包網格 → 來源列要能取到主背包：整包 36 格當
+      // 來源（預設 9 只看得到熱鍵列，主背包的東西就取不到了）。
+      sourceCount: INVENTORY_SLOTS,
       onClose: () => {
         setState('playing');
         relockCanvas();
@@ -2048,6 +2064,9 @@ function resetWorld(): void {
 }
 
 function startGame(): void {
+  // B5 Task 8（防禦）：關掉可能還開著的面板 → 游標堆疊交回**舊**背包（在新
+  // 遊戲清空背包之前），才不會把舊游標灌進新局；close 是冪等的。
+  inv.close();
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
   modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
@@ -2114,6 +2133,9 @@ function startGame(): void {
  *  4. Clock — time-of-day restored (dayLengthSec stays settings-driven).
  */
 function continueGame(payload: SavePayload): void {
+  // B5 Task 8（防禦）：同 startGame —— 先把可能留著的游標堆疊交回**還原前**的
+  // 背包，再覆寫進度（否則舊游標會在還原後的第一個面板互動被灌進新進度）。
+  inv.close();
   world.applyModified(payload.modified); // 1. world edits (see doc above)
   // Review #4: entities are never persisted — drop any stale in-page session's
   // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are
