@@ -670,11 +670,11 @@ describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
     const call = findAssignmentCall('continueGame', 'passiveMobs', 'restorePassiveMobs');
     expect(call).not.toBeNull();
     if (!call) throw new Error('continueGame 沒有把還原結果指派回 passiveMobs');
-    // 還原的輸入必須先過正規化（髒紀錄逐筆丟棄）。
+    // 還原的輸入必須先過載入政策（同版本才逐筆正規化；跨地形版本回空陣列）。
     const arg = call.arguments[0];
     expect(ts.isCallExpression(arg)).toBe(true);
     if (arg && ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
-      expect(arg.expression.text).toBe('normalizePassiveMobs');
+      expect(arg.expression.text).toBe('passiveMobsForLoad');
     }
     // 還原必須發生在「清掉舊生物」之後（否則會被清掉）。
     const body = functionBody('continueGame');
@@ -691,7 +691,7 @@ describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
     const arg = call.arguments[0];
     expect(ts.isCallExpression(arg)).toBe(true);
     if (arg && ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
-      expect(arg.expression.text).toBe('normalizePassiveMobs');
+      expect(arg.expression.text).toBe('passiveMobsForLoad');
     }
     const body = functionBody('applyCloudData');
     const clearAt = body.indexOf('resetSessionEntities()');
@@ -726,5 +726,61 @@ describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
     expect(body).not.toContain('restorePassiveMobs(');
     // 新遊戲走的是 resetWorld → resetSessionEntities（真的清空）。
     expect(functionBody('resetSessionEntities')).toContain('passiveMobs = []');
+  });
+});
+
+// ---- B5 Task 7b 接線：跨地形版本載入不還原被動生物 -------------------------
+// `worldgenVersion` 不同 → 地形已改、舊座標不可信 → 兩條載入路徑都必須經過
+// `passiveMobsForLoad`（而不是直接 `normalizePassiveMobs`），且「版本是否改變」
+// 必須來自**同一份 payload** 的 `worldgenVersion`（不能寫死 false／true）。
+describe('main.ts 接線（B5 Task 7b：跨地形版本不還原被動生物）', () => {
+  it('both load paths call passiveMobsForLoad exactly once (and nowhere else)', () => {
+    expect(countOf('passiveMobsForLoad(')).toBe(2);
+    expect(findAllCalls('passiveMobsForLoad')).toHaveLength(2);
+    // 舊的「直接 normalize」接線已不存在（載入政策是唯一入口）。
+    expect(countOf('normalizePassiveMobs(')).toBe(0);
+  });
+
+  it('each path feeds its own payload records and worldgen check into the policy', () => {
+    const paths = [
+      { fn: 'continueGame', payload: 'payload' },
+      { fn: 'applyCloudData', payload: 'data' },
+    ] as const;
+    for (const { fn, payload } of paths) {
+      const restore = findAssignmentCall(fn, 'passiveMobs', 'restorePassiveMobs');
+      expect(restore).not.toBeNull();
+      if (!restore) throw new Error(`${fn} 沒有把還原結果指派回 passiveMobs`);
+      const load = restore.arguments[0];
+      expect(load && ts.isCallExpression(load)).toBe(true);
+      if (!load || !ts.isCallExpression(load)) throw new Error(`${fn} 沒有經過 passiveMobsForLoad`);
+      expect(calleeName(load.expression)).toBe('passiveMobsForLoad');
+
+      // 第一引數：該 payload 的 `passiveMobs` 屬性（不是別的來源、不是空陣列）。
+      const raw = load.arguments[0];
+      expect(raw && ts.isPropertyAccessExpression(raw)).toBe(true);
+      if (raw && ts.isPropertyAccessExpression(raw)) {
+        expect(raw.expression.getText(mainAst)).toBe(payload);
+        expect(raw.name.text).toBe('passiveMobs');
+      }
+
+      // 第二引數：同一份 payload 的 `worldgenVersion` 丟進既有的版本判斷
+      // （不能寫死 false → 那樣跨地形版本會照樣還原）。
+      const changed = load.arguments[1];
+      expect(changed && ts.isCallExpression(changed)).toBe(true);
+      if (changed && ts.isCallExpression(changed)) {
+        expect(calleeName(changed.expression)).toBe('needsWorldgenNotice');
+        const version = changed.arguments[0];
+        expect(version && ts.isPropertyAccessExpression(version)).toBe(true);
+        if (version && ts.isPropertyAccessExpression(version)) {
+          expect(version.expression.getText(mainAst)).toBe(payload);
+          expect(version.name.text).toBe('worldgenVersion');
+        }
+      }
+    }
+  });
+
+  it('needsWorldgenNotice now also guards the restore policy', () => {
+    // 原本 2 處（armWorldgenNotice 排隊＋continueGame 的提示）→ 兩個載入端 +2。
+    expect(countOf('needsWorldgenNotice(')).toBe(4);
   });
 });

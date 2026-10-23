@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   serializePassiveMobs,
   normalizePassiveMobs,
+  passiveMobsForLoad,
   restorePassiveMobs,
   type PassiveMobRecord,
 } from './passive-save';
@@ -124,6 +125,68 @@ describe('normalizePassiveMobs', () => {
     const out = normalizePassiveMobs([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 10 }]);
     expect(out).toHaveLength(1);
     expect(out[0].yaw).toBe(0);
+  });
+});
+
+describe('passiveMobsForLoad', () => {
+  it('returns no mobs when the worldgen version changed (old coordinates are untrusted)', () => {
+    // 跨地形版本：本作不保存區塊、載入時整片地形重新生成 → 舊座標可能埋在方塊裡。
+    // 保守策略與敵對生物「每場重來」一致；動物之後白天仍會自然重生。
+    expect(passiveMobsForLoad([record('cow'), record('pig')], true)).toEqual([]);
+  });
+
+  it('normalizes the records when the worldgen version is unchanged', () => {
+    const raw = [
+      record('cow', { x: 1.5, y: 64, z: -3.25, hp: 6, yaw: 0.5 }),
+      record('pig'),
+    ];
+    expect(passiveMobsForLoad(raw, false)).toEqual(normalizePassiveMobs(raw));
+    // 同版本 → 與既有載入語意完全相同：合法記錄原樣（含座標／血量／朝向）。
+    expect(passiveMobsForLoad(raw, false)[0]).toEqual({
+      kind: 'cow',
+      x: 1.5,
+      y: 64,
+      z: -3.25,
+      hp: 6,
+      yaw: 0.5,
+    });
+  });
+
+  it('matches normalizePassiveMobs on corrupt payloads when the worldgen version is unchanged', () => {
+    // 重用既有壞資料：未知種類／NaN 座標／死掉的生物／非物件／超過上限的混合。
+    const raw = [
+      record('cow', { x: 1 }),
+      { kind: 'dragon', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
+      { kind: 'pig', x: Number.NaN, y: 2, z: 3, hp: 10, yaw: 0 },
+      { kind: 'pig', x: 1, y: 2, z: 3, hp: 0, yaw: 0 },
+      null,
+      ...Array.from({ length: 20 }, (_, i) => record('sheep', { x: i })),
+    ];
+    const out = passiveMobsForLoad(raw, false);
+    expect(out).toEqual(normalizePassiveMobs(raw)); // 壞筆逐筆丟棄、好的留著
+    expect(out).toHaveLength(MAX_PASSIVE_MOBS); // 上限 12
+    expect(out[0]).toEqual(record('cow', { x: 1 }));
+    for (const junk of [undefined, null, 42, 'nope', { kind: 'cow' }]) {
+      expect(passiveMobsForLoad(junk, false)).toEqual([]);
+    }
+  });
+
+  it('returns no mobs for corrupt payloads when the worldgen version changed (never throws)', () => {
+    for (const raw of [undefined, null, 42, 'nope', { kind: 'cow' }, [null, { kind: 'dragon' }]]) {
+      expect(() => passiveMobsForLoad(raw, true)).not.toThrow();
+      expect(passiveMobsForLoad(raw, true)).toEqual([]);
+    }
+  });
+
+  it("never returns the caller's array reference (always a fresh array)", () => {
+    const raw = [record('cow')];
+    const kept = passiveMobsForLoad(raw, false);
+    const dropped = passiveMobsForLoad(raw, true);
+    expect(kept).not.toBe(raw);
+    expect(dropped).not.toBe(raw);
+    // 回傳的是正規化後的新記錄 → 改動結果不會回寫呼叫端的資料。
+    kept[0].x = 999;
+    expect(raw[0].x).toBe(1);
   });
 });
 

@@ -1,8 +1,9 @@
 /**
  * 被動生物的持久化（B4 Task 10）——**附加欄位**，格式**沒有**升版。
  *
- * **本批只是附加欄位、格式未升版**：本機 payload 仍是 v3、雲端仍是 format 1
- * （`game.json` 的 `cloudSave` 一字不動）→ 兩邊都只是多蓋一個**可選**的
+ * **本批（B4）只是附加欄位、格式未升版**：本機 payload 當時是 v3、雲端是
+ * format 1（B5 Task 7 起本機已升 v4；`passiveMobs` 仍是**可選**附加欄位；
+ * `game.json` 的 `cloudSave` 一字不動）→ 兩邊都只是多蓋一個**可選**的
  * `passiveMobs` 鍵。舊版程式讀到不認識的欄位會直接忽略 → 舊存檔照樣能讀；
  * 新版讀舊存檔 → 舊記錄沒有這個鍵 → 沒有生物（空陣列），**不是**壞檔。
  *
@@ -21,6 +22,16 @@
  * 保留前 12 筆，後面的丟棄（存／讀之間不會有生物無聲消失）。
  * **兩條路徑都夾制**：`normalizePassiveMobs`（載入）與 `restorePassiveMobs`
  * （還原）各自都保證不超過 12 → **防禦縱深**，不依賴呼叫端有沒有先正規化。
+ *
+ * **跨地形版本的載入政策（B5 Task 7b）**：`worldgenVersion` 與目前版本不同時，
+ * 整片地形已由新的生成器重新生成 → 舊記錄的座標不可信（可能埋在方塊裡或卡在
+ * 牆內）→ {@link passiveMobsForLoad} 回空陣列，**不還原**動物（與敵對生物
+ * 「每場重來」一致；動物之後白天仍會自然重生，全場上限 12）。
+ *
+ * 這與 B3 的「附加欄位原樣保留」是**兩層**：資料格式層照常保存／遷移
+ * `worldgenVersion`／`passiveMobs`（含本機 payload v3→v4 遷移），載入政策層
+ * 才決定要不要把記錄套用到場上 → **遷移保留資料不等於**一定要把舊動物放回
+ * 新地形。
  */
 
 import {
@@ -131,6 +142,29 @@ export function normalizePassiveMobs(raw: unknown): PassiveMobRecord[] {
     if (rec) out.push(rec);
   }
   return out;
+}
+
+/**
+ * 載入路徑的單一入口：世界生成版本不同（地形已改變）→ 不還原（回 `[]`）；
+ * 否則等同 {@link normalizePassiveMobs}。
+ *
+ * **為什麼跨地形版本不還原**：本作從不保存區塊，載入時整片地形由 seed 重新
+ * 生成；`WORLDGEN_VERSION` 改變代表生成器改版 → 舊座標可能埋在新方塊裡、
+ * 卡在牆內或懸空 → 還原只會得到動不了的幽靈生物。保守策略與敵對生物
+ * 「每場重來」一致；動物之後白天仍會自然重生（全場上限 12）。
+ *
+ * **與 B3「附加欄位原樣保留」的差別**：那是**資料格式層**（存檔照樣帶著、
+ * 遷移照樣保留 `passiveMobs`）；這裡是**載入政策層**（要不要把記錄放回場上）。
+ * 兩者刻意分開 → 資料不丟失，但跨地形版本不會把座標不可信的動物復活。
+ *
+ * @param raw 存檔／雲端 payload 裡的 `passiveMobs`（不可信）
+ * @param worldgenChanged 存檔的世界生成版本是否與目前版本不同
+ */
+export function passiveMobsForLoad(
+  raw: unknown,
+  worldgenChanged: boolean,
+): PassiveMobRecord[] {
+  return worldgenChanged ? [] : normalizePassiveMobs(raw);
 }
 
 /**

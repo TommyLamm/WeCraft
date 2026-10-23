@@ -141,7 +141,7 @@ import {
 } from './world/passive-mobs';
 // B4 Task 10：被動生物的持久化（附加欄位 `passiveMobs`；本機 payload 維持 v3、
 // 雲端維持 format 1 —— 兩邊都只是多蓋一個可選的鍵）。
-import { normalizePassiveMobs, restorePassiveMobs } from './world/passive-save';
+import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
@@ -1688,8 +1688,12 @@ function applyCloudData(data: CloudData): void {
   resetSessionEntities(); // entities are never persisted — drop stale ones
   // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
   // 從雲端進度還原。舊的 format-1 payload 沒有這個欄位 → 空陣列（沒有生物）。
+  // B5 Task 7b：世界生成版本不同（地形已改）→ 舊座標不可信 → **不還原**動物
+  // （與敵對生物「每場重來」一致）；同版本才照常還原。
   // `restorePassiveMobs` 會把暫態的 `vel`／`kbVel` 補成零（否則下一幀 TypeError）。
-  passiveMobs = restorePassiveMobs(normalizePassiveMobs(data.passiveMobs));
+  passiveMobs = restorePassiveMobs(
+    passiveMobsForLoad(data.passiveMobs, needsWorldgenNotice(data.worldgenVersion)),
+  );
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -2117,8 +2121,13 @@ function continueGame(payload: SavePayload): void {
   resetSessionEntities();
   // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
   // 從存檔還原。舊的 v3 記錄沒有這個欄位 → 空陣列（沒有生物，不報錯）。
+  // B5 Task 7b：世界生成版本不同（地形已改）→ 舊座標不可信 → **不還原**動物
+  // （與敵對生物「每場重來」一致；動物之後白天仍會自然重生，全場上限 12）；
+  // 同版本才照常還原。payload v3→v4 遷移仍保留 `passiveMobs` 欄位（資料層）。
   // `restorePassiveMobs` 會把暫態的 `vel`／`kbVel` 補成零（否則下一幀 TypeError）。
-  passiveMobs = restorePassiveMobs(normalizePassiveMobs(payload.passiveMobs));
+  passiveMobs = restorePassiveMobs(
+    passiveMobsForLoad(payload.passiveMobs, needsWorldgenNotice(payload.worldgenVersion)),
+  );
   clearFurnaces(); // Task 6: furnace states are session-only (conditional toast inside)
 
   const [px, py, pz] = payload.player.pos;
