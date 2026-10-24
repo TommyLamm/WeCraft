@@ -345,6 +345,42 @@ export function computeChunkTopY(chunk: Chunk): number {
   return 0;
 }
 
+// ── 每幀光照佇列的排序與預算（B6 Task 8）────────────────────────────────────
+//
+// main.ts 把「近→遠排序」與「每幀最多重算幾塊」的判斷委託給這兩支**純函式**
+// （判斷本體住進 lighting.ts 才能被單元測試釘死，見 lighting-perf.test.ts）；
+// main.ts 只留接線。行為與 Task 3 的內聯版本逐位元相同：排序鍵同為
+// `(cx - pcx) ** 2 + (cz - pcz) ** 2`、預算同為每幀 2 塊。
+
+/** 取出本幀要點光的區塊，數量 ≤ budget（讓「每幀 2 區塊」的預算可被單元
+ *  測試釘死）。純函式：回傳**新陣列**（原佇列的前 `budget` 項）、不改動
+ *  原佇列——消費（splice）由呼叫端負責，佇列可能還有下一幀要用的項目。
+ *  預算 ≤ 0 → 空批次；預算 ≥ 佇列長度 → 全量的副本。 */
+export function takeLightBudget(
+  queue: Array<[number, number]>,
+  budget: number,
+): Array<[number, number]> {
+  return queue.slice(0, Math.max(0, budget));
+}
+
+/** 依「到玩家的距離平方」遞增排序（近→遠）；回傳新陣列，不改動原陣列。
+ *  座標單位：佇列項與 `playerX`／`playerZ` 都是**區塊座標**（main.ts 的
+ *  pcx/pcz）——main.ts 先前的排序鍵正是 `(cx - pcx) ** 2 + (cz - pcz) ** 2`，
+ *  本函式逐值相同。平手時維持原相對順序（`Array.prototype.sort` 穩定排序），
+ *  與先前的原地 sort 行為一致。 */
+export function sortLightQueueByDistance(
+  queue: ReadonlyArray<[number, number]>,
+  playerX: number,
+  playerZ: number,
+): Array<[number, number]> {
+  return [...queue].sort(
+    (a, b) =>
+      (a[0] - playerX) ** 2 +
+      (a[1] - playerZ) ** 2 -
+      ((b[0] - playerX) ** 2 + (b[1] - playerZ) ** 2),
+  );
+}
+
 // ── 天空光（B6 Task 2）───────────────────────────────────────────────────────
 
 /** 夜間的渲染用天空比例（正午 1.0 → 夜間 0.85；Task 4 餵給著色器 uniform）。 */

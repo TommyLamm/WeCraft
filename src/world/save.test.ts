@@ -17,6 +17,10 @@ import { createModeStash, type ModeStash } from '../core/mode-stash';
 import { starterSlots, INVENTORY_SLOTS, type ItemStack } from '../core/items';
 import { WORLDGEN_VERSION } from './worldgen';
 import { createPassiveMob } from './passive-mobs';
+// B6 Task 8：光照不入存檔、火把走 modified overlay 的相容性釘子
+import { World } from './world';
+import { BLOCK, getBlockDef } from './blocks';
+import { blockLightAt, computeChunkLight } from './lighting';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
@@ -928,5 +932,79 @@ describe('collectSavePayload', () => {
     expect(payload.stash.creative[0]?.count).toBe(64);
     expect(payload.stash.survival[1]).toBeNull();
     expect(payload.stash.survivalVitals.hp).toBe(9);
+  });
+});
+
+// ── B6 Task 8：存檔相容性紅線 ────────────────────────────────────────────────
+//
+// 公約 §3／計畫 Global Constraints 的紅線（本 describe 逐條釘住）：
+// - 本機 payload **維持 v4**（`collectSavePayload` 測試已釘 `version === 4`；
+//   下面的往返測試再釘一次，讓「光照不入存檔」與「v4 不動」在同一處可讀）。
+// - 光照是**導出資料**：不入本機 payload、不入雲端 payload → 火把只走既有的
+//   `modified` overlay（數字 block id 32——「同一格式內的新 block id」，
+//   **不是**格式升版；雲端維持 format 2、`game.json` 一字不動）。
+// - 舊版（0.8.0）讀到 id 32 時走 `getBlockDef` 的 `DEFS[id] ?? DEFS[0]`
+//   fallback → 火把顯示成空氣、**不崩**（發布說明〈存檔格式與相容性提示〉
+//   的依據，見計畫 §8）。
+describe('B6 Task 8: light never enters the save, torch rides the modified overlay', () => {
+  /** `SaveSources.world` 是結構型別（seed ＋ serializeModified）→ 真實 World
+   *  用薄轉接器接上（與 main.ts 的接法同構）。 */
+  const sourcesOf = (world: World) => ({
+    world: { seed: 4242, serializeModified: () => world.serializeModified() },
+    player: {
+      pos: [0.5, 70, 0.5] as [number, number, number],
+      yaw: 0,
+      mode: 'survival' as const,
+      inventory: [] as Array<ItemStack | null>,
+    },
+    vitals: null,
+    clockT: 0,
+    advancements: emptyAdvancements(),
+    stash: createModeStash(),
+    passiveMobs: [],
+    savedAt: 0,
+  });
+
+  it('a torch survives a save and load round trip', () => {
+    const world = new World();
+    world.setBlock(3, 70, 4, BLOCK.TORCH); // modified overlay 記 id 32
+    const payload = collectSavePayload(sourcesOf(world));
+    // 紅線：火把＝「同一格式內的新 block id」——數字 32 原樣進 `modified`，
+    // payload 版本仍是 v4（不是格式升版）。
+    expect(BLOCK.TORCH).toBe(32);
+    expect(payload.modified).toContainEqual(['3,70,4', BLOCK.TORCH]);
+    expect(payload.version).toBe(4);
+    // 載入路徑：全新世界 applyModified（內部逐筆走 setBlock）→ 火把還在
+    const restored = new World();
+    restored.applyModified(payload.modified);
+    expect(restored.getBlock(3, 70, 4)).toBe(BLOCK.TORCH);
+  });
+
+  it('the light is never written to the save payload', () => {
+    const world = new World();
+    world.setBlock(3, 70, 4, BLOCK.TORCH);
+    // 先真的把光算出來（chunk.light 已配置且含非零值）——釘的是「即使光照
+    // 資料存在，payload 也不帶任何光照欄位」，不是「沒有光所以當然沒有鍵」。
+    computeChunkLight(world, 0, 0);
+    expect(world.getChunk(0, 0)!.light).not.toBeNull();
+    expect(blockLightAt(world, 3, 70, 4)).toBe(14);
+    const payload = collectSavePayload(sourcesOf(world));
+    const json = JSON.stringify(payload).toLowerCase();
+    // brief：不包含 light／skyLight／blockLight 任何子字串（大小寫不拘）
+    expect(json).not.toContain('light');
+    expect(json).not.toContain('skylight');
+    expect(json).not.toContain('blocklight');
+    // payload 不是空殼：火把確實在 modified overlay 裡（斷言有意義的前提）
+    expect(payload.modified).toContainEqual(['3,70,4', BLOCK.TORCH]);
+  });
+
+  it('an unknown block id falls back to air (old builds read new saves without crashing)', () => {
+    // 紅線的機制面：0.8.0 沒有 id 32 的定義 → `getBlockDef(32)` 落到
+    // `DEFS[0]`（空氣）——顯示成空氣但不丟例外。把 fallback 本身釘住：
+    // 之後任何人改 `getBlockDef` 都不得弄掉「未知 id 不崩」這條。
+    expect(getBlockDef(BLOCK.TORCH).id).toBe(32); // 新版認得火把
+    expect(getBlockDef(999).id).toBe(0); // 舊版視角：未知 id → 空氣
+    expect(getBlockDef(999).solid).toBe(false);
+    expect(getBlockDef(999).transparent).toBe(true);
   });
 });

@@ -15,7 +15,7 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 // B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
 // 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
-import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale, spawnLightAt } from './world/lighting';
+import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale, sortLightQueueByDistance, spawnLightAt, takeLightBudget } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -1095,9 +1095,11 @@ audio.setVolume(settings.volume);
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
 const pendingMesh: Array<[number, number]> = [];
-// B6 Task 3：光照重算佇列（[cx, cz, distSq]）——lightDirty 的區塊進這裡，
-// 每幀重算最多 2 塊（先有光再建網格；見 processQueues 的光照預算）。
-const pendingLight: Array<[number, number, number]> = [];
+// B6 Task 3：光照重算佇列——lightDirty 的區塊進這裡，每幀重算最多 2 塊
+//（先有光再建網格；見 processQueues 的光照預算）。B6 Task 8：排序與預算
+// 判斷抽成 lighting.ts 的純函式（sortLightQueueByDistance／takeLightBudget），
+// 佇列項只留 [cx, cz]（距離由排序函式自己算）。
+let pendingLight: Array<[number, number]> = [];
 const generated = new Set<string>();
 const genInFlight = new Set<string>();
 
@@ -1326,7 +1328,7 @@ function refreshQueues(): void {
         // 網格佇列，而網格迴圈的守門（!lightDirty，見 processQueues）會永遠
         // 等不到重光 → 死鎖不渲染。
         if (c.lightDirty) {
-          pendingLight.push([cx, cz, (cx - pcx) ** 2 + (cz - pcz) ** 2]);
+          pendingLight.push([cx, cz]);
         }
         if (c.dirty) pendingMesh.push([cx, cz]);
       }
@@ -1339,7 +1341,8 @@ function refreshQueues(): void {
   // 光照佇列同樣近→遠（2026-10-20 稽核修正）：原設計的 ring 掃描順序會讓遠處
   // 角落優先點亮、玩家附近最後才亮；依「區塊中心到玩家的距離平方」排序後，
   // 玩家周圍先亮，其餘在後續幀以每幀 2 塊的預算補齊。
-  pendingLight.sort((a, b) => a[2] - b[2]);
+  // B6 Task 8：排序判斷抽成純函式（回傳新陣列）→ 重建佇列。
+  pendingLight = sortLightQueueByDistance(pendingLight, pcx, pcz);
 
   for (const key of [...world.chunks.keys()]) {
     const [cx, cz] = key.split(',').map(Number);
@@ -1367,21 +1370,24 @@ function neighborsReady(cx: number, cz: number): boolean {
 
 function processQueues(): void {
   let budgetGen = 2;
-  let budgetLight = 2;
+  const budgetLight = 2;
   let budgetMesh = 2;
   // B6 Task 3：先跑光照預算，再跑網格預算——lightDirty 尚未清除的區塊不能
   // 建網格（會用 0 光烘焙出全黑 mesh）。重算粒度＝區塊（不做逐格 remove-BFS：
   // 逐格版本要處理「光要往回吸」的邊界條件，錯誤率高、難測；區塊重算冪等，
   // 語意由 lighting.test.ts 釘住）。
-  while (budgetLight > 0 && pendingLight.length > 0) {
-    const [cx, cz] = pendingLight.shift()!;
+  // B6 Task 8：「單幀最多 2 塊」的判斷抽成純函式（takeLightBudget，單元釘死）
+  // → 取一批、消費、逐塊重算。批次內不會有「過期項」：旗標的清除者只有
+  // 本迴圈的 computeChunkLight（作用的對象已在下面的快照裡、逐塊只拜訪一次）
+  // 與開局的出生區同步點亮（發生在任何 refreshQueues 之前）；收集
+  // （refreshQueues）與消費（此處）是相鄰的同步呼叫，之間沒有別的程式碼。
+  const lightBatch = takeLightBudget(pendingLight, budgetLight);
+  pendingLight.splice(0, lightBatch.length);
+  for (const [cx, cz] of lightBatch) {
     const c = world.getChunk(cx, cz);
     if (c?.lightDirty) {
       computeChunkLight(world, cx, cz); // 收尾會把 lightDirty 清掉（lighting.ts）
-      budgetLight--;
     }
-    // 過期項（旗標已被開局同步點亮清掉／區塊已卸載）→ 丟棄不重推：
-    // refreshQueues 每幀從旗標重建佇列，重推只會空轉（與網格迴圈同一條紀律）。
   }
   while (budgetGen > 0 && pendingGen.length > 0) {
     const [cx, cz] = pendingGen[0];
