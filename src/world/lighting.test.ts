@@ -13,6 +13,7 @@ import {
   computeChunkTopY,
   isOpaqueAt,
   lightAt,
+  popUnsupportedTorches,
   setLight,
   skyLightAt,
   skyLightScale,
@@ -389,5 +390,38 @@ describe('light lifecycle (B6 Task 3)', () => {
         expect(w.getChunk(cx, cz)!.lightDirty).toBe(false);
       }
     }
+  });
+});
+
+describe('torch support (B6 Task 6: 支撐消失 → 火把收回)', () => {
+  it('a torch pops off when its support is removed', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.STONE);
+    w.setBlock(0, 64, 0, TORCH);
+    w.setBlock(0, 63, 0, BLOCK.AIR); // 挖掉支撐
+    const popped = popUnsupportedTorches(w, 0, 63, 0);
+    expect(popped).toEqual([{ x: 0, y: 64, z: 0 }]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.AIR); // 火把被收回
+  });
+
+  it('a torch with another support stays', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.STONE); // 下方支撐
+    w.setBlock(1, 64, 0, BLOCK.STONE); // 側邊支撐
+    w.setBlock(0, 64, 0, TORCH);
+    w.setBlock(0, 63, 0, BLOCK.AIR); // 挖掉下方 → 還有側邊支撐
+    expect(popUnsupportedTorches(w, 0, 63, 0)).toEqual([]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.TORCH); // 火把還在
+  });
+
+  it('only torch cells pop (stone and air neighbours are left alone)', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.STONE);
+    w.setBlock(1, 63, 0, BLOCK.STONE); // 側鄰是石頭、上方是空氣
+    expect(popUnsupportedTorches(w, 0, 63, 0)).toEqual([]);
+    expect(w.getBlock(1, 63, 0)).toBe(BLOCK.STONE);
   });
 });

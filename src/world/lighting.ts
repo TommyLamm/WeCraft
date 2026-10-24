@@ -33,8 +33,9 @@
  *  的簡化已隨 Task 2 的全高柱掃描（R-T2-1）消失——開闊柱一律種滿 15。 */
 
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkIndex, type Chunk } from './chunk';
-import { BLOCK, getBlockDef, isTransparent } from './blocks';
+import { BLOCK, getBlockDef, isTransparent, isSolid } from './blocks';
 import type { World } from './world';
+import { torchAttachAt } from './mesher';
 import { dayFactor } from '../core/daynight';
 
 /** 最高光照等級（16 個等級 0..15）。 */
@@ -502,4 +503,52 @@ export function seedSkyColumns(world: World, cx: number, cz: number): void {
   seedColumnsIntoQueue(chunk);
   expandSkyQueue(world);
   resetQueue();
+}
+
+// ── 火把的支撐與收回（B6 Task 6）──────────────────────────────────────────────
+
+/** 某格是否可作為火把的支撐（實心方塊：玻璃算支撐、cross 植被與水不算）。
+ *  對齊原版「Torches can be placed on the top or the sides of most solid
+ *  blocks」「can be placed on top of glass blocks」（minecraft.wiki/Torch）。
+ *  與 mesher.ts 的 `torchAttachAt` 內聯的是同一條 isSolid 規則——torchAttachAt
+ *  不能反向 import 本模組（popUnsupportedTorches 在這裡用它 → 會成循環），
+ *  一行謂詞的等價性由兩側的行為測試各自釘住。 */
+export function isFullSupport(world: World, x: number, y: number, z: number): boolean {
+  return isSolid(world.getBlock(x, y, z));
+}
+
+/** 支撐被挖掉後，把依附其上的火把收回（回傳被收回的位置清單）。
+ *
+ *  原版（minecraft.wiki/Torch）：「A torch is removed and drops itself as an
+ *  item if its attachment block is moved, removed, or destroyed」。依附方向
+ *  由世界推導、不存狀態（見 mesher.ts 的 TorchAttach）→ 「支撐消失即掉落」
+ *  不需要任何額外的方塊狀態：檢查被改動格的**上方 1 格＋四側 4 格**（火把只
+ *  可能依附在這 5 個位置），若該格是火把且 `torchAttachAt(...) === 'free'`
+ *  （下方與四側都沒有實心支撐）→ 收回該火把並記下位置。
+ *
+ *  收回走 `world.setBlock(..., AIR)`：`modified` overlay 記 AIR（存檔往返
+ *  一致）、光照重算旗標照常觸發（火把的 emission 14 消失）。火把**不支撐
+ *  火把**（支撐必須是實心方塊）→ 不需要級聯收回。呼叫端（main.ts 破壞分支）
+ *  負責為回傳的每個位置生成掉落物（生存掉自身、創造不掉）。 */
+export function popUnsupportedTorches(
+  world: World,
+  x: number,
+  y: number,
+  z: number,
+): Array<{ x: number; y: number; z: number }> {
+  const popped: Array<{ x: number; y: number; z: number }> = [];
+  const candidates: ReadonlyArray<readonly [number, number, number]> = [
+    [x, y + 1, z], // 上方（地板依附）
+    [x + 1, y, z], // 四側（牆面依附）
+    [x - 1, y, z],
+    [x, y, z + 1],
+    [x, y, z - 1],
+  ];
+  for (const [cx, cy, cz] of candidates) {
+    if (world.getBlock(cx, cy, cz) !== BLOCK.TORCH) continue;
+    if (torchAttachAt(world, cx, cy, cz) !== 'free') continue; // 還有別的支撐 → 留著
+    world.setBlock(cx, cy, cz, BLOCK.AIR);
+    popped.push({ x: cx, y: cy, z: cz });
+  }
+  return popped;
 }

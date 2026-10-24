@@ -1,5 +1,5 @@
 import type { World } from './world';
-import { getBlockDef, isTransparent, isCross, BLOCK } from './blocks';
+import { getBlockDef, isTransparent, isCross, isSolid, BLOCK, type BlockDef } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 
 /** One greedily-merged mesh: four unshared vertices per quad. `texIndex`,
@@ -18,14 +18,16 @@ export interface MeshData {
   quadCount: number;
 }
 
-/** `meshChunk` output: opaque terrain, water and cross-shaped foliage are
- *  meshed separately — Task 16 renders `water` in its own translucent pass,
+/** `meshChunk` output: opaque terrain, water, cross-shaped foliage and torches
+ *  are meshed separately — Task 16 renders `water` in its own translucent pass,
  *  B3 Task 4 renders `foliage` (flower/grass cross models) in its own
- *  DoubleSide, shadow-free pass. */
+ *  DoubleSide, shadow-free pass, B6 Task 6 renders `torches` (small
+ *  collision-free boxes) in its own FrontSide, shadow-free pass. */
 export interface ChunkMesh {
   opaque: MeshData;
   water: MeshData;
   foliage: MeshData;
+  torches: MeshData;
 }
 
 /** One visible face direction, described for greedy meshing: the normal axis
@@ -504,6 +506,122 @@ function emitCrossQuads(
   }
 }
 
+// ── 火把的小模型（B6 Task 6）────────────────────────────────────────────────
+
+/** 火把的依附方向（由世界推導，**不存狀態**）。區塊資料是「1 格 1 byte 的
+ *  block id」，沒有 block state 的空間 → 依附方向改成查表推導：存檔往返只會
+ *  帶 block id 32、不會掉方向，且規則可測。代價：玩家不能指定牆面（四面都
+ *  靠著時取固定優先序）——寫進 README〈與原版的差異〉。 */
+export type TorchAttach = 'floor' | 'wall+x' | 'wall-x' | 'wall+z' | 'wall-z' | 'free';
+
+/** 由世界推導火把的依附方向：下方實心 → 立在地上（floor）；否則依 +x、−x、
+ *  +z、−z 的固定優先序找第一個實心水平鄰居 → 貼對應牆面；都沒有 → free
+ *  （懸空——`popUnsupportedTorches` 據此把失去支撐的火把收回）。
+ *
+ *  支撐判定與 lighting.ts 的 `isFullSupport` 是**同一條 isSolid 規則**（玻璃
+ *  算、cross 植被與水不算）。這裡內聯 `isSolid` 而不 import isFullSupport：
+ *  lighting.ts 的 popUnsupportedTorches 會 import 本函式，反向再 import 會
+ *  形成 lighting → mesher → lighting 的循環依賴；一行謂詞的語意由兩側測試
+ *  各自釘住（canPlaceTorch／torchAttachAt 的行為測試即等價性守門）。 */
+export function torchAttachAt(world: World, x: number, y: number, z: number): TorchAttach {
+  if (isSolid(world.getBlock(x, y - 1, z))) return 'floor';
+  if (isSolid(world.getBlock(x + 1, y, z))) return 'wall+x';
+  if (isSolid(world.getBlock(x - 1, y, z))) return 'wall-x';
+  if (isSolid(world.getBlock(x, y, z + 1))) return 'wall+z';
+  if (isSolid(world.getBlock(x, y, z - 1))) return 'wall-z';
+  return 'free';
+}
+
+/** 火把小模型的尺寸（原版模型：寬 2 像素、高 10 像素；1 像素 = 1/16 格）。 */
+const TORCH_BOX_W = 2 / 16;
+const TORCH_BOX_H = 10 / 16;
+
+/** Emit the six faces of one torch's small box (B6 Task 6).
+ *
+ *  盒子立在格子底部（y = [cellY, cellY + 10/16]）；`floor`／`free` 時 x/z 置中
+ *  （x + 0.5 ± w/2），貼牆時沿該軸貼到支撐面（wall+x → x = [x+1−w, x+1]、
+ *  wall-x → x = [x, x+w]，z 同理）。**不貪心合併**——每個火把固定 6 個 quad、
+ *  數量極少。六個面直接重用 cube pass 的 FACES 表（同一套 uFlip/vFlip 角序 →
+ *  纏繞方向與 cube pass 逐面一致，FrontSide 材質下六面都朝外）；UV 每面整張
+ *  tile（[0,0]–[1,1]，同 cross pass 的單 tile 慣例，火把盒面把整張圖壓進
+ *  2×10 像素）；**不做 AO**（小盒子做 AO 會出現黑邊，shade 直接用面亮度）；
+ *  **光照用火把自己那一格**（不做角落平均——火把格本身持有 emission 14，
+ *  等價於「自身亮」，與植被 pass 的逐格簡化同一筆帳）。 */
+function emitTorchBox(
+  b: MeshBuilder,
+  baseX: number,
+  baseZ: number,
+  lx: number,
+  ly: number,
+  lz: number,
+  def: BlockDef,
+  attach: TorchAttach,
+  lightSky: number,
+  lightBlock: number,
+): void {
+  const x = baseX + lx;
+  const y = ly;
+  const z = baseZ + lz;
+  // x/z 盒範圍：預設置中（floor／free），貼牆時貼到支撐那一側
+  let x0 = x + 0.5 - TORCH_BOX_W / 2;
+  let x1 = x + 0.5 + TORCH_BOX_W / 2;
+  let z0 = z + 0.5 - TORCH_BOX_W / 2;
+  let z1 = z + 0.5 + TORCH_BOX_W / 2;
+  if (attach === 'wall+x') {
+    x0 = x + 1 - TORCH_BOX_W;
+    x1 = x + 1;
+  } else if (attach === 'wall-x') {
+    x0 = x;
+    x1 = x + TORCH_BOX_W;
+  } else if (attach === 'wall+z') {
+    z0 = z + 1 - TORCH_BOX_W;
+    z1 = z + 1;
+  } else if (attach === 'wall-z') {
+    z0 = z;
+    z1 = z + TORCH_BOX_W;
+  }
+  const ext: ReadonlyArray<readonly [number, number]> = [
+    [x0, x1], // axis 0（x）
+    [y, y + TORCH_BOX_H], // axis 1（y）
+    [z0, z1], // axis 2（z）
+  ];
+  const uvs: ReadonlyArray<readonly [number, number]> = [
+    [0, 0],
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ];
+  for (const face of FACES) {
+    const plane = face.dir[face.nAxis] > 0 ? ext[face.nAxis][1] : ext[face.nAxis][0];
+    const u0 = face.uFlip ? ext[face.uAxis][1] : ext[face.uAxis][0];
+    const u1 = face.uFlip ? ext[face.uAxis][0] : ext[face.uAxis][1];
+    const v0 = face.vFlip ? ext[face.vAxis][1] : ext[face.vAxis][0];
+    const v1 = face.vFlip ? ext[face.vAxis][0] : ext[face.vAxis][1];
+    const corners: ReadonlyArray<readonly [number, number]> = [
+      [u0, v0],
+      [u1, v0],
+      [u0, v1],
+      [u1, v1],
+    ];
+    const vertBase = b.positions.length / 3;
+    for (let i = 0; i < 4; i++) {
+      const local: [number, number, number] = [0, 0, 0];
+      local[face.nAxis] = plane;
+      local[face.uAxis] = corners[i][0];
+      local[face.vAxis] = corners[i][1];
+      b.positions.push(baseX + local[0], local[1], baseZ + local[2]);
+      b.normals.push(face.dir[0], face.dir[1], face.dir[2]);
+      b.uvs.push(uvs[i][0], uvs[i][1]);
+      b.texIndex.push(def[face.tileKey]);
+      b.shades.push(face.shade); // 面亮度照 FACES 表；不做 AO
+      b.lightSky.push(lightSky);
+      b.lightBlock.push(lightBlock);
+    }
+    b.indices.push(vertBase, vertBase + 1, vertBase + 2, vertBase + 2, vertBase + 1, vertBase + 3);
+    b.quadCount++;
+  }
+}
+
 /** Greedy rectangle expansion over one slice's mask (0 = not in this sweep):
  *  grow width while the signature matches, then height while every cell of
  *  the candidate rows matches, emit the quad, clear the consumed cells. */
@@ -551,6 +669,7 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
       opaque: finish(createBuilder()),
       water: finish(createBuilder()),
       foliage: finish(createBuilder()),
+      torches: finish(createBuilder()),
     };
   }
 
@@ -571,6 +690,7 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
   const opaqueB = createBuilder();
   const waterB = createBuilder();
   const foliageB = createBuilder();
+  const torchesB = createBuilder();
 
   for (const face of FACES) {
     const nDim = AXIS_SIZE[face.nAxis];
@@ -592,7 +712,8 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           cell[face.vAxis] = av;
           const id = data[chunkIndex(cell[0], cell[1], cell[2])];
           if (id === BLOCK.AIR) continue;
-          if (isCross(id)) continue; // cross 植被走 foliage pass，不進 cube pass
+          // cross 植被與火把不進 cube pass（各走專屬 pass，B3 Task 4／B6 Task 6）
+          if (isCross(id) || getBlockDef(id).shape === 'torch') continue;
           if (!faceVisible(id, sampleAt(data, cell, face.dir, neighbors))) continue;
           const tile = getBlockDef(id)[face.tileKey];
           const aoKey = faceAoKey(data, cell, samples, neighbors);
@@ -650,31 +771,45 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
     }
   }
 
-  // ---- cross pass（B3 Task 4）----
-  // 整個 chunk 掃一遍（65,536 格）找 cross 方塊；相對既有 6 個面方向的掃描
-  // 可忽略。cross 方塊不與相鄰方塊合併（每株都是獨立的兩片平面）。
+  // ---- cross ＋ torch pass（B3 Task 4／B6 Task 6）----
+  // 整個 chunk 掃一遍（65,536 格）找 cross 植被與火把；相對既有 6 個面方向的
+  // 掃描可忽略（兩者共用同一趟掃描）。兩者都不與相鄰方塊合併（每株植物／每個
+  // 火把都是獨立的小模型，數量極少）。
   for (let ly = 0; ly < CHUNK_HEIGHT; ly++) {
     for (let lz = 0; lz < CHUNK_SIZE; lz++) {
       for (let lx = 0; lx < CHUNK_SIZE; lx++) {
         const id = data[chunkIndex(lx, ly, lz)];
         if (id === BLOCK.AIR) continue;
-        if (!isCross(id)) continue;
-        // 植被用自己那一格的光照（不做角落平均 → 見 emitCrossQuads 的註解）
-        const l = chunk.light ? chunk.light[chunkIndex(lx, ly, lz)] : 0;
-        emitCrossQuads(
-          foliageB,
-          baseX,
-          baseZ,
-          lx,
-          ly,
-          lz,
-          getBlockDef(id).top,
-          l >> 4,
-          l & 0x0f,
-        );
+        const def = getBlockDef(id);
+        // 植被與火把都用**自己那一格**的光照（不做角落平均 → 見各自 emitter 的註解）
+        if (def.shape === 'cross') {
+          const l = chunk.light ? chunk.light[chunkIndex(lx, ly, lz)] : 0;
+          emitCrossQuads(foliageB, baseX, baseZ, lx, ly, lz, def.top, l >> 4, l & 0x0f);
+        } else if (def.shape === 'torch') {
+          const l = chunk.light ? chunk.light[chunkIndex(lx, ly, lz)] : 0;
+          // 依附方向由世界推導（世界座標＝本區塊基底＋本地座標）→ 貼牆／立地
+          // 不需要任何方塊狀態；支撐跨區塊時 world.getBlock 也讀得到。
+          emitTorchBox(
+            torchesB,
+            baseX,
+            baseZ,
+            lx,
+            ly,
+            lz,
+            def,
+            torchAttachAt(world, baseX + lx, ly, baseZ + lz),
+            l >> 4,
+            l & 0x0f,
+          );
+        }
       }
     }
   }
 
-  return { opaque: finish(opaqueB), water: finish(waterB), foliage: finish(foliageB) };
+  return {
+    opaque: finish(opaqueB),
+    water: finish(waterB),
+    foliage: finish(foliageB),
+    torches: finish(torchesB),
+  };
 }

@@ -15,7 +15,7 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 // B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
 // 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
-import { computeChunkLight, computeChunkTopY, markLightDirty, skyLightScale } from './world/lighting';
+import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -65,7 +65,7 @@ import { updateFall, resetFall, type FallState } from './player/fallstate';
 import {
   DigProgress,
   resolvePlacementTarget,
-  canPlaceAt,
+  canPlaceBlockAt,
   spawnBlockDrop,
   digStep,
   getBreakTime,
@@ -721,7 +721,9 @@ let drops: DropEntity[] = [];
  *  → 已符合；**這裡刻意不放任何掉落流程**（放了就是「蓋掉花還撿到花」）。
  *
  *  **AABB 規則不放寬**：`canPlaceAt` 的玩家重疊檢查原樣保留 → 站在花格裡放方塊
- *  仍然被擋下（與原版一致）。 */
+ *  仍然被擋下（與原版一致）。**唯一的例外是火把（B6 Task 6）**：放行走統一的
+ *  `canPlaceBlockAt`——火把是 non-solid（無碰撞盒），沿用重疊檢查的話玩家永遠
+ *  放不進腳下的火把；其餘方塊在 `canPlaceBlockAt` 內部照走 `canPlaceAt`。 */
 function tryPlaceBlock(target: RayHit): void {
   const t = resolvePlacementTarget(
     target,
@@ -729,7 +731,7 @@ function tryPlaceBlock(target: RayHit): void {
   );
   const held = slots[selected];
   const placeId = held ? blockFromItem(held.item) : null;
-  if (placeId === null || !canPlaceAt(world, t.x, t.y, t.z, player.position)) return;
+  if (placeId === null || !canPlaceBlockAt(world, t.x, t.y, t.z, player.position, placeId)) return;
   // no pay, no place: the stack is spent FIRST (creative's spendFromSlot is a
   // free `true`), so a rejected spend never writes the world — unreachable in
   // practice, structural defense
@@ -3112,6 +3114,17 @@ gs.renderer.setAnimationLoop(() => {
           }, held);
           if (spawned.length !== drops.length) bus.emit('drops-changed', {});
           drops = spawned;
+          // B6 Task 6：支撐被挖掉的火把跟著收回（依附方向由世界推導——支撐
+          // 消失後 torchAttachAt 變 'free'）。每個被收回的火把走與上面同一條
+          // 掉落路徑（生存掉自身、創造不掉）；popUnsupportedTorches 內部已把
+          // 火把格 setBlock 回 AIR（modified overlay 記 AIR、光照重算照常觸發）。
+          for (const t of popUnsupportedTorches(world, hit.x, hit.y, hit.z)) {
+            const torchDrops = spawnBlockDrop(drops, currentMode, BLOCK.TORCH, {
+              x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5, // block centre
+            }, held);
+            if (torchDrops.length !== drops.length) bus.emit('drops-changed', {});
+            drops = torchDrops;
+          }
           if (vitals) setVitals(exhaust(vitals, EXHAUST_BREAK_BLOCK));
           // Task 6: a mined furnace spills its whole contents and loses its state.
           if (id === BLOCK.FURNACE) {

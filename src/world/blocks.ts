@@ -198,11 +198,12 @@ export const isSolid = (id: number): boolean => getBlockDef(id).solid;
 export const isTransparent = (id: number): boolean => getBlockDef(id).transparent;
 /** cross 型方塊（花／草）：渲染成兩片對角平面，不佔滿格。 */
 export const isCross = (id: number): boolean => getBlockDef(id).shape === 'cross';
-/** 可被「瞄準／挖掘」命中的方塊：實心方塊 ＋ cross 植被。
- *  植被不碰撞（`solid` 為 false），但玩家要能挖掉它 → 命中判定看 shape。 */
+/** 可被「瞄準／挖掘」命中的方塊：實心方塊 ＋ cross 植被 ＋ 火把（B6 Task 6）。
+ *  植被與火把不碰撞（`solid` 為 false），但玩家要能瞄準它們、把它們挖掉
+ *  → 命中判定看 shape（火把在 T5 的中間態不可命中、射線會穿過——本行收口）。 */
 export const isTargetable = (id: number): boolean => {
   const def = getBlockDef(id);
-  return def.solid || def.shape === 'cross';
+  return def.solid || def.shape === 'cross' || def.shape === 'torch';
 };
 
 export const PLACEABLE: BlockId[] = [

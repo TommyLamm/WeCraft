@@ -287,6 +287,12 @@ describe('blocks', () => {
     expect(isTargetable(BLOCK.AIR)).toBe(false);
   });
 
+  it('the torch is targetable so it can be aimed at and mined (B6 Task 6)', () => {
+    // T5 中間態收口：isTargetable(TORCH) 原為 false（!solid && shape !== 'cross'）
+    // → 射線穿過火把、挖不掉。火把跟植被一樣「不碰撞但要能被挖掉」。
+    expect(isTargetable(BLOCK.TORCH)).toBe(true);
+  });
+
   // ---- B4 Task 1：羊毛方塊（跨批編號：BLOCK.WOOL = 26 / T.WOOL = 33）----
 
   it('wool: id 26, solid, opaque, hardness 0.8, placeable', () => {

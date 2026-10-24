@@ -1,9 +1,12 @@
-import { getBlockDef, BLOCK, isCross, type ToolKind } from '../world/blocks';
+import { getBlockDef, BLOCK, isCross, type ToolKind, type BlockId } from '../world/blocks';
 import type { World } from '../world/world';
 // B4 Task 6：射線／AABB 的幾何運算搬到 `world/raycast.ts`（`rayAabbEntry`），
 // 讓敵對生物與被動生物的命中盒判定共用同一份實作（這裡是**搬移不是改寫**）。
 import { rayAabbEntry, type RayHit } from '../world/raycast';
 import { CHUNK_HEIGHT } from '../world/chunk';
+// B6 Task 6：火把的支撐判定（實心方塊＝玻璃算、cross 植被與水不算）——
+// 規則本體在 `world/lighting.ts`（與 popUnsupportedTorches 同一處單一真值）。
+import { isFullSupport } from '../world/lighting';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
@@ -385,4 +388,46 @@ export function canPlaceAt(
     pMaxY > y && pMinY < y + 1 &&
     pMaxZ > z && pMinZ < z + 1;
   return !overlap;
+}
+
+/**
+ * 火把的放置規則（B6 Task 6）：**只能放在完整方塊的頂或側；目標格必須是空氣**。
+ *
+ * - 支撐判定走 `isFullSupport`（實心方塊：玻璃算、cross 植被與水不算）——
+ *   對齊原版「Torches can be placed on the top or the sides of most solid
+ *   blocks」「can be placed on top of glass blocks」（minecraft.wiki/Torch）。
+ * - 目標格**只能是空氣**：火把不能放進水裡（原版火把沒有含水變體）、也不能
+ *   覆蓋植被（原版點到草放火把＝草被取代——本作簡化為只准空氣，寫進
+ *   README〈與原版的差異〉）。
+ * - 依附方向**不在此選**：由 `mesher.ts` 的 `torchAttachAt` 在渲染時從世界
+ *   推導（下方實心 → 立地；否則固定優先序找牆面）——本作一格 1 byte、沒有
+ *   block state 的空間（見 torchAttachAt 的註解）。
+ */
+export function canPlaceTorch(world: World, x: number, y: number, z: number): boolean {
+  if (y < 0 || y >= CHUNK_HEIGHT) return false;
+  if (world.getBlock(x, y, z) !== BLOCK.AIR) return false; // 只能放進空氣
+  if (isFullSupport(world, x, y - 1, z)) return true; // 頂
+  return isFullSupport(world, x + 1, y, z) || isFullSupport(world, x - 1, y, z)
+    || isFullSupport(world, x, y, z + 1) || isFullSupport(world, x, y, z - 1); // 側
+}
+
+/**
+ * 放置方塊的**統一閘門**（B6 Task 6）：火把走 `canPlaceTorch`，其餘沿用
+ * `canPlaceAt`（簽名與既有測試都不動——本函式只做分流）。
+ *
+ * **為什麼火把要繞過玩家 AABB 檢查**：火把是 non-solid（原版：無碰撞盒），
+ * 玩家可以走進火把格子；若沿用 `canPlaceAt` 的重疊檢查，站在格子裡就永遠
+ * 放不進腳下的火把。其餘方塊的重疊規則**原樣保留**（在 canPlaceAt 內）。
+ * 接線層（main.ts 的 tryPlaceBlock）一律改呼叫本函式 → 放行規則單一入口。
+ */
+export function canPlaceBlockAt(
+  world: World,
+  x: number,
+  y: number,
+  z: number,
+  playerPos: { x: number; y: number; z: number },
+  blockId: BlockId,
+): boolean {
+  if (blockId === BLOCK.TORCH) return canPlaceTorch(world, x, y, z);
+  return canPlaceAt(world, x, y, z, playerPos);
 }

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { meshChunk, cornerLight, type MeshData, type CornerSamples } from './mesher';
+import { meshChunk, cornerLight, torchAttachAt, type MeshData, type CornerSamples } from './mesher';
 import { World } from './world';
 import { Chunk, CHUNK_SIZE } from './chunk';
-import { BLOCK, type BlockId } from './blocks';
+import { BLOCK, T, type BlockId } from './blocks';
 import { setLight } from './lighting';
 
 function worldWithBlock(x: number, y: number, z: number, id: BlockId): World {
@@ -720,5 +720,118 @@ describe('mesh lighting (B6 Task 4)', () => {
     w.setBlock(-1, 65, 0, BLOCK.STONE);
     const dark = cornerLight(w, 0, 0, [0, 64, 0], samples, neighborsOf(w, 0, 0));
     expect(dark.block).toBe(0);
+  });
+});
+
+describe('torch pass (B6 Task 6)', () => {
+  /** 石頭＋立在它上面的火把（地板依附的標準 fixture）。 */
+  function torchWorld(): World {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(5, 64, 5, BLOCK.STONE);
+    w.setBlock(5, 65, 5, BLOCK.TORCH);
+    return w;
+  }
+
+  /** Mesh 的 xyz 範圍（positions 的逐軸 min/max）。 */
+  function extent(m: MeshData): { min: [number, number, number]; max: [number, number, number] } {
+    const min: [number, number, number] = [Infinity, Infinity, Infinity];
+    const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < m.positions.length; i += 3) {
+      for (let a = 0; a < 3; a++) {
+        min[a] = Math.min(min[a], m.positions[i + a]);
+        max[a] = Math.max(max[a], m.positions[i + a]);
+      }
+    }
+    return { min, max };
+  }
+
+  it('a torch renders as a small box, not a full cube', () => {
+    const m = meshChunk(torchWorld(), 0, 0);
+    // 一個盒子 6 面，走專屬的 torches pass
+    expect(m.torches.quadCount).toBe(6);
+    // 火把不進 cube pass：opaque 只有石頭自己的 6 面，不因火把增加
+    expect(m.opaque.quadCount).toBe(6);
+  });
+
+  it('the torch box is two pixels wide and ten tall', () => {
+    const m = meshChunk(torchWorld(), 0, 0).torches;
+    const { min, max } = extent(m);
+    expect(max[0] - min[0]).toBeCloseTo(2 / 16, 5);
+    expect(max[2] - min[2]).toBeCloseTo(2 / 16, 5);
+    expect(max[1] - min[1]).toBeCloseTo(10 / 16, 5);
+  });
+
+  it('a wall torch hugs the wall it is attached to', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 64, 0, BLOCK.STONE);
+    w.setBlock(1, 64, 0, BLOCK.TORCH); // 下方是空氣 → 找水平支撐
+    // 支撐在 x = 0 → 貼在 −x 那一面（torchAttachAt 的優先序：floor → +x → −x…）
+    expect(torchAttachAt(w, 1, 64, 0)).toBe('wall-x');
+    // wall-x → 盒子的 x 範圍 = [1, 1 + 2/16]
+    const { min, max } = extent(meshChunk(w, 0, 0).torches);
+    expect(min[0]).toBeCloseTo(1, 5);
+    expect(max[0]).toBeCloseTo(1 + 2 / 16, 5);
+  });
+
+  it('a torch on the floor stands centred', () => {
+    const w = torchWorld();
+    expect(torchAttachAt(w, 5, 65, 5)).toBe('floor');
+    // floor → x/z 置中：[0.5 − 1/16, 0.5 + 1/16]（相對格子）
+    const { min, max } = extent(meshChunk(w, 0, 0).torches);
+    expect(min[0]).toBeCloseTo(5.5 - 1 / 16, 5);
+    expect(max[0]).toBeCloseTo(5.5 + 1 / 16, 5);
+  });
+
+  it('the torch box winding points outward on all six faces', () => {
+    // 材質是 FrontSide：纏繞錯了整面會被剔除（小盒子出現破洞）。
+    const m = meshChunk(torchWorld(), 0, 0).torches;
+    for (let q = 0; q < m.quadCount; q++) {
+      const b = q * 4 * 3;
+      const verts: number[][] = [];
+      for (let i = 0; i < 4; i++) {
+        verts.push([
+          m.positions[b + i * 3],
+          m.positions[b + i * 3 + 1],
+          m.positions[b + i * 3 + 2],
+        ]);
+      }
+      const e1 = [verts[1][0] - verts[0][0], verts[1][1] - verts[0][1], verts[1][2] - verts[0][2]];
+      const e2 = [verts[2][0] - verts[0][0], verts[2][1] - verts[0][1], verts[2][2] - verts[0][2]];
+      const geo = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      ];
+      // 幾何法線必須與每頂點屬性法線同向（六面各朝一個軸向 → 與屬性法線點積為正）
+      for (let i = 0; i < 4; i++) {
+        const n = [m.normals[b + i * 3], m.normals[b + i * 3 + 1], m.normals[b + i * 3 + 2]];
+        expect(geo[0] * n[0] + geo[1] * n[1] + geo[2] * n[2]).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('the torch box faces use the torch tile with full-tile UVs', () => {
+    const m = meshChunk(torchWorld(), 0, 0).torches;
+    for (let i = 0; i < m.texIndex.length; i++) {
+      expect(m.texIndex[i]).toBe(T.TORCH);
+    }
+    for (let i = 0; i < m.uvs.length; i++) {
+      expect([0, 1]).toContain(m.uvs[i]); // 整張 tile（[0,0]–[1,1]），無合併的 tile 重複
+    }
+  });
+
+  it('the torch mesh carries its own cell light (no corner averaging)', () => {
+    const w = torchWorld();
+    setLight(w, 5, 65, 5, { sky: 12, block: 14 });
+    const m = meshChunk(w, 0, 0).torches;
+    expect(m.quadCount).toBe(6);
+    // 24 個頂點全部用火把自己那一格的光（emission 14 → 模型自身亮）
+    expect(m.lightSky.length).toBe(24);
+    for (let i = 0; i < m.lightSky.length; i++) {
+      expect(m.lightSky[i]).toBe(12);
+      expect(m.lightBlock[i]).toBe(14);
+    }
   });
 });

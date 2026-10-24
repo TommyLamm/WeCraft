@@ -200,8 +200,9 @@ describe('ChunkRenderer', () => {
   it('water-only chunk: water mesh visible with 6 quads; the opaque slot stays hidden', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 60, 5, BLOCK.WATER), 0, 0);
-    // B3 Task 4：每個 chunk 在場景裡是 3 個 child —— opaque(0)／water(1)／foliage(2)
-    expect(scene.children).toHaveLength(3);
+    // B6 Task 6：每個 chunk 在場景裡是 4 個 child —— opaque(0)／water(1)／
+    // foliage(2)／torches(3)
+    expect(scene.children).toHaveLength(4);
     const opaqueMesh = scene.children[0] as THREE.Mesh;
     const waterMesh = scene.children[1] as THREE.Mesh;
     expect(opaqueMesh.visible).toBe(false); // no opaque geometry → nothing to draw
@@ -209,6 +210,7 @@ describe('ChunkRenderer', () => {
     expect(waterMesh.geometry.getAttribute('position').count).toBe(6 * 4); // 6 water quads
     expect(waterMesh.renderOrder).toBe(WATER_RENDER_ORDER);
     expect((scene.children[2] as THREE.Mesh).visible).toBe(false); // no foliage here
+    expect((scene.children[3] as THREE.Mesh).visible).toBe(false); // no torches here
     renderer.dispose();
   });
 
@@ -217,7 +219,7 @@ describe('ChunkRenderer', () => {
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     w.setBlock(5, 60, 5, BLOCK.WATER); // same chunk, not adjacent
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(3); // opaque(0) + water(1) + foliage(2)
+    expect(scene.children).toHaveLength(4); // opaque(0) + water(1) + foliage(2) + torches(3)
     const opaqueMesh = scene.children[0] as THREE.Mesh;
     const waterMesh = scene.children[1] as THREE.Mesh;
 
@@ -274,7 +276,7 @@ describe('ChunkRenderer', () => {
     expect((scene.children[1] as THREE.Mesh).visible).toBe(true);
     w.setBlock(5, 60, 5, BLOCK.AIR);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(3); // the chunk's opaque+water+foliage trio persists
+    expect(scene.children).toHaveLength(4); // the chunk's four-pass quartet persists
     expect((scene.children[0] as THREE.Mesh).visible).toBe(true);
     expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // empty water geometry
     renderer.dispose();
@@ -297,10 +299,10 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(3); // the chunk's opaque+water+foliage trio
+    expect(scene.children).toHaveLength(4); // the chunk's opaque+water+foliage+torches quartet
     w.setBlock(5, 64, 5, BLOCK.AIR);
     renderer.rebuild(w, 0, 0);
-    expect(scene.children).toHaveLength(0); // all three passes empty → chunk gone
+    expect(scene.children).toHaveLength(0); // all four passes empty → chunk gone
     renderer.dispose();
   });
 
@@ -308,7 +310,7 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
     renderer.rebuild(worldWithBlock(20, 64, 5, BLOCK.STONE), 1, 0);
-    expect(scene.children).toHaveLength(6); // 2 chunks × the opaque+water+foliage trio
+    expect(scene.children).toHaveLength(8); // 2 chunks × the opaque+water+foliage+torches quartet
     renderer.dispose();
     expect(scene.children).toHaveLength(0);
   });
@@ -318,9 +320,10 @@ describe('ChunkRenderer', () => {
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.DANDELION), 0, 0);
     // 早退條件必須納入 foliage：只有植被的 chunk 不能被整塊移除
-    expect(scene.children).toHaveLength(3);
+    expect(scene.children).toHaveLength(4);
     expect((scene.children[0] as THREE.Mesh).visible).toBe(false); // no opaque geometry
     expect((scene.children[1] as THREE.Mesh).visible).toBe(false); // no water geometry
+    expect((scene.children[3] as THREE.Mesh).visible).toBe(false); // no torches here
     const foliage = scene.children[2] as THREE.Mesh;
     expect(foliage.visible).toBe(true);
     expect(foliage.geometry.getAttribute('position').count).toBe(2 * 4); // 兩片對角平面
@@ -381,12 +384,14 @@ describe('ChunkRenderer', () => {
     // 依照既有慣例**手動呼叫**每個材質的 onBeforeCompile（fake shader）。
     const { scene, renderer } = setup();
     renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
-    const mats = [0, 1, 2].map(
+    // B6 Task 6 收口（R-T4-3 交接）：第四個 pass（火把）落地 → 一併釘進
+    // 「四個 pass 共用同一個 uniform 物件」的守門（Review Focus #4）。
+    const mats = [0, 1, 2, 3].map(
       (i) => (scene.children[i] as THREE.Mesh).material as THREE.MeshLambertMaterial,
     );
     const shaders = mats.map(() => fakeShader());
     mats.forEach((m, i) => (m.onBeforeCompile as (s: typeof shaders[0]) => void)(shaders[i]));
-    // 三個 pass 共用**同一個** uniform 物件 → setSkyScale 一次全部生效
+    // 四個 pass 共用**同一個** uniform 物件 → setSkyScale 一次全部生效
     // （若每個材質各自保存一份、只指到最後編譯的那個 → 其餘 pass 夜間不變暗）。
     for (const s of shaders.slice(1)) {
       expect(s.uniforms.uSkyScale).toBe(shaders[0].uniforms.uSkyScale);
@@ -396,6 +401,62 @@ describe('ChunkRenderer', () => {
     // 首次 render 前呼叫也要有效（uniform 初始值 1 頂著，不依賴 onBeforeCompile）
     renderer.setSkyScale(1);
     expect(shaders[0].uniforms.uSkyScale.value).toBe(1);
+    renderer.dispose();
+  });
+
+  // ---- B6 Task 6：火把 pass（第四條 mesh ＋ 地形光照 patch）----
+  it('a torch chunk gains a fourth mesh carrying the small-box geometry', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.STONE);
+    w.setBlock(5, 65, 5, BLOCK.TORCH);
+    const { scene, renderer } = setup();
+    renderer.rebuild(w, 0, 0);
+    // children 順序固定：opaque(0)／water(1)／foliage(2)／torches(3)
+    expect(scene.children.length).toBe(4);
+    const torchMesh = scene.children[3] as THREE.Mesh;
+    expect(torchMesh.visible).toBe(true);
+    expect(torchMesh.geometry.getAttribute('position').count).toBe(6 * 4); // 一個盒子 6 面
+    expect(torchMesh.geometry.getIndex()!.count).toBe(6 * 6);
+    // 光屬性跟著幾何走（缺一個 → 該 pass 全黑，Task 4 的約定）
+    expect(torchMesh.geometry.getAttribute('lightSky').count).toBe(6 * 4);
+    expect(torchMesh.geometry.getAttribute('lightBlock').count).toBe(6 * 4);
+    // 小盒子不投影（投影會是一整格的黑方塊）、接收陰影、矩陣凍結
+    expect(torchMesh.castShadow).toBe(false);
+    expect(torchMesh.receiveShadow).toBe(true);
+    expect(torchMesh.matrixAutoUpdate).toBe(false);
+    renderer.dispose();
+  });
+
+  it('the torch material: Lambert + alphaTest 0.1 + FrontSide + the terrain light patch on the SHARED uniforms', () => {
+    const w = worldWithBlock(5, 64, 5, BLOCK.TORCH); // 只有火把的 chunk
+    const { scene, renderer } = setup();
+    renderer.rebuild(w, 0, 0);
+    const opaqueMat = (scene.children[0] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    const torchMat = (scene.children[3] as THREE.Mesh).material as THREE.MeshLambertMaterial;
+    expect(torchMat).toBeInstanceOf(THREE.MeshLambertMaterial);
+    expect(torchMat).not.toBe(opaqueMat); // 獨立材質
+    expect(torchMat.alphaTest).toBe(0.1); // 火把貼圖是 alpha 裁切
+    expect(torchMat.vertexColors).toBe(true);
+    expect(torchMat.side).toBe(THREE.FrontSide);
+    expect(torchMat.map).toBeNull(); // array texture rides the custom mapArray uniform
+    // 掛的是**地形版** patch（含光屬性）：uniform 與 opaque pass 共用同一參考
+    const sO = fakeShader();
+    const sT = fakeShader();
+    (opaqueMat.onBeforeCompile as (s: typeof sO) => void)(sO);
+    (torchMat.onBeforeCompile as (s: typeof sT) => void)(sT);
+    expect(sT.uniforms.mapArray.value).toBe(sO.uniforms.mapArray.value); // 同一張 DataArrayTexture
+    expect(sT.uniforms.uSkyScale).toBe(sO.uniforms.uSkyScale);
+    expect(sT.uniforms.uMinLight).toBe(sO.uniforms.uMinLight);
+    expect(sT.vertexShader).toContain('attribute float lightSky;'); // patchTerrainLightShader 而非 plain patch
+    renderer.dispose();
+  });
+
+  it('a chunk without torches hides the torch pass (blank stand-in, chunk stays)', () => {
+    const { scene, renderer } = setup();
+    renderer.rebuild(worldWithBlock(5, 64, 5, BLOCK.STONE), 0, 0);
+    expect(scene.children.length).toBe(4); // chunk 仍留場上（opaque 非空）
+    const torchMesh = scene.children[3] as THREE.Mesh;
+    expect(torchMesh.visible).toBe(false); // 空 pass = 隱藏 + 空幾何
+    expect(torchMesh.geometry.getAttribute('position')).toBeUndefined();
     renderer.dispose();
   });
 });

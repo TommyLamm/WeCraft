@@ -498,7 +498,31 @@ describe('main.ts 接線（B3 Task 9 Step 4：放置目標指向被點擊格本�
 
   it('the player-overlap rule is still applied to the resolved target', () => {
     const body = functionBody('tryPlaceBlock');
-    expect(body).toContain('canPlaceAt(world, t.x, t.y, t.z, player.position)');
+    // B6 Task 6：閘門換成統一的 canPlaceBlockAt（火把略過 AABB、其餘方塊在
+    // canPlaceBlockAt 內部沿用 canPlaceAt 的同一套重疊檢查——非弱化，規則搬家）。
+    expect(body).toContain('canPlaceBlockAt(world, t.x, t.y, t.z, player.position, placeId)');
+  });
+});
+
+describe('main.ts 接線（B6 Task 6：火把的放置閘門與支撐掉落）', () => {
+  it('placement routes through the unified gate (torches included)', () => {
+    // 全檔唯一呼叫點：tryPlaceBlock 的放行一律走 canPlaceBlockAt（含火把）
+    expect(countOf('canPlaceBlockAt(')).toBe(1);
+  });
+
+  it('the break branch pops unsupported torches after the block is removed', () => {
+    const playing = playingBranchBody();
+    const setAt = playing.indexOf('world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR)');
+    const popAt = playing.indexOf('popUnsupportedTorches(world, hit.x, hit.y, hit.z)');
+    expect(setAt).toBeGreaterThan(-1);
+    expect(popAt).toBeGreaterThan(setAt); // 先移除方塊，再檢查依附其上的火把
+    expect(countOf('popUnsupportedTorches(')).toBe(1); // 全檔唯一呼叫點
+  });
+
+  it('each popped torch becomes a drop through the shared spawn path', () => {
+    const playing = playingBranchBody();
+    // 被收回的火把走與「挖掉方塊」同一條掉落路徑（生存掉自身、創造不掉）
+    expect(playing).toContain('spawnBlockDrop(drops, currentMode, BLOCK.TORCH');
   });
 });
 

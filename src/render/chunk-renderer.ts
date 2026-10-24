@@ -165,13 +165,14 @@ function buildMeshGeometry(data: MeshData): THREE.BufferGeometry | null {
   return geometry;
 }
 
-/** A chunk's render trio: BOTH/ALL meshes always exist while the chunk is live;
+/** A chunk's render quartet: ALL meshes always exist while the chunk is live;
  *  an empty pass is represented by `visible = false` behind a blank geometry
  *  (nothing drawn, nothing in the way). */
 interface ChunkMeshes {
   opaque: THREE.Mesh;
   water: THREE.Mesh;
   foliage: THREE.Mesh;
+  torches: THREE.Mesh;
 }
 
 /** Point a pass's mesh at freshly built geometry; null means the pass is
@@ -194,6 +195,7 @@ export class ChunkRenderer {
   private material: THREE.MeshLambertMaterial;
   private waterMaterial: THREE.MeshLambertMaterial;
   private foliageMaterial: THREE.MeshLambertMaterial;
+  private torchMaterial: THREE.MeshLambertMaterial;
   /** Task 4: the SHARED texture array (getTextureArray) — chunks, water and
    *  particles all sample the same upload. Owned by the module memo, so this
    *  class never disposes it (dispose() frees only its own materials). */
@@ -245,6 +247,21 @@ export class ChunkRenderer {
     this.foliageMaterial.onBeforeCompile = (shader) => {
       patchTerrainLightShader(shader, this.textureArray, this.lightUniforms);
     };
+    // B6 Task 6：火把 pass（小型無碰撞模型，mesher 的 torches pass）。同一張
+    // DataArrayTexture、同一個 **patchTerrainLightShader**（地形版 patch——
+    // 火把必須隨天空比例變暗，掛 plain patch 會缺光屬性 → 全黑）→ 光屬性與
+    // 共享 lightUniforms 自動生效（與三個地形 pass 同步變暗，Review Focus #4）。
+    // alphaTest 0.1 裁掉火把貼圖的透明背景；FrontSide——盒子六面的纏繞由
+    // mesher 重用 FACES 表保證朝外。
+    this.torchMaterial = new THREE.MeshLambertMaterial({
+      alphaTest: 0.1,
+      vertexColors: true,
+      side: THREE.FrontSide,
+      fog: true,
+    });
+    this.torchMaterial.onBeforeCompile = (shader) => {
+      patchTerrainLightShader(shader, this.textureArray, this.lightUniforms);
+    };
   }
 
   /** 每幀更新天空比例（0..1）：只改 uniform → 不重網格。四個地形 pass 共用
@@ -259,10 +276,11 @@ export class ChunkRenderer {
     const opaqueGeometry = buildMeshGeometry(mesh.opaque);
     const waterGeometry = buildMeshGeometry(mesh.water);
     const foliageGeometry = buildMeshGeometry(mesh.foliage);
+    const torchGeometry = buildMeshGeometry(mesh.torches);
 
-    // 早退條件必須納入 foliage：只有植被、沒有方塊的 chunk 不能被整塊移除
-    // （否則花／草會整批看不見）。
-    if (!opaqueGeometry && !waterGeometry && !foliageGeometry) {
+    // 早退條件必須納入 foliage 與 torches：只有植被／火把、沒有方塊的 chunk
+    // 不能被整塊移除（否則花／草／火把會整批看不見）。
+    if (!opaqueGeometry && !waterGeometry && !foliageGeometry && !torchGeometry) {
       this.remove(cx, cz); // nothing visible at all → chunk leaves the scene
       return;
     }
@@ -273,6 +291,7 @@ export class ChunkRenderer {
         opaque: new THREE.Mesh(new THREE.BufferGeometry(), this.material),
         water: new THREE.Mesh(new THREE.BufferGeometry(), this.waterMaterial),
         foliage: new THREE.Mesh(new THREE.BufferGeometry(), this.foliageMaterial),
+        torches: new THREE.Mesh(new THREE.BufferGeometry(), this.torchMaterial),
       };
       // Phase 3 Task 5: terrain both casts and receives the sun shadow; the
       // translucent water pass only receives it — water casting an opaque
@@ -285,7 +304,11 @@ export class ChunkRenderer {
       // 的方塊陰影（原版的花草不會），看起來像地上有塊黑斑。
       pair.foliage.castShadow = false;
       pair.foliage.receiveShadow = true;
-      for (const m of [pair.opaque, pair.water, pair.foliage]) {
+      // B6 Task 6: 火把小盒同樣只接收陰影、不投影（2×10 像素的模型投影會是一
+      // 格大的黑方塊）。
+      pair.torches.castShadow = false;
+      pair.torches.receiveShadow = true;
+      for (const m of [pair.opaque, pair.water, pair.foliage, pair.torches]) {
         m.matrixAutoUpdate = false;
         m.updateMatrix(); // positions are world-space; the matrix never changes
       }
@@ -297,23 +320,25 @@ export class ChunkRenderer {
       // granularity; triangles WITHIN one water geometry draw in mesher index
       // order (the sort never sees them). Harmless either way: depthWrite
       // false means no water surface ever occludes another.
-      // children 順序固定：opaque(0)／water(1)／foliage(2)。
-      this.scene.add(pair.opaque, pair.water, pair.foliage);
+      // children 順序固定：opaque(0)／water(1)／foliage(2)／torches(3)。
+      this.scene.add(pair.opaque, pair.water, pair.foliage, pair.torches);
       this.chunks.set(key, pair);
     }
     applyGeometry(pair.opaque, opaqueGeometry);
     applyGeometry(pair.water, waterGeometry);
     applyGeometry(pair.foliage, foliageGeometry);
+    applyGeometry(pair.torches, torchGeometry);
   }
 
   remove(cx: number, cz: number): void {
     const key = chunkKey(cx, cz);
     const pair = this.chunks.get(key);
     if (!pair) return;
-    this.scene.remove(pair.opaque, pair.water, pair.foliage);
+    this.scene.remove(pair.opaque, pair.water, pair.foliage, pair.torches);
     pair.opaque.geometry.dispose();
     pair.water.geometry.dispose(); // per-chunk water geometry freed here
     pair.foliage.geometry.dispose(); // per-chunk foliage geometry freed here
+    pair.torches.geometry.dispose(); // per-chunk torch geometry freed here
     this.chunks.delete(key);
   }
 
@@ -323,10 +348,11 @@ export class ChunkRenderer {
 
   dispose(): void {
     for (const pair of this.chunks.values()) {
-      this.scene.remove(pair.opaque, pair.water, pair.foliage);
+      this.scene.remove(pair.opaque, pair.water, pair.foliage, pair.torches);
       pair.opaque.geometry.dispose();
       pair.water.geometry.dispose();
       pair.foliage.geometry.dispose();
+      pair.torches.geometry.dispose();
     }
     this.chunks.clear();
     // The shared texture array is deliberately NOT disposed here: other chunk
@@ -335,5 +361,6 @@ export class ChunkRenderer {
     this.material.dispose();
     this.waterMaterial.dispose();
     this.foliageMaterial.dispose();
+    this.torchMaterial.dispose();
   }
 }

@@ -4,6 +4,8 @@ import {
   canHarvest,
   DigProgress,
   canPlaceAt,
+  canPlaceBlockAt,
+  canPlaceTorch,
   placeTarget,
   isReplaceableForPlacement,
   resolvePlacementTarget,
@@ -788,5 +790,73 @@ describe('cross 植被的互動（B3 Task 5：瞬破／覆蓋放置）', () => {
     world.setBlock(5, 64, 5, BLOCK.DANDELION);
     // 玩家站在同一格 → 身體 AABB 與目標格重疊 → 仍然不能放
     expect(canPlaceAt(world, 5, 64, 5, { x: 5.5, y: 64, z: 5.5 })).toBe(false);
+  });
+});
+
+describe('canPlaceTorch (B6 Task 6: 火把只能放在完整方塊的頂或側)', () => {
+  function w(): World {
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    return world;
+  }
+
+  it('a torch needs a full block below or beside it', () => {
+    const world = w();
+    expect(canPlaceTorch(world, 5, 64, 5)).toBe(false); // 空中無支撐
+    world.setBlock(5, 63, 5, BLOCK.STONE); // 下方有石頭
+    expect(canPlaceTorch(world, 5, 64, 5)).toBe(true); // 頂
+    const side = w();
+    side.setBlock(6, 64, 5, BLOCK.STONE); // 側邊有石頭
+    expect(canPlaceTorch(side, 5, 64, 5)).toBe(true); // 側
+    const veg = w();
+    veg.setBlock(4, 64, 5, BLOCK.POPPY); // 側邊只有 cross 植被（不實心）
+    expect(canPlaceTorch(veg, 5, 64, 5)).toBe(false);
+    expect(canPlaceTorch(veg, 5, 256, 5)).toBe(false); // 超出世界高度
+  });
+
+  it('a torch can be placed on glass', () => {
+    // 原版：玻璃是實心方塊（可放火把），雖然 transparent: true
+    const world = w();
+    world.setBlock(5, 63, 5, BLOCK.GLASS);
+    expect(canPlaceTorch(world, 5, 64, 5)).toBe(true);
+  });
+
+  it('a torch needs an empty target cell', () => {
+    const world = w();
+    world.setBlock(5, 64, 5, BLOCK.STONE); // 目標格已是石頭
+    world.setBlock(5, 63, 5, BLOCK.STONE); // （有支撐，排除支撐因素的干擾）
+    expect(canPlaceTorch(world, 5, 64, 5)).toBe(false);
+    const water = w();
+    water.setBlock(5, 63, 5, BLOCK.STONE);
+    water.setBlock(5, 64, 5, BLOCK.WATER); // 水不是空氣 → 火把不入水
+    expect(canPlaceTorch(water, 5, 64, 5)).toBe(false);
+  });
+});
+
+describe('canPlaceBlockAt (B6 Task 6: 放置的統一閘門)', () => {
+  function w(): World {
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    return world;
+  }
+
+  it('a torch does not collide with the player', () => {
+    // 火把是 non-solid（原版：無碰撞盒）→ 放置分支對火把略過玩家 AABB 檢查，
+    // 否則火把永遠放不進玩家腳下（站在格子裡也放得進去）。
+    const world = w();
+    world.setBlock(5, 64, 5, BLOCK.STONE); // 支撐
+    expect(canPlaceBlockAt(world, 5, 65, 5, { x: 5.5, y: 65, z: 5.5 }, BLOCK.TORCH)).toBe(true);
+    // 同一個位置換成實心方塊 → 既有 canPlaceAt 的 AABB 檢查照樣擋下
+    expect(canPlaceBlockAt(world, 5, 65, 5, { x: 5.5, y: 65, z: 5.5 }, BLOCK.STONE)).toBe(false);
+  });
+
+  it('non-torch blocks keep the canPlaceAt rules (replaceable cells still allowed)', () => {
+    const world = w();
+    // 水格可被方塊取代（既有規則），且不受火把分支影響
+    world.setBlock(5, 70, 5, BLOCK.WATER);
+    expect(canPlaceBlockAt(world, 5, 70, 5, { x: 5.5, y: 65, z: 5.5 }, BLOCK.DIRT)).toBe(true);
+    // 實心格不可放
+    world.setBlock(6, 70, 5, BLOCK.STONE);
+    expect(canPlaceBlockAt(world, 6, 70, 5, { x: 5.5, y: 65, z: 5.5 }, BLOCK.DIRT)).toBe(false);
   });
 });
