@@ -186,6 +186,25 @@ describe('stepMob — zombie chase', () => {
     expect(m.pos.x).toBeLessThan(2); // never got past the wall column
     expect(Number.isFinite(m.pos.y)).toBe(true);
   });
+
+  it('the probe lead covers the body half-width (zombie cannot clip into a wall)', () => {
+    // **探測距離要蓋到身體前端**（B4 分診②，與 `passive-mobs.ts` 的
+    // `stepPassiveMob` 同款）：牆在 cell (2, *, 0)（牆面 x = 2）、殭屍中心距牆面
+    // 0.35。渲染出來的身體寬 0.9（`MOB_WIDTHS`：身體 0.5＋手臂 0.25×2、×0.9 縮放
+    // → 半寬 0.45 > 裸 `PROBE_LEAD` 0.3）。dt = 0.01 → 本步只前進 0.032：裸 0.3
+    // 的探測點（1.982）仍在牆外格子 → 只有「蓋到半寬」的 lead（0.482）會命中牆。
+    // **突變敏感**：把加寬改回 `PROBE_LEAD` → 殭屍前進插牆 → 本測試轉紅。
+    const isSolidAt = (x: number, y: number, z: number): boolean =>
+      y < 0 || (x === 2 && z === 0 && (y === 0 || y === 1));
+    const m = mob({ pos: { x: 1.65, y: 0, z: 0.5 } });
+    const player = { x: 20.5, y: 0, z: 0.5 }; // 遠 → chase，正對牆（+x）
+    const { mob: out, events } = stepMob(m, ctxOf(player, 0.01, isSolidAt));
+    expect(out.vel.x).toBe(0); // desX/desZ 歸零——探測命中
+    expect(out.vel.z).toBe(0);
+    expect(out.pos.x).toBe(1.65); // 原地擋住，沒有前進插牆
+    expect(out.pos.z).toBe(0.5);
+    expect(events).toHaveLength(0); // 18.85 格 > 近戰範圍 → 無事件
+  });
 });
 
 describe('stepMob — zombie attack', () => {
@@ -321,6 +340,22 @@ describe('stepMob — skeleton keep-distance', () => {
     expect(events).toHaveLength(0); // 射程外 → 不射
     expect(out.state).toBe('chase'); // 但仍在追（追擊範圍是 35）
     expect(out.target).toEqual(player);
+  });
+
+  it('the probe lead covers the body half-width (skeleton, same wall)', () => {
+    // 與殭屍同一個牆面幾何（B4 分診②的對照案例）：骷髏同為 0.9 寬（`MOB_WIDTHS`），
+    // 中心距牆面 0.35、dt = 0.01 → 追擊速度 3.5 本步前進 0.035：裸 `PROBE_LEAD`
+    // 0.3 探測不到牆、蓋到半寬的 lead（0.485）才會 → 擋在原地，不插牆。
+    const isSolidAt = (x: number, y: number, z: number): boolean =>
+      y < 0 || (x === 2 && z === 0 && (y === 0 || y === 1));
+    const m = mob({ kind: 'skeleton', ranged: true, pos: { x: 1.65, y: 0, z: 0.5 } });
+    const player = { x: 20.5, y: 0, z: 0.5 }; // distXZ 18.85 > KEEP_MAX 9 → chase
+    const { mob: out, events } = stepMob(m, ctxOf(player, 0.01, isSolidAt));
+    expect(out.state).toBe('chase');
+    expect(out.vel.x).toBe(0); // 探測命中 → 歸零
+    expect(out.vel.z).toBe(0);
+    expect(out.pos.x).toBe(1.65); // 原地擋住
+    expect(events).toHaveLength(0); // 射程（15）外 → 也不射
   });
 });
 

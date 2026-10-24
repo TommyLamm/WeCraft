@@ -230,6 +230,25 @@ describe('stepPassiveMob (漫遊／panic／水中漂浮)', () => {
     }
   });
 
+  it('a narrow body keeps the PROBE_LEAD floor (chicken stops short of the wall)', () => {
+    // **`max` 語意的下限側**（B6 Task 7b 補）：雞寬 0.4（半寬 0.2 < `PROBE_LEAD`
+    // 0.3）→ 探測距離 = `hSpeed·step + max(0.3, 0.2)`，**下限仍在**——比身體前端
+    // 多探一點，停下來不貼牆。中心距牆面 0.34、dt = 0.05（本步前進 0.095）：
+    // 有下限 → 探測點 0.66+0.395 = 1.055 命中牆 → 原地擋住；把下限拿掉（只探
+    // 半寬 0.2 → 0.955 探不到牆）→ 雞會繼續前進貼牆 → 本測試轉紅。（敵對側兩種
+    // kind 都是 0.9 寬 → `max` 的下限側只在被動側存在，見 `mobs.test.ts` 的
+    // half-width 測試。）
+    const isSolidAt = (x: number, y: number, _z: number): boolean => y < 0 || x >= 1;
+    const m = passive('chicken', {
+      pos: { x: 0.66, y: 0, z: 0 },
+      wanderDir: Math.PI / 2,
+      wanderTimer: 10,
+    });
+    const out = stepPassiveMob(m, ctxOf({ dt: 0.05, isSolidAt }));
+    expect(out.vel.x).toBe(0); // 探測命中 → 歸零
+    expect(out.pos.x).toBe(0.66); // 原地擋住（留 0.34，不貼牆面）
+  });
+
   it('a falling passive mob does not take fall damage', () => {
     // 本作的生物本來就沒有摔傷機制（fallDamage 只用於玩家）→ 落下來不會扣血
     let out = passive('cow', { pos: { x: 0, y: 20, z: 0 } });
@@ -567,6 +586,11 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
         const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ rng: seeded(seed) }));
         expect(out.length).toBeLessThanOrEqual(MAX_PASSIVE_MOBS);
         expect(out.length).toBeGreaterThanOrEqual(n); // 不會變少（也不會吃掉既有的）
+        // **既有群身分保留**（Task 7b ④ 強化，原本只有半邊恆真的 length 釘子）：
+        // `trySpawnPassiveGroup` 回傳 `[...mobs, ...created]`——既有元素是**同一個
+        // 物件參考**、順序不變（不是深拷貝、id 不重指派；達上限時更直接回同一個
+        // 陣列參考）→ 逐項 `toBe` 釘死，n = 0 時也不恆真。
+        for (let i = 0; i < n; i++) expect(out[i]).toBe(input[i]);
       }
     }
   });

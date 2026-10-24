@@ -130,10 +130,19 @@ export const DESPAWN_DISTANCE = 128;
 export const SUN_BURN_SEC = 8;
 /** 燃燒中每秒扣 1 點血。 */
 export const SUN_BURN_DPS = 1;
-/** Forward probe lead for the horizontal block test (≈ body half-width): the
- *  destination cell is checked this far ahead so the mob stops before its
- *  box visually clips into the wall. */
+/** Forward probe lead FLOOR for the horizontal block test (blocks): the
+ *  destination cell is checked this far ahead so the mob stops before its box
+ *  visually clips into the wall. The effective lead covers the body's front —
+ *  `hSpeed·step + max(PROBE_LEAD, width/2)`, the same formula as the passive
+ *  side (`stepPassiveMob`); see {@link MOB_WIDTHS}. */
 const PROBE_LEAD = 0.3;
+
+/** Per-kind body width (X/Z, blocks) — what the forward probe must clear.
+ *  Hostile mobs carry no width field (`PassiveMob` does), so `stepMob` reads it
+ *  here: the renderer draws the humanoid 1.0 wide (body 0.5 + arms 0.25×2, ×0.9
+ *  group scale) → 0.9 — half-width 0.45, the same number as the cow whose
+ *  clipping motivated the B4 passive-side fix. */
+const MOB_WIDTHS: Record<MobKind, number> = { zombie: 0.9, skeleton: 0.9 };
 
 export type MobKind = 'zombie' | 'skeleton';
 export type MobState = 'wander' | 'chase' | 'retreat';
@@ -390,7 +399,10 @@ export function stepMob(m: Mob, ctx: MobCtx): { mob: Mob; events: MobEvent[] } {
   let stepUp = false; // blocked at FOOT level → jumpable (a 1-block step-up)
   const hSpeed = Math.hypot(desX, desZ);
   if (hSpeed > 0) {
-    const lead = hSpeed * step + PROBE_LEAD;
+    // **探測距離要蓋到身體前端**（半寬 `width / 2`）：只探 `PROBE_LEAD`（0.3）時，
+    // 0.9 寬的身體前端比探測點遠 0.15 → 會先插進牆裡（B4 修了被動側、B6 收口
+    // 敵對側——與 `passive-mobs.ts` 的 `stepPassiveMob` 同一條公式）。
+    const lead = hSpeed * step + Math.max(PROBE_LEAD, MOB_WIDTHS[m.kind] / 2);
     const nx = Math.floor(pos.x + (desX / hSpeed) * lead);
     const nz = Math.floor(pos.z + (desZ / hSpeed) * lead);
     const feetBlocked = ctx.isSolidAt(nx, Math.floor(pos.y + 0.1), nz);
