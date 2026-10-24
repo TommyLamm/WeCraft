@@ -544,14 +544,17 @@ const PASSIVE_SPAWN_OFFSET = 2;
  * 被動生物生成的上下文（純邏輯；`main.ts` 注入世界的查詢）。
  *
  * 與敵對生物的 `mobs.ts` 的 `SpawnCtx` 同一個形狀（光照門檻 ＋ 注入的世界讀取
- * ＋ 可注入的 rng）→ B6 換成真的光照時只要換 `light` 的來源，其餘不用動。
+ * ＋ 可注入的 rng）→ B6 起 `lightAt` 注入 `lighting.spawnLightAt`（真的 per-block
+ * 光照），判準常數（亮度 ≥ 9）不用動。
  */
 export interface PassiveSpawnCtx {
   /**
-   * 生成點的光照：B4 用 `clockLight(t)` **近似**（天空光 15／0）→ 被動生物
-   * **只在白天生成**（spec §B4.2 明示這是簡化，B6 換成真的天空光／方塊光查詢）。
+   * 生成點的 per-block 光照查詢（`lighting.spawnLightAt`）：B4 用 `clockLight(t)`
+   * 近似（天空光 15／0）→ 被動生物**只在白天生成**；B6 改成**逐隻**在自己的位置
+   * 檢查（亮度 = max(客戶端天空光, 方塊光) ≥ 9；MC 的規則是逐隻）→ 夜間地表
+   * （客戶端天空光 15，時間無關）仍可生成（與原版一致），全黑才擋。
    */
-  light: SpawnLight;
+  lightAt: (x: number, y: number, z: number) => SpawnLight;
   /** 該格是不是實心方塊（注入，不 import `World`；水**不**算實心）。 */
   isSolidAt: (x: number, y: number, z: number) => boolean;
   /** 該格的方塊 id（注入）。 */
@@ -658,15 +661,16 @@ function unchanged(mobs: readonly PassiveMob[]): PassiveMob[] {
  * **同一個參考**（`mobs`）→ 呼叫端可以直接 `mobs = trySpawnPassiveGroup(...)`。
  *
  * 流程（任何一步不通就整輪不生成）：
- * 1. **光照門檻**：`canSpawnPassive(ctx.light)` → 亮度不足（夜間）就不生成。
- *    B4 用 `clockLight(t)` 近似＝「白天」（spec §B4.2 明示這是簡化，B6 換真光照）。
- * 2. **總量上限**：達 {@link MAX_PASSIVE_MOBS} 就不生成（回同一個參考）。
- * 3. **母點**：距玩家 28–48 格、角度均勻（`passiveMotherPoint`）。
- * 4. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
- * 5. **群組成**：2–4 隻、同一種類（四種等機率 → 見 `choosePassiveKind` 的簡化說明）。
- * 6. **成員取位**：母點附近 ±2 格 → 每一隻都重做地面／頭頂空間的檢查；取位
- *    失敗（地面不對／空間不足）就**跳過該隻** → 群可以少於 2 隻。
- * 7. **全場上限的夾制**：加入成員的**過程中**一旦當前總數達到
+ * 1. **總量上限**：達 {@link MAX_PASSIVE_MOBS} 就不生成（回同一個參考）。
+ * 2. **母點**：距玩家 28–48 格、角度均勻（`passiveMotherPoint`）。
+ * 3. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
+ * 4. **群組成**：2–4 隻、同一種類（四種等機率 → 見 `choosePassiveKind` 的簡化說明）。
+ * 5. **成員取位**：母點附近 ±2 格 → 每一隻都重做**光照／地面／頭頂空間**的檢查；
+ *    不通過就**跳過該隻** → 群可以少於 2 隻。
+ *    **光照門檻（B6）**：每隻在自己的位置查 per-block 光照
+ *    `canSpawnPassive(ctx.lightAt(...))`（MC 的規則是逐隻；B4 是群組前用單一
+ *    `clockLight` 值粗判＝只在白天生成）→ 位置在暗處的成員被略過。
+ * 6. **全場上限的夾制**：加入成員的**過程中**一旦當前總數達到
  *    {@link MAX_PASSIVE_MOBS} 就停止再加入（場上的總數**永不超過 12**；存檔也用
  *    同一個常數 → 存／讀之間不會有生物無聲消失）。
  *
@@ -679,22 +683,20 @@ export function trySpawnPassiveGroup(
   ctx: PassiveSpawnCtx,
 ): PassiveMob[] {
   const rng = ctx.rng ?? Math.random;
-  // 1) 光照門檻：亮度 ≥ 9（B4 的 `clockLight` 近似＝白天）
-  if (!canSpawnPassive(ctx.light)) return unchanged(mobs);
-  // 2) 總量上限（**全場上限**：達上限就不發起這一次嘗試 → 回同一個參考；
+  // 1) 總量上限（**全場上限**：達上限就不發起這一次嘗試 → 回同一個參考；
   //    「加入時也要夾制」見下面第 6 步的註解）
   if (mobs.length >= MAX_PASSIVE_MOBS) return unchanged(mobs);
-  // 3) 母點：距玩家 28–48 格
+  // 2) 母點：距玩家 28–48 格
   const mother = passiveMotherPoint(playerPos, rng);
-  // 4) 母點的地面（沒有可生長的地面 → 這一輪不生成）
+  // 3) 母點的地面（沒有可生長的地面 → 這一輪不生成）
   if (groundYAt(mother.x, mother.z, ctx.isSolidAt, ctx.blockIdAt) === null) return unchanged(mobs);
-  // 5) 群組成：2–4 隻、同一種類
+  // 4) 群組成：2–4 隻、同一種類
   const count =
     PASSIVE_SPAWN_MIN_GROUP +
     Math.floor(rng() * (PASSIVE_SPAWN_MAX_GROUP - PASSIVE_SPAWN_MIN_GROUP + 1));
   const kind = choosePassiveKind(rng);
   const def = PASSIVE_DEFS[kind];
-  // 6) 成員取位：母點附近 ±2 格 → 每一隻重做地面／頭頂空間的檢查
+  // 5) 成員取位：母點附近 ±2 格 → 每一隻重做光照／地面／頭頂空間的檢查
   const created: PassiveMob[] = [];
   for (let i = 0; i < count; i++) {
     // **全場上限（spec §B4.2「全場上限 12」）＝ 場上的總數永不超過 12** → 加入的
@@ -710,10 +712,14 @@ export function trySpawnPassiveGroup(
     const ground = groundYAt(x, z, ctx.isSolidAt, ctx.blockIdAt);
     if (ground === null) continue; // 這一隻的地面不對 → 跳過
     const feetY = ground + 1;
+    // **光照門檻（B6）：逐隻檢查**——在自己的位置查 per-block 光照（亮度 =
+    // max(客戶端天空光, 方塊光) ≥ 9）。B4 是群組前用 `clockLight` 單值粗判
+    // （＝只在白天生成）；B6 起夜間地表（客戶端天空光 15）仍可生成、全黑才擋。
+    if (!canSpawnPassive(ctx.lightAt(Math.floor(x), feetY, Math.floor(z)))) continue;
     if (!hasRoomAbove(x, feetY, z, def.height, ctx.isSolidAt)) continue; // 頭頂空間不足
     created.push(createPassiveMob(kind, { x, y: feetY, z }, rng));
   }
-  // 7) 沒有成員 → 回同一個參考
+  // 6) 沒有成員 → 回同一個參考
   if (created.length === 0) return unchanged(mobs);
   return [...mobs, ...created];
 }

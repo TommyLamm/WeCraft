@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from './blocks';
-import { clockLight } from './spawn-rules';
 import { xzDistance } from './mobs';
 import {
   PASSIVE_DEFS,
@@ -424,10 +423,11 @@ const grassEverywhere = (x: number, y: number, z: number): number =>
 /** 玩家站在地面上（腳底 y = 6）。 */
 const player = { x: 0, y: 6, z: 0 };
 
-/** 白天（0.25）＋ 平地草地的生成上下文。 */
+/** 正午地表（客戶端天空光 15 ≥ 9）＋ 平地草地的生成上下文。
+ *  B6 Task 7：光照是 per-block 查詢（`lighting.spawnLightAt`），不再是 `clockLight`。 */
 function spawnCtxOf(over: Partial<PassiveSpawnCtx> = {}): PassiveSpawnCtx {
   return {
-    light: clockLight(0.25), // 白天 → 亮度 15 ≥ 9 → 可以生成
+    lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }),
     isSolidAt: groundAt5,
     blockIdAt: grassEverywhere,
     ...over,
@@ -435,7 +435,7 @@ function spawnCtxOf(over: Partial<PassiveSpawnCtx> = {}): PassiveSpawnCtx {
 }
 
 describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () => {
-  it('passive mobs spawn in daylight on grass', () => {
+  it('passive mobs spawn on grass in daylight', () => {
     const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(1) }));
     expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
     expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
@@ -443,12 +443,29 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     for (const m of out) expect(m.pos.y).toBe(6);
   });
 
-  it('no passive mob spawns at night', () => {
-    // 夜晚 → `clockLight` 的天空光 = 0 → 亮度不足 → 不生成（回**同一個參考**）
+  it('no passive mob spawns in the dark', () => {
+    // 光照不足（天空遮蔽＋無方塊光）→ 不生成（回**同一個參考**）。
+    // B4 的前提是「夜晚＝clockLight 天空光 0」；B6 換成 per-block 光照——
+    // 夜間**地表**（客戶端天空光 15）仍然可以生成（與原版一致），全黑才擋。
     const input: PassiveMob[] = [];
-    const out = trySpawnPassiveGroup(input, player, spawnCtxOf({ light: clockLight(0.75), rng: seeded(1) }));
+    const out = trySpawnPassiveGroup(
+      input,
+      player,
+      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 0 }), rng: seeded(1) }),
+    );
     expect(out).toBe(input);
     expect(out.length).toBe(0);
+  });
+
+  it('a torch makes a dark spot spawnable', () => {
+    // 天空被遮蔽（客戶端天空光 0）但方塊光 9（火把）→ 亮度 9 ≥ 9 → 可以生成
+    const out = trySpawnPassiveGroup(
+      [],
+      player,
+      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 9 }), rng: seeded(1) }),
+    );
+    expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
+    expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
   });
 
   it('every spawned passive mob is at least 24 blocks from the player', () => {

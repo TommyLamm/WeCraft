@@ -15,7 +15,7 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 // B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
 // 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
-import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale } from './world/lighting';
+import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale, spawnLightAt } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -127,8 +127,8 @@ import {
   type Arrow,
   type MobEvent,
 } from './world/mobs';
-// B4 Task 5：生怪光照判準（判準集中在 spawn-rules，B6 只要換掉 `clockLight`）。
-import { clockLight, isDaylight } from './world/spawn-rules';
+// B4 Task 5：生怪光照判準（判準集中在 spawn-rules；B6 起餵真的 per-block 光照）。
+import { isDaylight } from './world/spawn-rules';
 // B4 Task 6：被動生物（雞／豬／羊／牛）的模型與 AI（純邏輯層，渲染是後續任務）。
 // **被動生物與敵對生物是兩套東西**：不會主動攻擊、不會 despawn、不進
 // `mobs-changed`（那是敵對生物的計數事件）。
@@ -818,7 +818,8 @@ let spawnAcc = 0; // seconds toward the next 5 s spawn tick
  * - 步進規則不同（漫遊／panic／水中漂浮，不追玩家）；
  * - **不 despawn**（原版被動生物不會自然消失）→ 沒有距離過濾；
  * - **不進 `mobs-changed`**（那是敵對生物的計數事件）。
- * 生成規則在 B4 Task 7（`world/passive-mobs.ts` 的 `trySpawnPassiveGroup`：白天、
+ * 生成規則在 B4 Task 7（`world/passive-mobs.ts` 的 `trySpawnPassiveGroup`：亮度 ≥ 9
+ * ——B6 起逐隻查 per-block 光照（`spawnLightAt`），夜間地表仍可生成——、
  * 離玩家 ≥ 24、成群 2-4、上限 12）。
  */
 let passiveMobs: PassiveMob[] = [];
@@ -1206,14 +1207,14 @@ function spawnPoint(): { x: number; y: number; z: number } {
 // ---- Task 8: mob spawning + event application ----
 
 /** Every 5 s while playing: delegate to the pure `trySpawnMob` (world/mobs.ts)
- *  — the light gate, cap, candidate XZ 24–128 out, surface Y and kind all live
- *  there; this composition-root wrapper only supplies the world callbacks and
- *  pushes the result. Count changes are announced by the caller.
- *  **光照判準**（`spawn-rules.ts`）：B4 的 `clockLight` 是「白天／夜晚」的近似
- *  （B6 換成真的天空光／方塊光查詢，規則本身不變）。 */
+ *  — the cap, candidate XZ 24–128 out, surface Y, per-block light gate and kind
+ *  all live there; this composition-root wrapper only supplies the world
+ *  callbacks and pushes the result. Count changes are announced by the caller.
+ *  **光照判準**（B6 Task 7）：B4 的 `clockLight` 時鐘近似已刪除 → 每次嘗試用
+ *  `spawnLightAt(world, x, y, z, clock.t)` 查候選格的**真的** per-block 光照。 */
 function spawnTick(): void {
   const mob = trySpawnMob(mobs, player.position, {
-    light: clockLight(clock.t),
+    lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
     isSolidAt: (x, y, z) => world.isSolid(x, y, z),
     blockIdAt: (x, y, z) => world.getBlock(x, y, z),
   });
@@ -2894,14 +2895,16 @@ gs.renderer.setAnimationLoop(() => {
         if (mobs.length !== before) bus.emit('mobs-changed', { count: mobs.length });
       }
 
-      // 被動生物生成排程（B4 Task 7）：每 10 s 嘗試一次 → 白天 + 離玩家 ≥ 24 +
+      // 被動生物生成排程（B4 Task 7）：每 10 s 嘗試一次 → 離玩家 ≥ 24 +
       // 成群 2-4 + 上限 12（規則都在 `world/passive-mobs.ts` 這個純邏輯層，
-      // 這裡只提供世界查詢與光照）。**沒有生成時回同一個參考** → 直接賦回去即可。
+      // 這裡只提供世界查詢與光照）。**光照（B6 Task 7）**：per-block 的
+      // `spawnLightAt`、逐隻檢查——夜間地表（客戶端天空光 15）仍可生成，
+      // 全黑（遮蔽＋無方塊光）才擋。**沒有生成時回同一個參考** → 直接賦回去即可。
       passiveSpawnAcc += dt;
       if (passiveSpawnAcc >= PASSIVE_SPAWN_INTERVAL_SEC) {
         passiveSpawnAcc = 0;
         passiveMobs = trySpawnPassiveGroup(passiveMobs, player.position, {
-          light: clockLight(clock.t),
+          lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
           isSolidAt: (x, y, z) => world.isSolid(x, y, z),
           blockIdAt: (x, y, z) => world.getBlock(x, y, z),
         });

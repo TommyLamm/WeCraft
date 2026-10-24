@@ -17,7 +17,8 @@ import { canSpawnHostile, type SpawnLight } from './spawn-rules';
  *  B4.4（敵對側對齊）：生成距離 24–128 格、上限 12 隻、超過 128 格消失；
  *  白天在**日光直射**下，不死系會著火（1 點血/秒）→ 白天在露天會被燒死，
  *  屋簷下（頭頂有實心方塊）或站在水裡則不會。生成判準（光照）集中在
- *  `world/spawn-rules.ts`（B6 的替換接縫）。 */
+ *  `world/spawn-rules.ts`；B6 起餵的是真的 per-block 光照
+ *  （`lighting.spawnLightAt`，不再是 B4 的時鐘近似）。 */
 
 // ---- Tuning constants (Task 8) ----
 
@@ -648,32 +649,37 @@ export function surfaceYAt(
   return null;
 }
 
-/** Spawn context: the light gate (main passes `clockLight(clock.t)` — 判準集中在
- *  `world/spawn-rules.ts`，B6 只要換掉 `clockLight` 就能用真的光照）、the injected
- *  world reads (same pattern as `MobCtx.isSolidAt`), and an optional rng so tests
- *  can pin the candidate spot and kind. */
+/** Spawn context: the light gate (`main` passes `(x, y, z) => spawnLightAt(world,
+ *  x, y, z, clock.t)` — B6 起判準吃真的 per-block 光照，規則集中在
+ *  `world/spawn-rules.ts`）、the injected world reads (same pattern as
+ *  `MobCtx.isSolidAt`), and an optional rng so tests can pin the candidate spot
+ *  and kind. */
 export interface SpawnCtx {
-  /** 生成點的光照（`spawn-rules.SpawnLight`）——敵對生物要求天空光 ≤ 7 且無方塊光。 */
-  light: SpawnLight;
+  /** 生成點的 per-block 光照查詢（`lighting.spawnLightAt`）——敵對生物要求
+   *  內部天空光 ≤ 7 且無方塊光（在候選格落地**之後**逐格檢查，見 `trySpawnMob`）。 */
+  lightAt: (x: number, y: number, z: number) => SpawnLight;
   isSolidAt: (x: number, y: number, z: number) => boolean;
   blockIdAt: (x: number, y: number, z: number) => number;
   rng?: () => number;
 }
 
-/** One spawn attempt — the whole spawnTick branch extracted for tests: light gate
- *  → cap → candidate XZ 24–128 blocks out (pure `findSpawnPos`) → surface Y →
- *  kind. Returns the new mob, or null when any gate fails (the caller just
- *  skips that cycle; count changes are announced by the caller). */
+/** One spawn attempt — the whole spawnTick branch extracted for tests: cap →
+ *  candidate XZ 24–128 blocks out (pure `findSpawnPos`) → surface Y → per-block
+ *  light gate at the spot (B6) → kind. Returns the new mob, or null when any
+ *  gate fails (the caller just skips that cycle; count changes are announced by
+ *  the caller). */
 export function trySpawnMob(
   mobs: readonly Mob[],
   playerPos: { x: number; y: number; z: number },
   ctx: SpawnCtx,
 ): Mob | null {
-  if (!canSpawnHostile(ctx.light)) return null;
   if (mobs.length >= MAX_MOBS) return null;
   const spot = findSpawnPos(playerPos, ctx.rng);
   const y = surfaceYAt(spot.x, spot.z, ctx.isSolidAt, ctx.blockIdAt);
   if (y === null) return null;
+  // 光照判準（B6）：在「真的要站的那一格」查 per-block 光照（內部天空光 ≤ 7
+  // 且無方塊光）——不再是「先看時鐘」的粗判，同一張地表白天擋、深夜放行。
+  if (!canSpawnHostile(ctx.lightAt(Math.floor(spot.x), y, Math.floor(spot.z)))) return null;
   return createMob(chooseSpawnKind(ctx.rng), { x: spot.x, y, z: spot.z });
 }
 

@@ -37,6 +37,8 @@ import { BLOCK, getBlockDef, isTransparent, isSolid } from './blocks';
 import type { World } from './world';
 import { torchAttachAt } from './mesher';
 import { dayFactor } from '../core/daynight';
+// 生怪判準的形狀（type-only import → 無運行期循環依賴；判準本體在 spawn-rules）
+import type { SpawnLight } from './spawn-rules';
 
 /** 最高光照等級（16 個等級 0..15）。 */
 export const MAX_LIGHT = 15;
@@ -360,6 +362,23 @@ export function skyLightScale(t: number): number {
 export function internalSkyLight(skyLevel: number, t: number): number {
   const base = 4 + (MAX_LIGHT - 4) * dayFactor(t); // 正午 15、午夜 4
   return Math.max(0, Math.round(base - (MAX_LIGHT - skyLevel)));
+}
+
+/** 某格的生怪光照（把區塊光照換算成生怪判準用的三個值；B6 Task 7）：
+ *  `sky`＝客戶端天空光（時間無關；MC: sky light is not reduced at night）、
+ *  `internalSky`＝內部天空光（隨日夜衰減——敵對判準吃這個值）、
+ *  `block`＝方塊光（火把）。`SpawnLight` 以 type-only 從 `./spawn-rules`
+ *  引入（判準常數住那邊、引擎住這邊 → 無運行期循環依賴）。 */
+export function spawnLightAt(
+  world: World,
+  x: number,
+  y: number,
+  z: number,
+  t: number,
+): SpawnLight {
+  const sky = skyLightAt(world, x, y, z);
+  const block = blockLightAt(world, x, y, z);
+  return { sky, internalSky: internalSkyLight(sky, t), block };
 }
 
 /** 天空光 BFS 主循環：pop 一格 → 6 鄰居擴張。衰減規則與方塊光唯一的差別：

@@ -1,43 +1,41 @@
 /** 生怪光照判準（純邏輯 — no Three/DOM; `world/` 只依賴 `core/` 的時鐘）。
  *
- *  **這個模組是 B6（真的光照系統）的替換接縫**：B4 只知道「此刻是白天還是夜晚」，
- *  所以用 `clockLight(t)` 近似；B6 只要把 `clockLight(t)` 換成「真的去世界查天空光／
- *  方塊光」，`canSpawnPassive`／`canSpawnHostile` 與整條生怪排程都不用動。
+ *  **B6 起：餵進來的是「真的 per-block 光照」**——由 `src/world/lighting.ts` 的
+ *  `spawnLightAt(world, x, y, z, t)` 從區塊光照換算出三個值（客戶端天空光／
+ *  內部天空光／方塊光）；B4 的 `clockLight(t)` 時鐘近似已刪除。判準常數本身
+ *  不變——這個模組本來就是 B6 的替換接縫（B4 計畫明示）。
  *
- *  **規則本身是原版值（wiki，2026-10-20 查證），不會因 B6 改變**：
- *  - 被動生物需要亮度 **9** 以上（原版 PassiveMob 的生成亮度門檻）；
- *  - 敵對生物需要天空光 **≤ 7** 且所在位置沒有方塊光。
- *
- *  B4 的近似（`clockLight`）：白天 `{ sky: 15, block: 0 }`、夜晚 `{ sky: 0, block: 0 }`
- *  → 被動生物只在白天生成、敵對只在夜晚生成（spec §B4.2 的簡化）。
+ *  **規則是原版值（wiki，2026-10-20 查證），不因 B6 改變**：
+ *  - 被動生物需要亮度 **9** 以上（亮度 = max(客戶端天空光, 方塊光)——客戶端
+ *    天空光不隨日夜衰減 → 夜間地表仍可生成，與原版一致）；
+ *  - 敵對生物需要**內部**天空光 ≤ 7 且所在位置沒有方塊光（wiki：敵對生成看的
+ *    是 internal sky light——正午地表 15 → 不生成；午夜地表 4 → 生成；洞穴恆 0
+ *    → 任何時刻都可以，這也是火把能守住夜間地表的原因）。
  */
 
 import { phaseOf } from '../core/daynight';
 
-/** 生成點的光照（0..15）：`sky` 是天空光、`block` 是方塊光。 */
+/** 生成點的光照（0..15）：`sky` 是客戶端天空光（時間無關；MC: sky light is not
+ *  reduced at night）、`internalSky` 是內部天空光（隨日夜衰減；MC: internal sky
+ *  light）、`block` 是方塊光。由 `lighting.spawnLightAt` 提供。 */
 export interface SpawnLight {
   sky: number;
+  internalSky: number;
   block: number;
 }
 
 /** 原版：被動生物需要亮度 9 以上才能生成（wiki，2026-10-20 查證）。 */
 export const PASSIVE_MIN_LIGHT = 9;
-/** 原版：敵對生物需要天空光 ≤ 7（wiki，2026-10-20 查證）。 */
+/** 原版：敵對生物需要內部天空光 ≤ 7（wiki，2026-10-20 查證）。 */
 export const HOSTILE_MAX_SKY_LIGHT = 7;
-
-/** 由時鐘推出的生成點光照（**B4 的近似**；B6 換成真的光照查詢）。
- *  白天給滿天空光、夜晚給 0 —— 兩種生物因此分別只在白天／夜晚生成。 */
-export function clockLight(t: number): SpawnLight {
-  const day = phaseOf(t) === 'day';
-  return { sky: day ? 15 : 0, block: 0 };
-}
 
 /** 此刻是白天嗎（`phaseOf(t) === 'day'`）—— 白天燃燒的開關。 */
 export function isDaylight(t: number): boolean {
   return phaseOf(t) === 'day';
 }
 
-/** 兩種光取較亮者（被動生物的亮度門檻看的是「實際亮度」）。 */
+/** 兩種光取較亮者（被動生物的亮度門檻看的是「實際亮度」＝客戶端天空光與
+ *  方塊光；**不含**內部天空光——被動與敵對是原版的兩套判準）。 */
 export function maxLight(light: SpawnLight): number {
   return Math.max(light.sky, light.block);
 }
@@ -47,7 +45,7 @@ export function canSpawnPassive(light: SpawnLight): boolean {
   return maxLight(light) >= PASSIVE_MIN_LIGHT;
 }
 
-/** 敵對生物能否在此生成：天空光 ≤ {@link HOSTILE_MAX_SKY_LIGHT} 且沒有方塊光。 */
+/** 敵對生物能否在此生成：內部天空光 ≤ {@link HOSTILE_MAX_SKY_LIGHT} 且沒有方塊光。 */
 export function canSpawnHostile(light: SpawnLight): boolean {
-  return light.sky <= HOSTILE_MAX_SKY_LIGHT && light.block === 0;
+  return light.internalSky <= HOSTILE_MAX_SKY_LIGHT && light.block === 0;
 }

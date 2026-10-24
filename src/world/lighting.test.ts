@@ -17,6 +17,7 @@ import {
   setLight,
   skyLightAt,
   skyLightScale,
+  spawnLightAt,
 } from './lighting';
 
 // ── 測試輔助（測試檔內自帶，不依賴 main）────────────────────────────────────
@@ -290,6 +291,35 @@ describe('sky light engine (B6 Task 2)', () => {
     expect(internalSkyLight(14, 0.25)).toBe(14);
     expect(internalSkyLight(0, 0.25)).toBe(0); // 洞穴：15 − 15 → 0
     expect(internalSkyLight(0, 0.75)).toBe(0); // 不得為負
+  });
+
+  it('spawn light reports the real per block values', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15); // 地板
+    w.setBlock(5, 70, 5, BLOCK.STONE); // 屋簷
+    w.setBlock(10, 64, 10, TORCH); // 地板上的火把（支撐＝y 63 的石頭）
+    computeChunkLight(w, 0, 0);
+    // 開闊處＋正午：生怪判準拿到的是「真的 per-block 光照」三件組
+    const noon = spawnLightAt(w, 4, 69, 4, 0.25);
+    expect(noon.sky).toBe(15);
+    expect(noon.internalSky).toBe(15);
+    expect(noon.block).toBe(0); // 離火把遠 → 無方塊光
+    // 火把旁：taxi-cab −1 → 方塊光 13（敵對判準的 block !== 0 就靠這個擋）
+    expect(spawnLightAt(w, 9, 64, 10, 0.25).block).toBe(13);
+    // 屋簷下：半遮蔽（客戶端天空光 14）→ 正午內部天空光 14
+    const eave = spawnLightAt(w, 5, 69, 5, 0.25);
+    expect(eave.sky).toBe(14);
+    expect(eave.internalSky).toBe(14);
+  });
+
+  it('internal sky light drops at night but the client sky light does not', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15);
+    computeChunkLight(w, 0, 0);
+    const night = spawnLightAt(w, 4, 69, 4, 0.75); // 午夜、開闊處
+    expect(night.sky).toBe(15); // 客戶端天空光時間無關（MC: sky light is not reduced at night）
+    expect(night.internalSky).toBe(4); // 內部天空光衰減（原版午夜 4）→ 敵對判準吃這個值
+    expect(night.block).toBe(0);
   });
 
   it('the rendered sky scale is 1 at noon and dimmer at night', () => {

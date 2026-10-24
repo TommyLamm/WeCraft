@@ -597,9 +597,13 @@ describe('main.ts 接線（B4 Task 5：白天燃燒＋生怪光照閘門）', ()
     expect(playing).toContain('stepSunBurn(m, sunCtx)');
   });
 
-  it('the spawn tick gates on the light rules (the old night flag is gone)', () => {
+  it('the spawn tick gates on the per-block light rules (the old clock light is gone)', () => {
     const body = functionBody('spawnTick');
-    expect(body).toContain('light: clockLight(clock.t)');
+    // B6 Task 7：候選格落地後查**真的 per-block 光照**（`lighting.spawnLightAt`）；
+    // B4 的 `clockLight` 時鐘近似已刪除。
+    expect(body).toContain('lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t)');
+    expect(body).not.toContain('clockLight');
+    expect(countOf('clockLight')).toBe(0);
     expect(body).not.toContain('isNight');
     expect(countOf('isNight:')).toBe(0);
   });
