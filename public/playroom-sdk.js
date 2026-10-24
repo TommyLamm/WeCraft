@@ -3,7 +3,7 @@
 const SDK_VERSION = '1.1.0';
 const PROTOCOL_VERSION = 1;
 const MANIFEST_SCHEMA_VERSION = 2;
-const GAME_TOOLS_VERSION = '1.1.0';
+const GAME_TOOLS_VERSION = '1.2.0';
 const SDK_METHODS = ['startRun', 'finishRun', 'loadProgress', 'saveProgress'];
 const SDK_CAPABILITIES = ['scoring', 'progress', 'diagnostics', 'saveFormats', 'machineErrors'];
 function object(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
