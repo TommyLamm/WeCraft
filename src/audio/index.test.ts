@@ -159,3 +159,54 @@ describe('createGameAudio', () => {
     audio.dispose();
   });
 });
+
+describe('createGameAudio play records (B4 triage ⑧: played() ring, capacity 64)', () => {
+  it('records every play call in order (kind + group) even before the engine starts — inert, no AudioContext', () => {
+    const { fake, audio } = setup();
+
+    // Never started: recording must not touch the lazy engine (B4 ⑧'s whole
+    // point — jsdom tests can ask "what was just played" with no audio stack).
+    audio.play('dig', 'stone');
+    audio.play('place', 'grass');
+
+    const played = audio.played();
+    expect(played).toHaveLength(2);
+    expect(played[0]).toEqual({ kind: 'dig', group: 'stone' });
+    expect(played[1]).toEqual({ kind: 'place', group: 'grass' });
+    expect(fake.created).toHaveLength(0); // not a single node was created
+    audio.dispose(); // never started → nothing to close (unchanged laziness)
+    expect(fake.closeCalls).toBe(0);
+  });
+
+  it("records a private copy of pos when present and omits the field entirely when it isn't", () => {
+    const { audio } = setup();
+
+    const pos = { x: 1, y: 2, z: 3 };
+    audio.play('step', 'grass', { pos });
+    pos.x = 99; // the caller mutating its pos afterwards must not rewrite history
+    pos.y = 99;
+    pos.z = 99;
+    const [withPos] = audio.played();
+    expect(withPos.pos).toEqual({ x: 1, y: 2, z: 3 });
+
+    audio.play('dig', 'stone'); // no pos → the field does not exist at all
+    const [, noPos] = audio.played();
+    expect('pos' in noPos).toBe(false);
+    expect(noPos.pos).toBeUndefined();
+  });
+
+  it('keeps only the newest 64 records — 70 plays evict the 6 oldest', () => {
+    const { audio } = setup();
+
+    for (let i = 0; i < 70; i++) {
+      audio.play('step', 'stone', { pos: { x: i, y: 0, z: 0 } });
+    }
+
+    const played = audio.played();
+    expect(played).toHaveLength(64); // ring cap, not 70
+    // The 6 oldest (x = 0..5) were shifted out → the first survivor is #7 (x = 6).
+    expect(played[0].pos).toEqual({ x: 6, y: 0, z: 0 });
+    expect(played[63].pos).toEqual({ x: 69, y: 0, z: 0 });
+    expect(played[63].kind).toBe('step');
+  });
+});

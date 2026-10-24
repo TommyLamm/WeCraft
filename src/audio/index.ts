@@ -23,12 +23,24 @@ export interface PlayOptions {
   volume?: number;
 }
 
+/** 一次播放的紀錄（inert ring buffer，容量 64；生產環境零行為變化）。 */
+export interface PlayRecord {
+  kind: SoundKind;
+  group: MaterialGroup;
+  /** 播放時的 opts 淺拷貝（pos 有則記，無則略）。 */
+  pos?: { x: number; y: number; z: number };
+}
+
 export interface GameAudio {
   /** Arm the audio engine from a user gesture (idempotent). */
   ensureStarted(): void;
   setVolume(v: number): void;
   handleVisibility(hidden: boolean): void;
   play(kind: SoundKind, group: MaterialGroup, opts?: PlayOptions): void;
+  /** 最近播放的紀錄（facade 層的 play-call 紀錄，與 `audio/testing.ts` 的節點
+   *  紀錄是兩層）；上限 64、新的擠掉最舊的。唯讀視圖——測試用來問「剛剛播了
+   *  什麼」。 */
+  played(): readonly PlayRecord[];
   startAmbience(): void;
   stopAmbience(): void;
   setPhase(phase: 'day' | 'night'): void;
@@ -51,6 +63,9 @@ const AMBIENCE_SEC: Record<Phase, [number, number]> = {
  *  Only 'break' is gated — dig/place/step keep every call. */
 export const BREAK_SOUND_MIN_INTERVAL_MS = 80;
 
+/** `played()` ring 上限——超過就擠掉最舊的（B4 分診⑧）。 */
+const PLAY_RECORD_LIMIT = 64;
+
 export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   const engine = createAudioEngine(deps);
 
@@ -62,6 +77,8 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   /** Last played 'break' timestamp (deps.now / performance.now); reset on dispose. */
   let lastBreakAt = Number.NEGATIVE_INFINITY;
   const now = deps.now ?? (() => performance.now());
+  /** 播放紀錄（inert ring buffer）——只在 `play()` 開頭多 push 一筆，不碰 engine。 */
+  const played: PlayRecord[] = [];
 
   function noiseBuffer(ctx: BaseAudioContext): AudioBuffer {
     if (!noise) noise = createNoiseBuffer(ctx);
@@ -91,6 +108,10 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   }
 
   function play(kind: SoundKind, group: MaterialGroup, opts: PlayOptions = {}): void {
+    // B4 分診⑧：先錄後播（inert——context 還沒建也照錄，不改變惰性建構時機）。
+    // pos 記**淺拷貝**：呼叫端事後改自己的 pos 物件不影響紀錄。
+    played.push({ kind, group, ...(opts.pos ? { pos: { ...opts.pos } } : {}) });
+    if (played.length > PLAY_RECORD_LIMIT) played.shift();
     const ctx = engine.context;
     const dest = engine.master;
     if (!ctx || !dest) return;
@@ -155,6 +176,7 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
       else engine.resume();
     },
     play,
+    played: () => played,
     startAmbience,
     stopAmbience,
     setPhase,

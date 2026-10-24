@@ -826,3 +826,20 @@ describe('main.ts 接線（B6 Task 4：每幀更新天空比例 uniform）', () 
     expect(countOf('skyLightScale(')).toBe(1);
   });
 });
+
+// ---- B4 分診⑧（B6 T8b）：音訊播放呼叫點釘子 -------------------------------
+// B4 final review ⑧：進食音效借用放置 thud（`main.ts` 進食路徑裡唯一的
+// `audio.play('place', 'grass', …)`）——當時沒有 facade 層的播放紀錄可斷言。
+// 這批把「播放呼叫點」釘死：專屬進食音色是 B4 Task 11 的裁決延後項（未排程），
+// 未來真的換音色時這條會紅，屆時同步改。
+describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
+  it('the eating path still borrows the place thud (grass) until a dedicated eat sound lands', () => {
+    expect(countOf("audio.play('place', 'grass'")).toBe(1);
+  });
+
+  it('all five play call sites stay wired (place / step / break / dig / eat-thud)', () => {
+    // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud 共 5 處）——
+    // 防止未來重構時**靜默刪掉**任何一條音效路徑。
+    expect(countOf('audio.play(')).toBe(5);
+  });
+});
