@@ -11,10 +11,19 @@
 //   ＝熱鍵列、其餘 27 格補 null），下一次檢查點即以 format 2 覆寫（升級路徑）。
 // - **回退限制**：0.8.0 寫出的 format 2 資料，0.7.0（只宣告 [1]）讀不到 →
 //   平台會擋不相容回退（`SAVE_FORMAT_INCOMPATIBLE`）。此點寫進發布說明。
+// B7 Task 3：**一次升到 format 3**——堆疊多了 `dur`（工具耐久）＝ `inventory`
+// （與 stash 兩側）語義再次改變，所以又一次格式升版：
+// - `readableFormats` 累積 [1, 2, 3]（只累積、不縮）；讀入（`acceptCloudData`）
+//   與寫出前（`buildCloudData`）都是**先** {@link migrateInventorySlots}
+//   （補 null／截斷到 36 格）**再**逐格 `dur` 正規化——耐久物品帶明確 `dur`
+//   （缺漏／非法 → 上限），非耐久物品不帶 `dur`。
+// - **回退限制**：0.10.0 寫出的 format 3 資料，0.9.0（只宣告 [1, 2]）讀不到 →
+//   平台會擋不相容回退（`SAVE_FORMAT_INCOMPATIBLE`）。此點寫進發布說明。
 // - `game.json` 的 `cloudSave` 同步宣告（測試釘死兩邊一致）。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { INVENTORY_SLOTS, type ItemStack } from './items';
+import { maxDurability, normalizeDurability } from './durability';
 import { sanitizeAdvancements, type AdvancementState } from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
@@ -27,14 +36,16 @@ import {
 import type { PassiveMob } from '../world/passive-mobs';
 
 /** Payload schema version. Must match game.json `writeFormat` (Task 5).
- *  B5 Task 9：36 格背包改變 `inventory` 語義 → 由 1 升到 **2**。 */
-export const CLOUD_FORMAT_VERSION = 2 as const;
+ *  B5 Task 9：36 格背包改變 `inventory` 語義 → 由 1 升到 **2**。
+ *  B7 Task 3：堆疊帶 `dur`（工具耐久）→ 由 2 升到 **3**。 */
+export const CLOUD_FORMAT_VERSION = 3 as const;
 
 /** 本版本能讀的格式（**只累積、不縮**）。format 1 = 9 格背包（≤0.7.0）；
- *  format 2 = 36 格背包（B5 起）。main.ts 的三處讀取檢查用
- *  {@link isReadableCloudFormat}（不再與單一版本號比較）→ 讀到 format 1 照常
- *  套用（接受路徑完成 9→36 遷移），下一次檢查點即以 format 2 覆寫。 */
-export const CLOUD_READABLE_FORMATS: ReadonlyArray<number> = [1, 2] as const;
+ *  format 2 = 36 格背包（B5 起）；format 3 = 堆疊帶 `dur`（B7 起）。main.ts
+ *  的三處讀取檢查用 {@link isReadableCloudFormat}（不再與單一版本號比較）→
+ *  讀到 format 1／2 照常套用（接受路徑完成 9→36 遷移與 `dur` materialize），
+ *  下一次檢查點即以 format 3 覆寫。 */
+export const CLOUD_READABLE_FORMATS: ReadonlyArray<number> = [1, 2, 3] as const;
 
 /** 是否為本版可讀的雲端格式（main.ts 三處讀取檢查的單一真值）。 */
 export function isReadableCloudFormat(v: number): boolean {
@@ -60,6 +71,17 @@ export function migrateInventorySlots(
   return out;
 }
 
+/** 雲端堆疊的 `dur` 正規化（format 3 的核心）：耐久物品 → **明確值**（缺漏／
+ *  非法 → 上限）；其餘（含未知 item id——沒有上限可算）→ **沒有 `dur` 欄位**。
+ *  一律回傳新物件；呼叫端負責先過 {@link migrateInventorySlots}（先遷移槽位數、
+ *  再正規化 `dur`——順序不可顛倒）。 */
+function normalizeCloudStack(s: ItemStack): ItemStack {
+  const max = maxDurability(s.item);
+  if (max <= 0) return { item: s.item, count: s.count };
+  const dur = normalizeDurability(s.item, s.dur);
+  return { item: s.item, count: s.count, dur: dur ?? max };
+}
+
 /** Upload budget: 64 KiB of UTF-8 JSON. */
 export const CLOUD_MAX_BYTES = 65536 as const;
 
@@ -81,7 +103,9 @@ export interface CloudData {
   vitals: Vitals | null;
   clockT: number;
   /** 背包槽位（B5 起 format 2：**36 格**——前 9 格熱鍵列＋27 格主背包）。
-   *  format 1 的 9 格 payload 讀入時由 `acceptCloudData` 遷移成 36 格。 */
+   *  format 1 的 9 格 payload 讀入時由 `acceptCloudData` 遷移成 36 格。
+   *  B7 起 format 3：每格可帶 `dur`，且讀寫兩端都會正規化成明確值（耐久物品）
+   *  或不帶（非耐久物品）。 */
   inventory: (ItemStack | null)[];
   advancements: AdvancementState;
   settings: CloudSettings;
@@ -145,9 +169,13 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
     yaw,
     vitals: src.vitals === null ? null : { ...src.vitals },
     clockT: src.clockT,
-    // B5 Task 9：加上保險——活陣列已是 36 格，`migrateInventorySlots` 負責
-    // 逐格深拷貝＋寬度保證（不足補 null／超過截斷）。
-    inventory: migrateInventorySlots(src.inventory),
+    // B5 Task 9 的寬度保證＋B7 Task 3 的 `dur` 正規化：`migrateInventorySlots`
+    // 先逐格深拷貝並補 null／截斷到 36 格，再逐格套 `normalizeCloudStack`
+    // （耐久物品帶明確 `dur`、非耐久物品不帶）→ 寫出的 payload 一定是
+    // format 3 的形狀。順序不可顛倒。
+    inventory: migrateInventorySlots(src.inventory).map((s) =>
+      s === null ? null : normalizeCloudStack(s),
+    ),
     advancements: { done: { ...src.advancements.done }, nightSeen: src.advancements.nightSeen },
     settings: {
       renderDistance: src.settings.renderDistance,
@@ -158,9 +186,15 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
       shadows: src.settings.shadows,
       clouds: src.settings.clouds,
     },
+    // B7 Task 3：stash 兩側同理——先 `migrateInventorySlots`（寬度保證＋深拷貝）
+    // 再逐格 `dur` 正規化；`survivalVitals` 照舊原樣深拷貝。
     stash: {
-      survival: src.stash.survival.map((s) => (s === null ? null : { ...s })),
-      creative: src.stash.creative.map((s) => (s === null ? null : { ...s })),
+      survival: migrateInventorySlots(src.stash.survival).map((s) =>
+        s === null ? null : normalizeCloudStack(s),
+      ),
+      creative: migrateInventorySlots(src.stash.creative).map((s) =>
+        s === null ? null : normalizeCloudStack(s),
+      ),
       survivalVitals: { ...src.stash.survivalVitals },
     },
     worldgenVersion: WORLDGEN_VERSION,
@@ -234,6 +268,9 @@ export function validateCloudData(x: unknown): x is CloudData {
  *  normalized; absent in old format-1 payloads — then derived from the mode,
  *  inventory and vitals they DID record). Illegal inventory item ids are KEPT
  *  as strings — the main-side inventory model discards them.
+ *  B7 Task 3：inventory 先 `migrateInventorySlots`（補 null／截斷到 36 格）
+ *  再逐格 `dur` 正規化（耐久物品帶明確 `dur`，缺漏／非法 → 上限；非耐久物品
+ *  不帶 `dur`）——那就是 format 3 的接受形狀。
  *  B3 Task 7：附加欄位 `worldgenVersion` **原樣帶回、絕不在這裡補值**——payload
  *  沒有這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）。帶著髒值的情況
  *  `validateCloudData` 已經整筆拒收了。
@@ -250,8 +287,12 @@ export function acceptCloudData(x: unknown): CloudData | null {
     vitals: x.vitals === null ? null : normalizeVitals(x.vitals),
     clockT: x.clockT,
     // B5 Task 9：format 1 的 9 格（或更短）payload 在這裡完成 9→36 遷移；
-    // format 2 的 36 格原樣通過（仍逐格拷貝）。
-    inventory: migrateInventorySlots(x.inventory),
+    // format 2 的 36 格原樣通過（仍逐格拷貝）。B7 Task 3：遷移**之後**再逐格
+    // `dur` 正規化——舊工具（沒有 `dur`）載入即滿耐久、壞掉的工具保留剩餘
+    // 耐久；未知 id 仍保留為字串但 `dur` 一律丟掉。順序不可顛倒。
+    inventory: migrateInventorySlots(x.inventory).map((s) =>
+      s === null ? null : normalizeCloudStack(s),
+    ),
     advancements: sanitizeAdvancements(x.advancements),
     stash: normalizeModeStash(x.stash, {
       mode: clamped.mode, // the clamped mode decides which side the legacy fields feed

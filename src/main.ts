@@ -1972,9 +1972,10 @@ async function sendPendingCloud(): Promise<void> {
 async function resolveCloudConflict(): Promise<void> {
   try {
     const fresh = await cloud.load();
-    // B5 Task 9：格式檢查改「可讀格式集合」——format 1 的舊資料照常套用
-    // （`acceptCloudData` 已完成 9→36 遷移；熱鍵列保留舊物品、其餘 27 格留空），
-    // 下一次檢查點就會以 format 2 覆寫（升級路徑）。只有**集合外**的格式才鎖。
+    // B5 Task 9：格式檢查改「可讀格式集合」——format 1／2 的舊資料照常套用
+    // （`acceptCloudData` 已完成 9→36 遷移與 `dur` materialize；熱鍵列保留舊
+    // 物品、其餘 27 格留空），下一次檢查點就會以 format 3 覆寫（升級路徑）。
+    // 只有**集合外**的格式才鎖。
     if (fresh && !isReadableCloudFormat(fresh.formatVersion)) {
       cloudLocked = true;
       cloudFailureKind = 'FORMAT';

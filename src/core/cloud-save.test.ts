@@ -15,6 +15,7 @@ import {
 } from './cloud-save';
 import { createVitals } from '../player/survival';
 import { starterSlots, INVENTORY_SLOTS, type ItemStack } from './items';
+import { emptyAdvancements } from './advancements';
 import { createModeStash, type ModeStash } from './mode-stash';
 import type { Settings } from './settings';
 import { WORLDGEN_VERSION } from '../world/worldgen';
@@ -155,12 +156,15 @@ describe('cloud-save', () => {
     expect(built.stash?.survivalVitals).not.toBe(stash.survivalVitals);
   });
 
-  it('exposes format version 2, reads formats 1 and 2, and a 64 KiB cap', () => {
-    expect(CLOUD_FORMAT_VERSION).toBe(2);
-    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2]);
+  it('exposes format version 3, reads formats 1, 2 and 3, and a 64 KiB cap', () => {
+    // B7 Task 3：堆疊帶 `dur` 改變了 `inventory`／stash 的語義 → 格式升到 3，
+    // `readableFormats` 只累積不縮（1／2 的舊雲端照讀）。
+    expect(CLOUD_FORMAT_VERSION).toBe(3);
+    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2, 3]);
     expect(isReadableCloudFormat(1)).toBe(true);
     expect(isReadableCloudFormat(2)).toBe(true);
-    expect(isReadableCloudFormat(3)).toBe(false);
+    expect(isReadableCloudFormat(3)).toBe(true);
+    expect(isReadableCloudFormat(4)).toBe(false);
     expect(isReadableCloudFormat(0)).toBe(false);
     expect(CLOUD_MAX_BYTES).toBe(65536);
   });
@@ -208,6 +212,72 @@ describe('cloud-save', () => {
       passiveMobs: [],
     });
     expect(built.inventory).toHaveLength(36);
+  });
+
+  /**
+   * B7 Task 3（2026-10-20 稽核修正）：format 3 的 `dur` 正規化**不得**取代 B5 的
+   * 槽位遷移——讀寫兩端都必須「先補 null／截斷到 36 格、再正規化每一格」。
+   * 這一條把 B5 的寬度行為釘在 `acceptCloudData` 上（單元層的
+   * `migrateInventorySlots` 之外再擋一次「純 `.map()` 取代遷移」的回歸）。
+   */
+  it('acceptCloudData still migrates a format 1 inventory into the 36-slot layout', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'stone', count: 32 }, { item: 'dirt', count: 2 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory).toHaveLength(36); // 補 null 到 36 格
+    expect(accepted.inventory[0]).toEqual({ item: 'stone', count: 32 });
+    expect(accepted.inventory[2]).toBeNull();
+  });
+
+  it('acceptCloudData truncates an over-long inventory to 36 slots', () => {
+    const legacy = { ...rawValid(), inventory: new Array(40).fill({ item: 'stone', count: 1 }) };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory).toHaveLength(36);
+  });
+
+  /**
+   * B7 Task 3：雲端 format 3 的堆疊正規化——耐久物品帶**明確** `dur`（缺漏／非法
+   * → 上限）；非耐久物品不帶 `dur` 欄位；未知 item id 仍保留為字串（沿用既有
+   * 語意，由主線的 inventory model 丟棄），但沒有上限可算 → `dur` 一律丟掉。
+   */
+  it('acceptCloudData materializes the max durability for an old tool without one', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'wooden_pickaxe', count: 1 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
+  });
+
+  it('acceptCloudData keeps a damaged tool durability', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'wooden_pickaxe', count: 1, dur: 20 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 20 });
+  });
+
+  it('acceptCloudData drops the durability of a non-tool item', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'stone', count: 1, dur: 5 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'stone', count: 1 });
+  });
+
+  it('acceptCloudData drops the durability of an unknown item id', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'mystery_tool', count: 1, dur: 5 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'mystery_tool', count: 1 });
+  });
+
+  it('buildCloudData carries the durability of the inventory stacks', () => {
+    const built = buildCloudData({
+      seed: 42,
+      pos: [0, 0, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [{ item: 'iron_axe', count: 1, dur: 88 }],
+      advancements: emptyAdvancements(),
+      settings: validSettings(),
+      stash: createModeStash(),
+      // B4 Task 10：`passiveMobs` 是**必填**欄位（沒有生物也要明寫空陣列）。
+      passiveMobs: [],
+    });
+    expect(built.inventory[0]).toEqual({ item: 'iron_axe', count: 1, dur: 88 });
   });
 
   it('the manifest declares the same cloud format as the code', () => {
