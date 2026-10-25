@@ -142,4 +142,28 @@ describe('synthParams', () => {
     expect(synthParams('wood', 'tool_break')).toEqual(TOOL_BREAK_PARAMS);
     expect(TOOL_BREAK_PARAMS.durationSec).toBeGreaterThan(0.2);
   });
+
+  // 最終修正波：固定音色的**字面值**釘死——常數改值時這裡必須轉紅，
+  // 屆時同步更新（不經 `synthParams` 間接比對）。
+  it('TOOL_BREAK_PARAMS pins the literal profile (lowpass 500, q 0.7, 0.25 s, gain 0.8)', () => {
+    expect(TOOL_BREAK_PARAMS).toEqual({
+      filter: 'lowpass',
+      freq: 500,
+      q: 0.7,
+      durationSec: 0.25,
+      gain: 0.8,
+    });
+  });
+
+  it('synthParams returns TOOL_BREAK_PARAMS for every material group (group is ignored)', () => {
+    // group 獨立性：窮舉整個 MaterialGroup（與上面的 stone／wood 案例互補）。
+    const groups: readonly MaterialGroup[] = [
+      'dirt', 'grass', 'sand', 'snow', 'stone', 'wood', 'leaves', 'glass', 'water',
+    ];
+    for (const group of groups) {
+      expect(synthParams(group, 'tool_break')).toEqual(TOOL_BREAK_PARAMS);
+    }
+    // 回傳的是拷貝（`{ ...TOOL_BREAK_PARAMS }`）→ 呼叫端不會誤改模組常數。
+    expect(synthParams('stone', 'tool_break')).not.toBe(TOOL_BREAK_PARAMS);
+  });
 });

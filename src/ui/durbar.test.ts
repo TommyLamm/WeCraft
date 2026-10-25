@@ -56,4 +56,20 @@ describe('durability bar (B7 Task 6)', () => {
     mountDurabilityBar(slot, { item: 'iron_pickaxe', count: 1, dur: 250 });
     expect(slot.querySelector('.ui-dur')).toBeNull();
   });
+
+  it('mounting a null stack removes the old bar', () => {
+    const slot = document.createElement('div');
+    mountDurabilityBar(slot, { item: 'iron_pickaxe', count: 1, dur: 125 });
+    expect(slot.querySelector('.ui-dur')).not.toBeNull();
+    mountDurabilityBar(slot, null); // 空格 → 舊條要卸掉
+    expect(slot.querySelector('.ui-dur')).toBeNull();
+  });
+
+  it('mounting a non-durable stack removes the old bar', () => {
+    const slot = document.createElement('div');
+    mountDurabilityBar(slot, { item: 'iron_pickaxe', count: 1, dur: 125 });
+    expect(slot.querySelector('.ui-dur')).not.toBeNull();
+    mountDurabilityBar(slot, { item: 'stone', count: 1 }); // 非耐久物品 → 舊條要卸掉
+    expect(slot.querySelector('.ui-dur')).toBeNull();
+  });
 });

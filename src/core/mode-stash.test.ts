@@ -81,8 +81,11 @@ describe('mode stash — per-mode state survives switches', () => {
   it('saveModeState overwrites the recorded mode side with the live slots (a broken tool cannot come back)', () => {
     const stash = createModeStash();
     stash.survival[0] = { item: 'wooden_pickaxe', count: 1, dur: 1 };
-    const next = saveModeState(stash, 'survival', [{ item: 'stone', count: 1 }], createVitals());
+    // 最終修正波：live 槽位陣列與 production 同寬（36 格，不是 1 格）——
+    // main.ts 的 syncModeStash 傳的是完整的活背包。
+    const next = saveModeState(stash, 'survival', padded([{ item: 'stone', count: 1 }]), createVitals());
     expect(next.survival[0]).toEqual({ item: 'stone', count: 1 }); // 壞掉的工具不在 live slots → 不會復活
+    expect(next.survival).toHaveLength(INVENTORY_WIDTH); // 整側覆寫成完整的 36 格 live 槽位
     expect(stash.survival[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 1 }); // 來源 stash 不被就地改寫
   });
 

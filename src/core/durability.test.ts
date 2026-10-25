@@ -87,6 +87,25 @@ describe('durability', () => {
     expect(damageStack(s, Number.NaN).stack).toEqual(s);
   });
 
+  // 最終修正波：小於 1 的 amount（含 0.5 這類小數）是**刻意的不動作**——
+  // 耐久原樣保留，不是 `Math.floor(0.5) === 0`「扣了 0 點」的隱式巧合。
+  it('damageStack treats an amount below one (including fractional) as a deliberate no-op', () => {
+    const s = { item: 'wooden_pickaxe', count: 1, dur: 10 } as const;
+    expect(damageStack(s, 0.5)).toEqual({ stack: s, broke: false });
+    expect(damageStack(s, 0.9).broke).toBe(false);
+  });
+
+  it('damageStack no-op branches return a copy, never the input reference', () => {
+    const s: ItemStack = { item: 'wooden_pickaxe', count: 1, dur: 10 };
+    const noop = damageStack(s, 0.5).stack!;
+    expect(noop).not.toBe(s); // 拷貝 → 呼叫端改結果不會寫回模型內的堆疊
+    noop.dur = 1;
+    expect(s.dur).toBe(10);
+    // 非耐久物品的 no-op 分支同樣回傳拷貝。
+    const nonDurable: ItemStack = { item: 'stone', count: 5 };
+    expect(damageStack(nonDurable, 1).stack).not.toBe(nonDurable);
+  });
+
   // B7 Task 5：批次語意——「挖完一格」與「命中一次」各是**一次 −1**
   // （`damageStack` 每次都吃當下的堆疊），連兩次就是 131 → 130 → 129。
   it('breaking a block costs exactly one durability and an attack costs exactly one', () => {

@@ -121,6 +121,20 @@ describe('crafting section (embedded)', () => {
     expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
   });
 
+  it('a damaged tool in the source row shows its durability bar', () => {
+    // 最終修正波（B7 Task 6 整合釘）：來源列格子與熱鍵欄同一條
+    // fillSlot → mountDurabilityBar → 受損工具排在合成來源列也必須掛耐久條。
+    // 斷言讀 dataset.durColor／style.width（jsdom 會把 style.background
+    // 正規化成 rgb()，不讀它）。
+    const { slots, params } = harness(2);
+    slots[0] = { item: 'iron_pickaxe', count: 1, dur: 77 };
+    mountCrafting(root(), params);
+    const fill = hotbarSlot(0).querySelector('.ui-dur-fill') as HTMLElement;
+    expect(fill).not.toBeNull();
+    expect(fill.style.width).toBe('31%'); // Math.round(77 / 250 × 100)
+    expect(fill.dataset.durColor).toBe('#ffff00'); // 77 / 250 ≈ 0.308 → 黃
+  });
+
   it('3×3 renders 9 grid slots', () => {
     const { params } = harness(3);
     mountCrafting(root(), params);

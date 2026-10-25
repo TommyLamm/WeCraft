@@ -251,6 +251,20 @@ describe('cloud-save', () => {
     expect(accepted.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 20 });
   });
 
+  it('acceptCloudData materializes the max durability for a non-number dur', () => {
+    // `dur` **明確帶了壞值**（非數字）→ 材質上限（不是 0、不是 undefined）；
+    // 與「完全沒帶 dur」走同一條正規化，但入口是不同的髒資料形狀。
+    const legacy = { ...rawValid(), inventory: [{ item: 'wooden_pickaxe', count: 1, dur: 'x' }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
+  });
+
+  it('acceptCloudData clamps an over-max dur to the material maximum', () => {
+    const legacy = { ...rawValid(), inventory: [{ item: 'wooden_pickaxe', count: 1, dur: 9999 }] };
+    const accepted = acceptCloudData(legacy)!;
+    expect(accepted.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
+  });
+
   it('acceptCloudData drops the durability of a non-tool item', () => {
     const legacy = { ...rawValid(), inventory: [{ item: 'stone', count: 1, dur: 5 }] };
     const accepted = acceptCloudData(legacy)!;
@@ -328,8 +342,8 @@ describe('cloud-save', () => {
   });
 
   /**
-   * B4 Task 10：被動生物的持久化記錄 —— 雲端 **維持 format 1**，只多一個附加
-   * 欄位 `passiveMobs`（與 B1.3 的 `stash`／B3 的 `worldgenVersion` 同一套路）。
+   * B4 Task 10 當時雲端維持 format 1：被動生物的持久化記錄只多一個附加欄位
+   * `passiveMobs`（與 B1.3 的 `stash`／B3 的 `worldgenVersion` 同一套路）。
    */
   it('an old format-1 payload without passiveMobs still validates', () => {
     // 舊的 format-1 payload 沒有這個欄位 → 仍然合法（不覆蓋、不強制）

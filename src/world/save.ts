@@ -2,9 +2,10 @@
 // Task 14: `collectSavePayload` — pure payload assembly from live game state.
 // Task 11: payload v2 (advancements) + v1→v2 migration in `loadGame`.
 // B1.3: payload v3 (dual-mode stash) + v1/v2→v3 migration in `loadGame`.
-// B5 Task 7: payload v4 (36-slot inventory: hotbar row 0..8 + 27 main slots)
-// + v1/v2/v3→v4 migration. Old 9-slot records keep their entries in the SAME
-// positions (the hotbar row); the new main slots load as null.
+// B5 Task 7（歷史，B7 起本檔寫 v5——見下方 B7 Task 2 段）：payload v4
+// (36-slot inventory: hotbar row 0..8 + 27 main slots) + v1/v2/v3→v4 migration.
+// Old 9-slot records keep their entries in the SAME positions (the hotbar row);
+// the new main slots load as null.
 // B3 Task 7：附加欄位 `worldgenVersion`——payload 版本**維持 3**（舊版程式會直接
 // 忽略不認識的欄位），只多蓋一個版本戳記而已。
 //

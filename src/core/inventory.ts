@@ -48,7 +48,15 @@ export function createInventoryModel(
   initialSlots: ReadonlyArray<ItemStack | null> = [],
   mode: GameMode = 'creative',
 ): InventoryModel {
-  const slots: Array<ItemStack | null> = initialSlots.map((s) => (s ? { ...s } : null));
+  // 最終修正波：建構路徑與 `setSlot`／`addItem` 用同一套耐久落地規則——
+  // 耐久物品帶**明確** `dur`（缺漏／非法 → 材質上限），非耐久物品不帶 `dur`
+  // 欄位（多帶的鍵丟棄）。初始槽位一律拷貝（新物件），從不別名呼叫端的物件。
+  const slots: Array<ItemStack | null> = initialSlots.map((s) => {
+    if (!s) return null;
+    const max = maxDurability(s.item);
+    const dur = max > 0 ? (normalizeDurability(s.item, s.dur) ?? max) : undefined;
+    return { item: s.item, count: s.count, ...(dur !== undefined ? { dur } : {}) };
+  });
   let currentMode = mode;
 
   return {

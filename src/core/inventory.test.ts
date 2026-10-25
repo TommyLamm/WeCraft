@@ -254,6 +254,22 @@ describe('inventory model — slots', () => {
     inv.slots[0]!.count = 99;
     expect(initial[0]!.count).toBe(1);
   });
+
+  // 最終修正波：建構路徑與 setSlot／addItem 的耐久落地一致——初始槽位裡的
+  // 耐久物品一律帶明確 `dur`，非耐久物品不帶 `dur` 欄位。
+  it('the constructor materializes a missing durability for initial tool stacks', () => {
+    const inv = createInventoryModel([{ item: 'stone_pickaxe', count: 1 }], 'survival');
+    expect(inv.slots[0]).toEqual({ item: 'stone_pickaxe', count: 1, dur: 131 });
+  });
+
+  it('the constructor normalizes an over-max dur and drops a stray dur on non-durable stacks', () => {
+    const inv = createInventoryModel(
+      [{ item: 'wooden_pickaxe', count: 1, dur: 9999 }, { item: 'stone', count: 1, dur: 5 }],
+      'survival',
+    );
+    expect(inv.slots[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 }); // 越上限 → 夾到材質上限
+    expect(inv.slots[1]).toEqual({ item: 'stone', count: 1 }); // 非耐久物品不帶 `dur`
+  });
 });
 
 // `fits` is the atomic-take pre-check (crafting review Critical #1): addItem

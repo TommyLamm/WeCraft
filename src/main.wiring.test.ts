@@ -846,3 +846,15 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
     expect(countOf('audio.play(')).toBe(6);
   });
 });
+
+// ---- B7 最終修正波：耐久扣損呼叫點釘子 ---------------------------------------
+// 音訊釘子釘了 `audio.play(` 的呼叫點數，但 `damageHeldTool(1)` 沒有對應的
+// 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
+// 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
+describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
+  it('all three damageHeldTool(1) call sites stay wired (dig-complete / hostile hit / passive hit)', () => {
+    // 實測：敵對生物命中（main.ts:3145）、被動生物命中（:3186）、挖完方塊
+    // （:3239）各一處；`function damageHeldTool(` 的定義不是呼叫點。
+    expect(countOf('damageHeldTool(1)')).toBe(3);
+  });
+});
