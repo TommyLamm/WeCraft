@@ -1,4 +1,5 @@
 import { maxStack, type ItemId, type ItemStack } from './items';
+import { maxDurability, normalizeDurability } from './durability';
 
 export type GameMode = 'survival' | 'creative';
 
@@ -10,10 +11,10 @@ export interface InventoryModel {
   readonly slots: ReadonlyArray<ItemStack | null>;
   readonly mode: GameMode;
   setMode(mode: GameMode): void;
-  /** Add items respecting maxStack: merges into partial stacks, then splits
-   *  across empty slots. Returns the overflow count that did not fit.
-   *  No-op returning 0 in creative (infinite supply). */
-  addItem(item: ItemId, count: number): number;
+  /** 依 maxStack 加入物品：先補滿既有堆疊，再跨空位拆分；回傳放不下的數量。
+   *  創造模式為無限供應，直接回傳 0。第三個參數是從地上撿回來的受損工具
+   *  剩餘耐久。 */
+  addItem(item: ItemId, count: number, dur?: number): number;
   /** Decrement up to `count` across slots, clearing emptied ones. Returns the
    *  number actually removed. No-op returning 0 in creative (never consumes). */
   removeItem(item: ItemId, count: number): number;
@@ -58,9 +59,11 @@ export function createInventoryModel(
     setMode(next) {
       currentMode = next;
     },
-    addItem(item, count) {
+    addItem(item, count, dur) {
       if (currentMode === 'creative' || count <= 0) return 0;
       const cap = maxStack(item);
+      const max = maxDurability(item);
+      const durable = max > 0 ? (normalizeDurability(item, dur) ?? max) : undefined;
       let remaining = count;
       // pass 1: top up partial stacks of this item
       for (const s of slots) {
@@ -74,7 +77,11 @@ export function createInventoryModel(
       for (let i = 0; i < slots.length && remaining > 0; i++) {
         if (slots[i]) continue;
         const put = Math.min(cap, remaining);
-        slots[i] = { item, count: put };
+        slots[i] = {
+          item,
+          count: put,
+          ...(durable !== undefined ? { dur: durable } : {}),
+        };
         remaining -= put;
       }
       return remaining;
@@ -114,9 +121,12 @@ export function createInventoryModel(
         slots[index] = null; // count < 1 (0/negative/NaN) is invalid → clear
         return;
       }
+      const max = maxDurability(stack.item);
+      const dur = max > 0 ? (normalizeDurability(stack.item, stack.dur) ?? max) : undefined;
       slots[index] = {
         item: stack.item,
         count: Math.min(Math.floor(stack.count), maxStack(stack.item)),
+        ...(dur !== undefined ? { dur } : {}),
       };
     },
     spendFromSlot(slot, count) {

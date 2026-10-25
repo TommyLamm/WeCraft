@@ -41,11 +41,29 @@ describe('inventory model — add', () => {
     const inv = createInventoryModel(empty(3), 'survival');
     expect(inv.addItem('wooden_pickaxe', 3)).toBe(0);
     expect(inv.slots).toEqual([
-      { item: 'wooden_pickaxe', count: 1 },
-      { item: 'wooden_pickaxe', count: 1 },
-      { item: 'wooden_pickaxe', count: 1 },
+      { item: 'wooden_pickaxe', count: 1, dur: 59 },
+      { item: 'wooden_pickaxe', count: 1, dur: 59 },
+      { item: 'wooden_pickaxe', count: 1, dur: 59 },
     ]);
     expect(inv.addItem('wooden_pickaxe', 1)).toBe(1); // no room left
+  });
+
+  it('addItem stores a tool with the given durability', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    expect(inv.addItem('iron_axe', 1, 40)).toBe(0);
+    expect(inv.slots[0]).toEqual({ item: 'iron_axe', count: 1, dur: 40 });
+  });
+
+  it('addItem gives a fresh tool full durability', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    inv.addItem('iron_axe', 1);
+    expect(inv.slots[0]?.dur).toBe(250);
+  });
+
+  it('a non-durable item never carries a durability', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    inv.addItem('stone', 5);
+    expect(inv.slots[0]).toEqual({ item: 'stone', count: 5 });
   });
 
   it('addItem returns overflow when the inventory is full', () => {
@@ -220,6 +238,14 @@ describe('inventory model — slots', () => {
     inv.setSlot(0, stack);
     stack.count = 99;
     expect(inv.slots[0]).toEqual({ item: 'dirt', count: 5 });
+  });
+
+  it('setSlot keeps the durability of a tool and materializes a missing one', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    inv.setSlot(0, { item: 'stone_pickaxe', count: 1, dur: 77 });
+    expect(inv.slots[0]).toEqual({ item: 'stone_pickaxe', count: 1, dur: 77 });
+    inv.setSlot(0, { item: 'stone_pickaxe', count: 1 });
+    expect(inv.slots[0]).toEqual({ item: 'stone_pickaxe', count: 1, dur: 131 });
   });
 
   it('copies initial slots instead of aliasing the caller array', () => {

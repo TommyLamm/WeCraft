@@ -1,4 +1,5 @@
 import { BLOCK, HOTBAR_DEFAULT, type BlockId } from '../world/blocks';
+import { maxDurability, normalizeDurability } from './durability';
 
 export type ItemId =
   | 'grass' | 'dirt' | 'stone' | 'cobblestone' | 'oak_log' | 'oak_planks'
@@ -87,7 +88,12 @@ const ITEM_IDS: Record<ItemId, true> = {
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
-export interface ItemStack { item: ItemId; count: number }
+export interface ItemStack {
+  item: ItemId;
+  count: number;
+  /** 剩餘耐久；耐久物品必然帶明確值，非耐久物品必然沒有。 */
+  dur?: number;
+}
 
 // Item ↔ block pairs for blocks that exist RIGHT NOW. chest is in the ItemId
 // union but gains its entry when its block lands. air is never an item; water
@@ -204,16 +210,21 @@ const ITEM_ID_SET: ReadonlySet<string> = new Set(ALL_ITEM_IDS);
 
 const isItemId = (x: unknown): x is ItemId => typeof x === 'string' && ITEM_ID_SET.has(x);
 
-/** Sanitize one untrusted stack: a known `ItemId` with a finite count > 0,
- *  otherwise null (the caller's "empty slot"). The count passes through
- *  unchanged — flooring to a whole number and clamping to `maxStack` is the
- *  writing model's job (`InventoryModel.setSlot`). Never throws; the result is
- *  a fresh object, never the input. */
+/** 清洗一個不可信堆疊：必須是已知的 `ItemId`，且 count 為有限正數；
+ *  否則回傳 null（呼叫端視為空格）。count 原樣保留——取整與限制到
+ *  `maxStack` 是寫入模型（`InventoryModel.setSlot`）的責任。耐久物品
+ *  一律帶明確的剩餘耐久（缺漏或非法值改用上限）；非耐久物品則不帶。
+ *  本函式不會拋錯，且結果一定是新物件，不會回傳原輸入。 */
 export function sanitizeStack(x: unknown): ItemStack | null {
   if (typeof x !== 'object' || x === null) return null;
   const s = x as Partial<ItemStack>;
   if (!isItemId(s.item)) return null;
   if (typeof s.count !== 'number' || !Number.isFinite(s.count) || s.count <= 0) return null;
+  const max = maxDurability(s.item);
+  if (max > 0) {
+    const dur = normalizeDurability(s.item, s.dur);
+    return { item: s.item, count: s.count, dur: dur ?? max };
+  }
   return { item: s.item, count: s.count };
 }
 

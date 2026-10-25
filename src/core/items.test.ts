@@ -184,9 +184,27 @@ describe('items', () => {
   });
 
   it('the new raw materials and tools are known, sanitizable ids', () => {
-    for (const id of [...B5_MATERIAL_ITEMS, ...B5_TOOL_ITEMS]) {
+    for (const id of B5_MATERIAL_ITEMS) {
       expect(ALL_ITEM_IDS).toContain(id);
       expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1 });
+      expect(blockFromItem(id)).toBeNull();
+    }
+    const durability: Partial<Record<ItemId, number>> = {
+      wooden_shovel: 59,
+      stone_shovel: 131,
+      iron_shovel: 250,
+      golden_pickaxe: 32,
+      golden_axe: 32,
+      golden_sword: 32,
+      golden_shovel: 32,
+      diamond_pickaxe: 1561,
+      diamond_axe: 1561,
+      diamond_sword: 1561,
+      diamond_shovel: 1561,
+    };
+    for (const id of B5_TOOL_ITEMS) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1, dur: durability[id] });
       expect(blockFromItem(id)).toBeNull();
     }
   });
@@ -278,6 +296,10 @@ describe('items', () => {
     for (const tool of TOOL_ITEMS) expect(maxStack(tool)).toBe(1);
   });
 
+  it('tools still stack to one', () => {
+    for (const tool of TOOL_ITEMS) expect(maxStack(tool)).toBe(1);
+  });
+
   it('stackFromBlock builds a full stack by default and honors an explicit count', () => {
     expect(stackFromBlock(BLOCK.GRASS)).toEqual({ item: 'grass', count: 64 });
     expect(stackFromBlock(BLOCK.GRASS, 3)).toEqual({ item: 'grass', count: 3 });
@@ -350,6 +372,31 @@ describe('items', () => {
     expect(sanitizeStack('junk')).toBeNull();
     const source = { item: 'stone' as const, count: 64 };
     expect(sanitizeStack(source)).not.toBe(source); // fresh object, never aliased
+  });
+
+  it('sanitizeStack keeps a legal durability and materializes the max when it is missing', () => {
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1, dur: 30 })).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 30 });
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1 })).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
+    expect(sanitizeStack({ item: 'diamond_sword', count: 1 })).toEqual({ item: 'diamond_sword', count: 1, dur: 1561 });
+  });
+
+  it('sanitizeStack clamps an over-max durability and clears a bogus one', () => {
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1, dur: 9999 })?.dur).toBe(59);
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1, dur: -3 })?.dur).toBe(59);
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1, dur: Number.NaN })?.dur).toBe(59);
+    expect(sanitizeStack({ item: 'wooden_pickaxe', count: 1, dur: 12.5 })?.dur).toBe(59);
+  });
+
+  it('sanitizeStack drops the durability of a non-durable item', () => {
+    expect(sanitizeStack({ item: 'stone', count: 1, dur: 5 })).toEqual({ item: 'stone', count: 1 });
+    expect(sanitizeStack({ item: 'apple', count: 1, dur: 5 })).toEqual({ item: 'apple', count: 1 });
+  });
+
+  it('sanitizeSlots keeps the durability of every slot', () => {
+    expect(sanitizeSlots([{ item: 'iron_pickaxe', count: 1, dur: 100 }], 2)).toEqual([
+      { item: 'iron_pickaxe', count: 1, dur: 100 },
+      null,
+    ]);
   });
 
   it('sanitizeSlots pads and truncates to the requested count', () => {

@@ -63,7 +63,7 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
       inventory: slots(
         { item: 'stone', count: 32 },
         null,
-        { item: 'wooden_pickaxe', count: 1 },
+        { item: 'wooden_pickaxe', count: 1, dur: 59 },
       ),
     },
     time: { t: 0.42 },
@@ -240,7 +240,11 @@ describe('saveGame / loadGame', () => {
 
   it('derives the stash when a v4 record carries a corrupt or missing one', async () => {
     const expected = {
-      survival: slots({ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }),
+      survival: slots(
+        { item: 'stone', count: 32 },
+        null,
+        { item: 'wooden_pickaxe', count: 1, dur: 59 },
+      ),
       creative: starterSlots('creative'),
       survivalVitals: createVitals(), // the recorded vitals, normalized
     };
@@ -629,7 +633,11 @@ describe('B4 Task 10：被動生物跨存檔（本機 payload v3 的附加欄位
       // 其餘欄位照樣有效（玩家位置、背包都在）
       expect(loaded?.player.pos).toEqual([1.5, 64, -3.25]);
       expect(loaded?.player.inventory).toEqual(
-        slots({ item: 'stone', count: 32 }, null, { item: 'wooden_pickaxe', count: 1 }),
+        slots(
+          { item: 'stone', count: 32 },
+          null,
+          { item: 'wooden_pickaxe', count: 1, dur: 59 },
+        ),
       );
     }
   });
