@@ -5,6 +5,7 @@ import {
   gainForDistance,
   materialGroup,
   synthParams,
+  TOOL_BREAK_PARAMS,
   type MaterialGroup,
 } from './sounds';
 
@@ -132,5 +133,13 @@ describe('synthParams', () => {
       durationSec: 0.18,
       gain: 0.6,
     });
+  });
+
+  // B7 Task 5：工具損壞音是**固定參數**（不隨方塊材質變化）——`synthParams`
+  // 對 `tool_break` 直接回傳 `TOOL_BREAK_PARAMS`（`group` 被忽略）。
+  it('the tool break sound uses a fixed profile', () => {
+    expect(synthParams('stone', 'tool_break')).toEqual(TOOL_BREAK_PARAMS);
+    expect(synthParams('wood', 'tool_break')).toEqual(TOOL_BREAK_PARAMS);
+    expect(TOOL_BREAK_PARAMS.durationSec).toBeGreaterThan(0.2);
   });
 });

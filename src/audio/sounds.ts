@@ -1,5 +1,8 @@
 import { BLOCK } from '../world/blocks';
 
+// B7 Task 5：`tool_break` 是新增的固定音色（group 被忽略）——工具損壞不屬於任何
+// 方塊材質，參數不隨材質變化（見下方 `TOOL_BREAK_PARAMS`／`synthParams`）。
+
 /** What a block sounds like (see `materialGroup`). */
 export type MaterialGroup =
   | 'dirt'
@@ -13,7 +16,7 @@ export type MaterialGroup =
   | 'water';
 
 /** What the player did to the block. */
-export type SoundKind = 'dig' | 'break' | 'place' | 'step';
+export type SoundKind = 'dig' | 'break' | 'place' | 'step' | 'tool_break';
 
 export interface SynthParams {
   filter: 'lowpass' | 'bandpass' | 'highpass';
@@ -121,16 +124,29 @@ interface KindMod {
   scale: number;
 }
 
+/** 工具損壞音（近似原版 `entity.item.break`：音量 0.8、pitch 0.8–1.2）。
+ *  固定參數——工具損壞不隨方塊材質變化。 */
+export const TOOL_BREAK_PARAMS: SynthParams = {
+  filter: 'lowpass', freq: 500, q: 0.7, durationSec: 0.25, gain: 0.8,
+};
+
 /** Per-action envelope/loudness/pitch modulation (Task 9 table). */
 const KIND_MOD: Record<SoundKind, KindMod> = {
   dig: { durationSec: 0.12, gain: 0.5, scale: 1 },
   break: { durationSec: 0.18, gain: 0.6, scale: 0.85 },
   place: { durationSec: 0.09, gain: 0.5, scale: 0.7 },
   step: { durationSec: 0.08, gain: 0.25, scale: 0.9 },
+  // B7 Task 5：`tool_break` 的實際參數來源是 `TOOL_BREAK_PARAMS`（`synthParams`
+  // 先 early-return）；這裡只為了滿足 `Record<SoundKind, KindMod>` 的型別，
+  // **改動時兩邊要同步**。
+  tool_break: { durationSec: 0.25, gain: 0.8, scale: 1 },
 };
 
 /** Material × action → synthesis parameters for `playOneShot`. */
 export function synthParams(group: MaterialGroup, kind: SoundKind): SynthParams {
+  // B7 Task 5：工具損壞音是固定音色（`group` 被忽略）→ 在讀 `GROUP_BASE[group]`
+  // 之前就回傳，避免無謂的材質查表（回傳拷貝——呼叫端不共用同一個物件）。
+  if (kind === 'tool_break') return { ...TOOL_BREAK_PARAMS };
   const base = GROUP_BASE[group];
   const mod = KIND_MOD[kind];
   return {

@@ -23,6 +23,8 @@ import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceStat
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
+// B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
+import { damageStack } from './core/durability';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
 import { emptyGrid } from './core/recipes';
@@ -211,9 +213,10 @@ interface WecraftDebug {
   hunger: () => number | null;
   /** 玩家腳底中心的座標。 */
   pos: () => { x: number; y: number; z: number };
-  /** 背包 36 格的（物品、數量）快照；前 9 格是熱鍵列，空格為 `null`。
-   *  名稱沿用舊介面（既有 Playwright 腳本依賴 `hotbar()`）。 */
-  hotbar: () => Array<{ item: ItemId; count: number } | null>;
+  /** 背包 36 格的（物品、數量）快照；前 9 格是熱鍵欄，空格為 `null`。
+   *  名稱沿用舊介面（既有 Playwright 腳本依賴 `hotbar()`）。
+   *  B7 Task 5：工具堆疊另帶 `dur`（剩餘耐久；非工具沒有這個欄位）。 */
+  hotbar: () => Array<{ item: ItemId; count: number; dur?: number } | null>;
   /** 地面上尚未被拾取的掉落物數量。 */
   drops: () => number;
   /** 世界中被玩家改動過的方塊數。 */
@@ -818,6 +821,40 @@ function dropSelected(wholeStack: boolean): void {
   );
   hud.setHotbar(slots, selected); // 熱鍵欄計數變了 → 刷新
   bus.emit('drops-changed', {}); // 掉落物清單變了（與其它生成路徑一致）
+}
+
+/** B7 Task 5：對**手持堆疊**施加耐久傷害（生存模式才消耗；創造模式的工具耐無限
+ *  —— minecraft.wiki/Tool：Java 1.3.1 起「Tools now have infinite durability in
+ *  Creative mode」）。
+ *
+ *  工具歸零 → 清空該格（`inventory.setSlot(selected, null)`：熱鍵列與主背包是
+ *  同一個 36 格模型 → 一起清掉）、播損壞音效（固定音色 `tool_break`）、跳
+ *  「工具損壞」toast；回傳是否損壞。
+ *
+ *  **呼叫時機只有兩個**（minecraft.wiki/Durability：「a use is counted if a
+ *  player completely breaks apart one block or hits a mob. **If a block is
+ *  partially broken, this is not counted as a full use.**」）：挖完一格
+ *  （`digStep` 回 true）與攻擊命中（`hitId !== null`）；挖到一半、落空、
+ *  冷卻查詢帧、放置、進食都不扣。徒手沒有耐久可扣（`damageStack` 對非工具
+ *  是 no-op）。
+ *
+ *  明示簡化：原版鎬／斧／鏟**打生物**是 −2，本作一律 −1（spec §B7；README
+ *  〈與原版的差異〉有記）。 */
+function damageHeldTool(amount: number): boolean {
+  if (currentMode === 'creative') return false;
+  const stack = slots[selected]; // B5 後是 slots（36 格）
+  if (!stack) return false;
+  const res = damageStack(stack, amount);
+  if (res.broke) {
+    inventory.setSlot(selected, null); // 熱鍵列與主背包是同一個模型 → 一起清掉
+    audio.play('tool_break', 'wood', { listener: player.position }); // group 在此 kind 被忽略
+    toasts.push({ title: '工具損壞', description: `${stackName(stack.item)} 壞掉了`, icon: stack.item });
+    return true;
+  }
+  if (res.stack && res.stack.dur !== stack.dur) {
+    inventory.setSlot(selected, res.stack);
+  }
+  return false;
 }
 
 // ---- 生物与箭矢（Task 8）----
@@ -2537,7 +2574,12 @@ window.__wecraft = {
   hunger: () => (vitals ? vitals.hunger : null), // 創造模式 → null（無飢餓條）
   pos: () => ({ x: player.position.x, y: player.position.y, z: player.position.z }),
   // 名稱沿用 `hotbar`（既有 Playwright 驗收腳本依賴）；B5 Task 7 起回傳 36 格。
-  hotbar: () => slots.map((s) => (s ? { item: s.item, count: s.count } : null)),
+  // B7 Task 5：工具堆疊多帶 `dur`（`dur !== undefined` 才加欄位——非工具的既有
+  // 形狀不變）；人工驗收靠它讀出剩餘耐久。
+  hotbar: () =>
+    slots.map((s) =>
+      s ? { item: s.item, count: s.count, ...(s.dur !== undefined ? { dur: s.dur } : {}) } : null,
+    ),
   drops: () => drops.length,
   modified: () => world.modified.size,
   viewMode: () => viewMode,
@@ -3097,6 +3139,11 @@ gs.renderer.setAnimationLoop(() => {
             // exhaustion — hidden until the bank drains saturation/hunger,
             // same path as sprint/jump. Creative (vitals null) never banks.
             if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+            // B7 Task 5：**命中才扣**——傷害已套用（`mobs = atk.mobs` 在上面），
+            // 這一擊確實打中了才扣 1 耐久；冷卻中的查詢帧與落空都到不了這裡。
+            // 先傷害、再扣工具：這一下壞掉時，下面的擊殺掉落照樣生成。
+            damageHeldTool(1);
+            hud.setHotbar(slots, selected);
             const beforeKill = mobs.length;
             const dead = mobs.filter((m) => isDead(m));
             mobs = mobs.filter((m) => !isDead(m));
@@ -3134,6 +3181,10 @@ gs.renderer.setAnimationLoop(() => {
               passiveRenderer.flashPassiveMob(patk.hitId);
               attackedThisFrame = true;
               if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+              // B7 Task 5：命中**被動**生物同樣是一次攻擊命中（wiki 的 −2／本作
+              // −1 規則涵蓋「hostile, neutral or passive」）→ 與敵對分支同一條扣損。
+              damageHeldTool(1);
+              hud.setHotbar(slots, selected);
               // 死亡 → 掉落（生存模式）→ 移除屍體。
               // **被動生物不進 `mobs-changed`**（那是敵對生物的計數事件）。
               const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
@@ -3182,6 +3233,11 @@ gs.renderer.setAnimationLoop(() => {
             drops = torchDrops;
           }
           if (vitals) setVitals(exhaust(vitals, EXHAUST_BREAK_BLOCK));
+          // B7 Task 5：**挖完才扣**（`digStep` 回 true ＝這一幀真正破壞了方塊；
+          // 挖到一半不扣）——方塊掉落已在上面生成 → 現在才扣，工具在這一下壞掉
+          // 時掉落物照樣出現在地上。創造模式由 `damageHeldTool` 內守門（耐無限）。
+          damageHeldTool(1);
+          hud.setHotbar(slots, selected);
           // Task 6: a mined furnace spills its whole contents and loses its state.
           if (id === BLOCK.FURNACE) {
             const key = furnaceKey(hit.x, hit.y, hit.z);

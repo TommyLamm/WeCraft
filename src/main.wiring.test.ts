@@ -837,9 +837,12 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
     expect(countOf("audio.play('place', 'grass'")).toBe(1);
   });
 
-  it('all five play call sites stay wired (place / step / break / dig / eat-thud)', () => {
-    // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud 共 5 處）——
+  it('all six play call sites stay wired (place / step / break / dig / eat-thud / tool-break)', () => {
+    // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud、工具損壞共 6 處）——
     // 防止未來重構時**靜默刪掉**任何一條音效路徑。
-    expect(countOf('audio.play(')).toBe(5);
+    // B7 Task 5：新增工具損壞音（`damageHeldTool` 內的
+    // `audio.play('tool_break', …)`）→ 5 → 6 同步；這條釘的是「路徑被刪」，
+    // 新增（本批）本來就會轉紅一次 → 已依實測同步。
+    expect(countOf('audio.play(')).toBe(6);
   });
 });

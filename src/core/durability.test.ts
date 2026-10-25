@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ItemId } from './items';
+import type { ItemId, ItemStack } from './items';
 import {
   maxDurability,
   isDurableItem,
@@ -85,5 +85,15 @@ describe('durability', () => {
     expect(damageStack(s, 0).stack).toEqual(s);
     expect(damageStack(s, -1).stack).toEqual(s);
     expect(damageStack(s, Number.NaN).stack).toEqual(s);
+  });
+
+  // B7 Task 5：批次語意——「挖完一格」與「命中一次」各是**一次 −1**
+  // （`damageStack` 每次都吃當下的堆疊），連兩次就是 131 → 130 → 129。
+  it('breaking a block costs exactly one durability and an attack costs exactly one', () => {
+    let stack: ItemStack = { item: 'stone_axe', count: 1, dur: 131 };
+    stack = damageStack(stack, 1).stack!;
+    expect(stack.dur).toBe(130);
+    stack = damageStack(stack, 1).stack!;
+    expect(stack.dur).toBe(129);
   });
 });
