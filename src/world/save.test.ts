@@ -1076,7 +1076,7 @@ describe('collectSavePayload', () => {
 //   下面的往返測試再釘一次，讓「光照不入存檔」與「版本號」在同一處可讀。
 // - 光照是**導出資料**：不入本機 payload、不入雲端 payload → 火把只走既有的
 //   `modified` overlay（數字 block id 32——「同一格式內的新 block id」，
-//   **不是**格式升版；雲端維持 format 2、`game.json` 一字不動）。
+//   **不是**格式升版；B6 當時雲端維持 format 2、`game.json` 一字不動）。
 // - 舊版（0.8.0）讀到 id 32 時走 `getBlockDef` 的 `DEFS[id] ?? DEFS[0]`
 //   fallback → 火把顯示成空氣、**不崩**（發布說明〈存檔格式與相容性提示〉
 //   的依據，見計畫 §8）。

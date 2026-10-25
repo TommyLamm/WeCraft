@@ -144,8 +144,8 @@ import {
   type PassiveMob,
   type PassiveKind,
 } from './world/passive-mobs';
-// B4 Task 10：被動生物的持久化（附加欄位 `passiveMobs`；本機 payload 維持 v3、
-// 雲端維持 format 1 —— 兩邊都只是多蓋一個可選的鍵）。
+// B4 Task 10：被動生物的持久化（附加欄位 `passiveMobs`；B4 當時本機 payload 是 v3、
+// 雲端是 format 1——當時兩邊都只是多蓋一個可選的鍵；B7 後格式已另行升版）。
 import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
