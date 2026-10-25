@@ -297,6 +297,24 @@
 /* Crafting section (Task 11): grid + arrow + result slot, then the hotbar row
    used as the transfer source (click a slot to select it, click a cell to move
    1 item). Embedded in the inventory panel (2×2) and in the table overlay (3×3). */
+/* 耐久條（B7 Task 6）：熱鍵欄、背包面板與合成來源列的格子共用。
+   `position: absolute` 疊在格子的下緣（.ui-slot 本身是 position: relative）；
+   `pointer-events: none` → 不攔格子的點擊。寬度與顏色由 ui/durbar.ts 的
+   mountDurabilityBar 直接寫在 .ui-dur-fill 的行內樣式上。 */
+.ui-dur {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  height: 3px;
+  background: #000;
+  pointer-events: none;
+}
+.ui-dur-fill {
+  display: block;
+  height: 100%;
+}
+
 .ui-craft {
   display: flex;
   flex-direction: column;

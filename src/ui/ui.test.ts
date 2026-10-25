@@ -985,3 +985,41 @@ describe('pause cloud row (Phase 4 Task 4)', () => {
     expect(overlay.lastElementChild?.className).toContain('ui-cloud-row');
   });
 });
+
+describe('durability bar mounts (B7 Task 6)', () => {
+  it('the hotbar shows a durability bar for a damaged tool', () => {
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    hud.setHotbar([{ item: 'iron_pickaxe', count: 1, dur: 125 }], 0);
+    const fill = root.querySelector('.ui-dur-fill') as HTMLElement;
+    expect(fill.style.width).toBe('50%');
+    hud.dispose();
+  });
+
+  it('the hotbar re-renders when only the durability changes', () => {
+    // `sameStack` 納入 `dur` 的證據：item/count 不變、只有 dur 變 → 必須重繪
+    const root = document.getElementById('ui-root')!;
+    const hud = createHud(root);
+    const list: Array<ItemStack | null> = [{ item: 'iron_pickaxe', count: 1, dur: 200 }];
+    hud.setHotbar(list, 0);
+    const before = (root.querySelector('.ui-dur-fill') as HTMLElement).style.width;
+    list[0] = { item: 'iron_pickaxe', count: 1, dur: 100 }; // 同一個 item/count，dur 不同
+    hud.setHotbar(list, 0);
+    const after = (root.querySelector('.ui-dur-fill') as HTMLElement).style.width;
+    expect(after).not.toBe(before);
+    expect(after).toBe('40%');
+    hud.dispose();
+  });
+
+  it('the inventory panel shows a durability bar for a damaged tool', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'iron_pickaxe', count: 1, dur: 125 }; // 熱鍵列第 0 格：受損鐵鎬
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival');
+    const fill = root.querySelector('.ui-inv-bar .ui-dur-fill') as HTMLElement;
+    expect(fill).not.toBeNull();
+    expect(fill.style.width).toBe('50%');
+    inv.close();
+  });
+});

@@ -3,6 +3,7 @@ import type { ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import type { Biome } from '../world/terrain';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
+import { mountDurabilityBar } from './durbar';
 
 /** Frame reads that make up the F3 overlay — pure data, no DOM/Three. */
 export interface DebugLinesParams {
@@ -83,7 +84,9 @@ export function createHud(uiRoot: HTMLElement): Hud {
     b: ItemStack | null | undefined,
   ): boolean => {
     if (!a || !b) return !a && !b;
-    return a.item === b.item && a.count === b.count;
+    // B7：`dur` 也納入比較 —— 只挖掉耐久（item/count 不變）時若不重繪，
+    // 熱鍵欄的耐久條就會停在舊寬度。
+    return a.item === b.item && a.count === b.count && (a.dur ?? null) === (b.dur ?? null);
   };
 
   const drawSlotIcon = (canvas: HTMLCanvasElement, stack: ItemStack | null) => {
@@ -111,6 +114,7 @@ export function createHud(uiRoot: HTMLElement): Hud {
         if (canvas) drawSlotIcon(canvas, stack);
         const badge = s.querySelector('.count');
         if (badge) badge.textContent = stack && stack.count > 1 ? String(stack.count) : '';
+        mountDurabilityBar(s, stack); // B7：受損工具 → 格子底部的耐久條
       }
     },
     setSelected(index) {

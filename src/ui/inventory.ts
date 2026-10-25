@@ -10,6 +10,7 @@ import {
 import type { GameMode } from '../core/inventory';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
 import { mountCrafting, type CraftingParams } from './crafting';
+import { mountDurabilityBar } from './durbar';
 
 /** Copy a stack into a slot element (own canvas — `itemIcon` caches ONE canvas
  *  per item, which cannot sit in several cells at once; mirrors crafting's
@@ -17,6 +18,7 @@ import { mountCrafting, type CraftingParams } from './crafting';
 function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
   if (!stack || !Number.isFinite(stack.count) || stack.count < 1) {
     slot.replaceChildren(); // 空格保持空（不放備位 canvas：shared-icon 測試按格數點名）
+    mountDurabilityBar(slot, null); // B7：卸掉舊的耐久條（空格／無效堆疊不顯示）
     return;
   }
   const canvas = document.createElement('canvas');
@@ -31,6 +33,9 @@ function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
   count.className = 'count';
   count.textContent = stack.count > 1 ? String(stack.count) : '';
   slot.replaceChildren(canvas, count);
+  // B7：受損工具 → 格子底部的耐久條（生存面板每格、創造清單每格與游標
+  // 堆疊都走這裡；非耐久物品不受影響）。
+  mountDurabilityBar(slot, stack);
 }
 
 export interface InventoryOpenOptions {

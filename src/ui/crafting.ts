@@ -3,6 +3,7 @@ import { consumeGrid, matchRecipe } from '../core/recipes';
 import type { ItemId, ItemStack } from '../core/items';
 import { stackName } from '../core/items';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
+import { mountDurabilityBar } from './durbar';
 
 // ---- Crafting UI (Task 11) ----
 //
@@ -72,6 +73,9 @@ function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
   count.className = 'count';
   count.textContent = validStack(stack) && stack.count > 1 ? String(stack.count) : '';
   slot.append(canvas, count);
+  // B7：受損工具 → 格子底部的耐久條（合成格與來源列都走這裡；非耐久物品
+  // 與滿耐久的工具不受影響）。掛載本身冪等，重繪不會疊出多條。
+  mountDurabilityBar(slot, stack);
 }
 
 /** Render the crafting section (grid + arrow + result + hotbar row) into `host`.
