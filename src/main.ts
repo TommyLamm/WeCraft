@@ -1683,6 +1683,27 @@ function resetPlayerToSpawn(): void {
   attackCd = 0;
 }
 
+/** 把「目前模式」的 live 槽位與血量寫回 `modeStash`——**與切換模式時同一個
+ *  動作**（同一個 `saveModeState`，見 mode-changed 的處理）。
+ *
+ *  為什麼存檔前要再同步一次：`modeStash` 是**快照**語意，它只在切模式的那一刻
+ *  記下當時的狀態。之後 live 槽位可能早就變了——工具被用到壞掉（整格變 null）、
+ *  被丟棄、被合成吃料——而存檔寫出去的是那份舊快照 → 壞掉的工具留在快照裡，
+ *  下次載入（`normalizeModeStash` 會把它撿回來）或切模式往返後就**復活**。
+ *  所以組 payload 之前用 live 槽位覆寫「目前模式」那一側；另一側（沒在玩的
+ *  那個模式）本來就只能靠快照，維持不動。
+ *
+ *  ★ **兩條存檔路徑都要呼叫**：
+ *  - 本機：`sessionSavePayload()`（`persistNow`／autosave／visibilitychange／
+ *    Save & Quit 全都經過它）；
+ *  - 雲端檢查點：`saveCloudNow()`——它**不經過** `collectSavePayload`，直接呼叫
+ *    `buildCloudData`，所以要自己同步；漏了它，雲端檢查點寫出的仍是舊快照，
+ *    下次讀雲端時壞掉的工具照樣復活（雲端才是跨裝置的主要進度）。
+ *  純記憶體操作（`saveModeState` 回傳新 stash、逐格深拷貝）→ 不碰 IDB／DOM。 */
+function syncModeStash(): void {
+  modeStash = saveModeState(modeStash, currentMode, slots, vitals);
+}
+
 /** Snapshot the live session as a SavePayload (Task 14) — thin composition-root
  *  adapter feeding the PURE `collectSavePayload`. The World has no seed of its
  *  own (terrain generation is keyed off `settings.seed` in the worker client),
@@ -1712,6 +1733,10 @@ function sessionSavePayload(): SavePayload | null {
   // the next save after the overlay closes flushes them normally.
   if (!inv.isOpen() && !craftUi.isOpen()) resetCraftGrid(2);
   if (vitals && vitals.hp <= 0) return null; // dead — see doc above
+  // B7 Task 2：存檔前用 live 槽位覆寫「目前模式」的 stash 快照（見 syncModeStash）。
+  // **必須在 resetCraftGrid 之後**：那一步才把合成格裡的材料交還 inventory，
+  // 槽位是活的參照 → 先同步的話快照會少了剛交還的那些堆疊。
+  syncModeStash();
   return collectSavePayload({
     world: { seed: settings.seed, serializeModified: () => world.serializeModified() },
     player: {
@@ -1843,6 +1868,10 @@ async function saveCloudNow(reason: string): Promise<void> {
   try {
     if (!shouldAllowSave({ revision: cloudRevision })) return;
     if (cloudRevision === null || cloudLocked || cloudAuthStopped || cloudInFlight) return;
+    // B7 Task 2：雲端檢查點走的是 `buildCloudData`（**不經過** `collectSavePayload`）
+    // → 這裡要自己同步一次，否則送出的 stash 仍是切模式時的舊快照（含已壞掉的
+    // 工具），下次讀雲端就把它撿回來。與本機路徑共用同一個 `syncModeStash`。
+    syncModeStash();
     const data = buildCloudData({
       seed: settings.seed,
       pos: [player.position.x, player.position.y, player.position.z],

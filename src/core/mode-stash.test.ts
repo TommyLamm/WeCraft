@@ -72,6 +72,20 @@ describe('mode stash — per-mode state survives switches', () => {
     expect(saveModeState(afterSurvival, 'survival', [], null).survivalVitals).toEqual(hurt);
   });
 
+  /** B7 Task 2：存檔前用 live 槽位再同步一次 stash 的**語意證明**。
+   *
+   *  stash 是「切換模式那一刻」的快照 → 之後工具在 live 槽位裡壞掉（整格變
+   *  null）時，快照裡還留著那件工具。存檔路徑（`main.ts` 的 `syncModeStash`）
+   *  因此會拿 live 槽位**覆寫**記錄模式那一側 —— 這一條釘住「覆寫是整側覆寫」：
+   *  壞掉的工具不在 live 槽位裡 → 它不會從舊快照復活。 */
+  it('saveModeState overwrites the recorded mode side with the live slots (a broken tool cannot come back)', () => {
+    const stash = createModeStash();
+    stash.survival[0] = { item: 'wooden_pickaxe', count: 1, dur: 1 };
+    const next = saveModeState(stash, 'survival', [{ item: 'stone', count: 1 }], createVitals());
+    expect(next.survival[0]).toEqual({ item: 'stone', count: 1 }); // 壞掉的工具不在 live slots → 不會復活
+    expect(stash.survival[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 1 }); // 來源 stash 不被就地改寫
+  });
+
   it('loadModeSlots returns fresh copies', () => {
     const stash = createModeStash();
     const creativeBefore = stash.creative.map((s) => (s ? { ...s } : null));

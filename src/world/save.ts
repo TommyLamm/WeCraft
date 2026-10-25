@@ -7,6 +7,13 @@
 // positions (the hotbar row); the new main slots load as null.
 // B3 Task 7：附加欄位 `worldgenVersion`——payload 版本**維持 3**（舊版程式會直接
 // 忽略不認識的欄位），只多蓋一個版本戳記而已。
+//
+// B7 Task 2: payload v5 — the durability batch. The SHAPE is v4's (36 slots,
+// stash, worldgenVersion, passiveMobs); what changed is the MEANING of an
+// inventory entry: a durable stack (`ItemStack.dur`) now travels with the save.
+// 版本鏈：v1（原始）→ v2（進度 advancements）→ v3（雙模式 stash）→ v4（36 格
+// 背包）→ v5（`dur`）。`loadGame` 一律升到 v5；舊記錄的工具**沒有** `dur`
+// → 載入時拿到滿耐久（＝上限），不是 0。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { INVENTORY_SLOTS, sanitizeSlots, type ItemStack } from '../core/items';
@@ -50,7 +57,8 @@ export interface SavePayloadV2 extends Omit<SavePayloadV1, 'version'> {
 
 /** Legacy v3 payload (B1.3): v2 plus the per-mode stash — the 9-slot hotbar of
  *  the mode you are NOT in, and the survival vitals. Kept for the migration
- *  path; `loadGame` upgrades it to v4 and pads both inventories to 36 slots. */
+ *  path; `loadGame` upgrades it (via v4) to v5 and pads both inventories to 36
+ *  slots. */
 export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	version: 3;
 	stash: StashPayload;
@@ -70,30 +78,44 @@ export interface SavePayloadV3 extends Omit<SavePayloadV2, 'version'> {
 	passiveMobs?: PassiveMobRecord[];
 }
 
-/** Current payload (B5 Task 7): v3 plus the 36-slot inventory semantics — the
+/** Payload v4 (B5 Task 7): v3 plus the 36-slot inventory semantics — the
  *  first 9 slots are the hotbar row (hand-held range 0..8), the remaining 27
  *  are the main inventory. `SavePayloadV4 extends Omit<SavePayloadV3,
  *  'version'>` on purpose: every additive field B3/B4 introduced (notably
  *  `worldgenVersion` and `passiveMobs`) is inherited, so the v3→v4 migration
- *  cannot silently drop them. */
+ *  cannot silently drop them. Kept for the migration path; `loadGame` upgrades
+ *  a v4 record to v5 and gives every tool its full durability. */
 export interface SavePayloadV4 extends Omit<SavePayloadV3, 'version'> {
 	version: 4;
 }
 
+/** Current payload (B7 Task 2): v4 plus `ItemStack.dur` — a durable stack now
+ *  records how much durability it has LEFT (`dur` = remaining, the max comes
+ *  from `core/durability.ts`). `SavePayloadV5 extends Omit<SavePayloadV4,
+ *  'version'>` for the same reason as the v3→v4 step: every additive field
+ *  (`worldgenVersion`, `passiveMobs`, the stash) is inherited, so the version
+ *  bump cannot silently drop one. The shape is unchanged otherwise — only the
+ *  MEANING of an inventory entry grew a field. Records written before v5 carry
+ *  no `dur` at all → loading them gives every tool FULL durability
+ *  (`sanitizeStack` materializes it), never 0. */
+export interface SavePayloadV5 extends Omit<SavePayloadV4, 'version'> {
+	version: 5;
+}
+
 /** The shape written to / read from the single local slot. */
-export type SavePayload = SavePayloadV4;
+export type SavePayload = SavePayloadV5;
 
 /**
- * v4 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
+ * v5 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
  *
  * B4 Task 10：`loadGame`（讀取端）與 `collectSavePayload`（寫出端）**一律**帶這個
  * 鍵 → 用這個型別把「一定有」表達出來，呼叫端不必寫 `?? []` 或「有沒有這個鍵」
  * 的分支。磁碟上的**舊**記錄仍然可以沒有這個欄位 → 那由 `loadGame` 的正規化補上
  * （空陣列 ＝ 沒有生物，不是壞檔）。
  *
- * 它是 {@link SavePayload}（＝`SavePayloadV4`）的**子型** → 既有呼叫端
+ * 它是 {@link SavePayload}（＝`SavePayloadV5`）的**子型** → 既有呼叫端
  * （`saveGame(payload: SavePayload)` 等）完全不受影響。 */
-export interface SavePayloadWithPassiveMobs extends SavePayloadV4 {
+export interface SavePayloadWithPassiveMobs extends SavePayloadV5 {
 	passiveMobs: PassiveMobRecord[];
 }
 
@@ -133,7 +155,9 @@ export interface SaveSources {
  *  是唯一會蓋值的地方（讀取端從不補值，所以舊存檔仍然看得出是舊存檔）。 */
 export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMobs {
 	return {
-		version: 4,
+		// B7 Task 2：v5——背包的每一格都經過 `sanitizeStack`（耐久物品必然帶
+		// 明確的 `dur`）；`stash` 的複製語意不變（原樣複製傳進來的 stash，見下）。
+		version: 5,
 		savedAt: args.savedAt ?? Date.now(),
 		worldSeed: args.world.seed,
 		modified: args.world.serializeModified(),
@@ -143,6 +167,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 			mode: args.player.mode,
 			vitals: args.vitals ? { ...args.vitals } : null,
 			// B5 Task 7：一律 36 格（不足補 null、超過截斷）且逐格深拷貝。
+			// B7 Task 2：`sanitizeStack` 同時把耐久物品的 `dur` 帶出來（合法值
+			// 原樣、缺漏／非法→滿耐久）→ 寫出的記錄「耐久物品必然帶明確 `dur`」。
 			inventory: sanitizeSlots(args.player.inventory, INVENTORY_SLOTS),
 		},
 		time: { t: args.clockT },
@@ -162,12 +188,13 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 	};
 }
 
-/** Shape-validate an unknown value as a v1, v2, v3 or v4 save payload (review
+/** Shape-validate an unknown value as a v1…v5 save payload (review
  *  #2; Task 11 widened the accepted versions to v1/v2, B1.3 to v3, B5 Task 7
- *  to v4 — older records migrate in loadGame). IndexedDB records can be
+ *  to v4, B7 Task 2 to v5 — older records migrate in loadGame). IndexedDB
+ *  records can be
  *  written by an older or broken build — continueGame trusts this shape
  *  completely (destructuring, setBlock keys, DOM writes), so a record must
- *  prove: object, version ∈ {1, 2, 3, 4}, a
+ *  prove: object, version ∈ {1, 2, 3, 4, 5}, a
  *  player with a finite pos triple and finite yaw (a NaN yaw would reach camera
  *  render state without ever throwing), mode ∈ {survival, creative}, an
  *  inventory of null | {item: string, count: finite number}, vitals
@@ -185,10 +212,18 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
  *  Pure: exported for tests, called by loadGame. */
 export function isValidSavePayload(
 	x: unknown,
-): x is SavePayloadV1 | SavePayloadV2 | SavePayloadV3 | SavePayloadV4 {
+): x is SavePayloadV1 | SavePayloadV2 | SavePayloadV3 | SavePayloadV4 | SavePayloadV5 {
 	if (typeof x !== 'object' || x === null) return false;
 	const r = x as Partial<SavePayloadV1>;
-	if (r.version !== 1 && r.version !== 2 && r.version !== 3 && r.version !== 4) return false;
+	if (
+		r.version !== 1 &&
+		r.version !== 2 &&
+		r.version !== 3 &&
+		r.version !== 4 &&
+		r.version !== 5
+	) {
+		return false;
+	}
 	// player: pos triple + yaw + mode + inventory + vitals
 	const p = r.player as SavePayloadV1['player'] | undefined;
 	if (typeof p !== 'object' || p === null) return false;
@@ -264,10 +299,12 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 }
 
 /** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
- *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3, v4 B5 Task 7): a
+ *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3, v4 B5 Task 7, v5 B7
+ *  Task 2): a
  *  supported-version record with a broken shape (missing player, non-finite
  *  pos, bad mode, NaN clock, …) reads as "no save". ALWAYS returns a
- *  normalized v4 payload (36-slot inventory: hotbar row 0..8 + 27 main slots):
+ *  normalized v5 payload (36-slot inventory: hotbar row 0..8 + 27 main slots;
+ *  durable stacks carry an explicit `dur`):
  *  - v1 migrates to `{...v1, version: 2, advancements: emptyAdvancements()}`
  *    first (old saves keep loading; progress starts fresh), then the stash is
  *    derived from the recorded mode/inventory/vitals;
@@ -278,7 +315,11 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  - every version's `player.inventory` is sanitized with `sanitizeSlots(...,
  *    INVENTORY_SLOTS)`: old 9-slot records keep their entries in the SAME
  *    positions (the hotbar row), the 27 main slots load as null, and a longer
- *    array is truncated.
+ *    array is truncated;
+ *  - v4 records predate durability: `dur` 由 `sanitizeStack` materialize——
+ *    舊記錄缺 `dur` → 滿耐久（上限），非法值 → 清除後視為滿耐久。舊存檔因此
+ *    **不會**弄壞玩家的工具（絕不落成 0）；stash 走 `normalizeModeStash`
+ *    （內部同一支清洗器）→ 兩側的工具同樣拿到滿耐久。
  *  Vitals written before `exhaustion` existed (or otherwise malformed) run
  *  through survival.ts `normalizeVitals` — for the live player AND for the
  *  stash's survival snapshot — so the live model always sees the full shape.
@@ -296,10 +337,11 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			const value = await idbRequest<unknown>(tx.objectStore(STORE).get(SLOT_KEY));
 			if (value === null || value === undefined || typeof value !== 'object') return null;
 			if (!isValidSavePayload(value)) return null;
-			// Migration chain: v1 → v2 (advancements) → v3 (stash) → v4 (36 slots).
-			// The stash is read off the RAW record (only v3+ has one) so v1/v2 can
-			// derive it from the fields they actually stored. The v4 spread keeps
-			// every additive field (worldgenVersion, passiveMobs, …) intact.
+			// Migration chain: v1 → v2 (advancements) → v3 (stash) → v4 (36 slots)
+			// → v5 (durability). The stash is read off the RAW record (only v3+
+			// has one) so v1/v2 can derive it from the fields they actually
+			// stored. Each spread keeps every additive field (worldgenVersion,
+			// passiveMobs, …) intact.
 			const v2: SavePayloadV2 =
 				value.version === 1
 					? { ...value, version: 2, advancements: emptyAdvancements() }
@@ -307,7 +349,7 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			const v3: SavePayloadV3 = {
 				...v2,
 				version: 3,
-				stash: normalizeModeStash((value as Partial<SavePayloadV4>).stash, {
+				stash: normalizeModeStash((value as Partial<SavePayloadV5>).stash, {
 					mode: value.player.mode,
 					inventory: value.player.inventory,
 					vitals: value.player.vitals,
@@ -318,14 +360,24 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 						v2.player.vitals === null ? null : normalizeVitals(v2.player.vitals),
 				},
 			};
-			const migrated: SavePayloadV4 = {
+			const v4: SavePayloadV4 = {
 				...v3,
 				version: 4,
 				player: {
 					...v3.player,
 					// 舊 9 格留在前 9 格（熱鍵列）；不足補 null、超過截斷。
+					// B7 Task 2：這一步同時把 `dur` materialize 出來——
+					// `sanitizeStack` 對耐久物品一律給明確值（合法值原樣、
+					// 缺漏或非法值 → 滿耐久）→ v1–v4 的舊工具載入後是滿耐久，
+					// 不是「dur 0 ＝ 一用就壞」。
 					inventory: sanitizeSlots(v3.player.inventory, INVENTORY_SLOTS),
 				},
+			};
+			// B7 Task 2：v5 ＝ v4 ＋ `ItemStack.dur`（耐久已在上一步 materialize：
+			// `sanitizeSlots` 是同一支清洗器，不必重跑）→ 這裡只升版本號。
+			const migrated: SavePayloadV5 = {
+				...v4,
+				version: 5,
 			};
 			// B3 Task 7：附加欄位 `worldgenVersion` 的三條規則——
 			// 1) 絕不自動補值：舊記錄沒有這個鍵 → 回傳物件就**沒有**這個鍵
