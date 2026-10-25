@@ -443,7 +443,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1448 tests / 76 files 全綠
+npm test           # vitest run — 1453 tests / 76 files 全綠
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -517,13 +517,13 @@ npm run lint       # eslint .
 - **B6 逐格光照與火把（0.9.0）**：**逐格光照引擎**——方塊光（火把 14）＋天空光
   跨區塊傳播（3×3 群組播種＋BFS）、生成與載入時計算、頂點亮度＋角落平均的平滑
   渲染、日夜只動 uniform 不重網格（開闊柱 15／單格厚屋簷下整列 14／口袋內離洞口
-  每格 −1／密閉洞穴 0；每區塊 64 KiB、每幀重算預算 2 區塊、16 區塊生成＋點光
-  < 1500 ms）；**火把**——煤＋木棍 → 4 根（block id 32、tile 39、光照 14）、
+  每格 −1／密閉洞穴 0；每區塊 64 KiB、佇列每幀取 2 項（每項重算一個 3×3
+  群組）、16 區塊生成＋點光 < 1500 ms）；**火把**——煤＋木棍 → 4 根（block id 32、tile 39、光照 14）、
   頂／側依附放置（依附方向由世界推導）、小型無碰撞模型、挖掉掉自身、**支撐消失
   即掉落**；**生怪判準升級為 per-block 光照**（敵對：內部天空光 ≤ 7 且方塊光 0；
   被動：亮度 ≥ 9）。**本批不動存檔形狀**（本機 payload 維持 v4、雲端維持 format 2，
   `cloudSave` 一字未動；光照不入存檔、火把隨 modified overlay 保存）。
-  驗證：**1448 tests / 76 files**、typecheck／lint／build 全綠、pinned 工具
+  驗證：**1453 tests / 76 files**、typecheck／lint／build 全綠、pinned 工具
   pack＋validate 通過；相容性提示（0.8.0 讀不到 block id 32）與已知問題見
   `docs/releases/v0.9.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`

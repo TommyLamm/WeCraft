@@ -16,10 +16,12 @@
  *  **絕對不可把該格 push 進佇列**——否則「寫不進去 → 讀回恆 0 → 永遠比 next
  *  小 → 每次 pop 再生 6 個新項」→ 佇列無限膨脹 → RangeError／OOM。
  *
- *  生命週期（Task 3，重算粒度＝**區塊**）：放置／破壞方塊 → `World.setBlock`
- *  標 `lightDirty`（本區塊＋八鄰）→ 下一幀由 main 的光照佇列重算（每幀 2 區塊
- *  預算、近→遠排序）並重網格化。**不做逐格 remove-BFS**：逐格版本要處理
- *  「光要往回吸」的邊界條件，錯誤率高、難測；區塊重算的量級見下方效能註記。
+ *  生命週期（Task 3，重算粒度＝**3×3 群組**）：放置／破壞方塊 → `World.setBlock`
+ *  標 `lightDirty`（本區塊＋八鄰）→ 下一幀由 main 的光照佇列重算（每幀取 2 項、
+ *  近→遠排序；一項重算整個 3×3 群組，同群組的其他項因旗標已清而跳過）並重網格化。
+ *  **不做逐格 remove-BFS**：逐格版本要處理「光要往回吸」的邊界條件，錯誤率高、
+ *  難測；群組重算冪等（2026-10-25 整合審查修正：單塊版本會讓對角區塊失去光源，
+ *  見 `computeChunkLight` 的說明）。
  *
  *  效能註記（Task 3 實測）：BFS 內層每個候選格要解析「屬於哪個區塊」2-3 次，
  *  逐格走 `world.getChunk` 的字串鍵 Map（`${cx},${cz}` 組合＋雜湊）時，單次
@@ -268,29 +270,87 @@ export function groupChunks(world: World, cx: number, cz: number): Chunk[] {
   return group;
 }
 
-/** 重算整個區塊的光照（清 0 → 播種 → BFS）。
+/** 把「群組外圈」已算好的光餵進群組邊界（單一通道）。
  *
- *  粒度＝一個區塊，但播種範圍＝3×3 群組（2026-10-20 稽核修正）：
- *  - 只清空並重算區塊 (cx,cz) 自己；鄰塊由它們自己的重算負責。
- *  - 播種時掃描周圍 3×3 群組（含對角）內所有已存在區塊的發光來源；
- *    鄰塊不存在就跳過 → 光寫不進不存在的區塊（後生成時由它自己的重算拉回）。
- *  - 天空光（Task 2）：3×3 群組的**開闊天空柱**也是來源——鄰塊的開闊柱會
- *    水平餵光進本區塊（只掃本區塊會讓邊界少一階，稽核修正）；柱掃描上界＝
- *    全高（R-T2-1：topY 只增不減 ⇒ 其上必為空氣 ⇒ 全高掃描即物理正確值，
- *    光照不再依賴 topY）。
+ *  為什麼需要：群組整體重算＝清掉九塊再從**群組內**的來源播種；但群組邊界
+ *  的格子也可能被**群組外**（最多 15 格）的來源照亮。外圈鄰塊若仍是乾淨的
+ *  （lightDirty=false），它的光就是正確的 → 以 `level − 1` 餵進群組邊界即可；
+ *  髒的鄰塊跳過（它稍後自己的重算會把光寫回來——寫入規則「只寫更高」保證
+ *  「先算成較暗、再被鄰塊補亮」是安全方向）。
  *
- *  效能（Task 3）：天空播種收斂成「群組整體一次播種＋一次多來源 BFS」——
- *  種子先全部寫滿再擴張，開闊格（=15）在擴張時直接跳過；與「逐塊
- *  seedSkyColumns」收斂到同一個 fixed point（寫入規則「只寫更高」⇒ 收斂值與
- *  播種順序無關），但省掉逐塊重複擴張的交叉級聯。 */
+ *  （2026-10-25 整合審查修正：原本只清目標區塊、BFS 只寫更高 → 已亮的鄰塊
+ *  不會被重推，光無法穿過它進入「只清了自己的對角區塊」→ 火把放在區塊角落
+ *  時，對角區塊會整片失去這支火把的光。群組整體重算＋邊界播種收口。） */
+function seedGroupBoundary(
+  world: World,
+  group: readonly Chunk[],
+  channel: 'sky' | 'block',
+): void {
+  const inGroup = new Set<string>();
+  for (const c of group) inGroup.add(`${c.cx},${c.cz}`);
+  for (const c of group) {
+    for (let s = 0; s < 4; s++) {
+      const ox = s === 0 ? 1 : s === 1 ? -1 : 0;
+      const oz = s === 2 ? 1 : s === 3 ? -1 : 0;
+      const ncx = c.cx + ox;
+      const ncz = c.cz + oz;
+      if (inGroup.has(`${ncx},${ncz}`)) continue; // 群組內：稍後由本輪 BFS 供光
+      const n = world.getChunk(ncx, ncz);
+      if (!n || n.lightDirty || !n.light) continue; // 髒鄰塊：留給它自己的重算
+      for (let y = 0; y < CHUNK_HEIGHT; y++) {
+        for (let k = 0; k < CHUNK_SIZE; k++) {
+          const clx = ox === 1 ? CHUNK_SIZE - 1 : ox === -1 ? 0 : k;
+          const clz = oz === 1 ? CHUNK_SIZE - 1 : oz === -1 ? 0 : k;
+          const cIdx = chunkIndex(clx, y, clz);
+          if (TRANSPARENT[c.data[cIdx]] === 0) continue;
+          const nlx = ox === 1 ? 0 : ox === -1 ? CHUNK_SIZE - 1 : k;
+          const nlz = oz === 1 ? 0 : oz === -1 ? CHUNK_SIZE - 1 : k;
+          const nIdx = chunkIndex(nlx, y, nlz);
+          if (TRANSPARENT[n.data[nIdx]] === 0) continue;
+          const b = n.light[nIdx];
+          const level = channel === 'sky' ? b >> 4 : b & 0x0f;
+          if (level <= 1) continue;
+          const next = level - 1;
+          const light = c.ensureLight();
+          const cur = light[cIdx];
+          const curLevel = channel === 'sky' ? cur >> 4 : cur & 0x0f;
+          if (curLevel >= next) continue; // 只寫更高（與 BFS 同一條規則）
+          light[cIdx] =
+            channel === 'sky' ? (next << 4) | (cur & 0x0f) : (cur & 0xf0) | next;
+          c.dirty = true;
+          pushQueue(c.cx * CHUNK_SIZE + clx, y, c.cz * CHUNK_SIZE + clz, next);
+        }
+      }
+    }
+  }
+}
+
+/** 重算 3×3 群組的光照（清 0 → 播種 → BFS），並把九塊都標成已點光。
+ *
+ *  **為什麼是群組而不是單塊**（2026-10-25 整合審查修正）：只清目標區塊時，
+ *  BFS 從來源出發，若來源的鄰格已持有同級的光，`只寫更高` 會讓它**不推**——
+ *  光就無法穿過「已亮的正交鄰塊」進入「剛清空的對角鄰塊」。火把在區塊角落、
+ *  主迴圈按近→遠（來源→正交→對角）處理時，對角區塊會整片失去這支火把的光。
+ *  九塊一起清、一起播種、一起 BFS，結果與處理順序無關；外圈邊界再從乾淨鄰塊
+ *  補光（見 {@link seedGroupBoundary}）。
+ *
+ *  代價：原本 9 塊各自重算時，每塊都要掃一次 3×3 群組（9 × 47 ms）；群組
+ *  整體重算只掃一次群組＋一次九塊 BFS，總成本反而下降。佇列裡同群組的其他
+ *  八塊在 `lightDirty=false` 後由 main 的守門直接跳過。
+ *
+ *  天空光的播種語意（Task 2）不變：群組所有開闊柱一次播種＋一次多來源 BFS；
+ *  柱掃描上界仍是全高（R-T2-1：topY 之上必為空氣）。 */
 export function computeChunkLight(world: World, cx: number, cz: number): void {
   const chunk = world.getChunk(cx, cz);
   if (!chunk) return;
   resetResolveCache(); // 公開入口：下面的熱迴圈（BFS）要用解析快取
-  chunk.ensureLight().fill(0); // ★ 只清本區塊；鄰塊由它們自己的重算負責
   const group = groupChunks(world, cx, cz);
+  for (const c of group) c.ensureLight().fill(0); // 九塊一起清（見上方說明）
   const cells = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
+  // ── 方塊光：群組內所有發光來源一次播種＋一次多來源 BFS ──
+  resetQueue();
   for (const src of group) {
+    const light = src.ensureLight();
     for (let i = 0; i < cells; i++) {
       const emission = getBlockDef(src.data[i]).emission ?? 0;
       if (emission <= 0) continue;
@@ -299,23 +359,24 @@ export function computeChunkLight(world: World, cx: number, cz: number): void {
       const rem = i - ly * CHUNK_SIZE * CHUNK_SIZE;
       const lz = Math.floor(rem / CHUNK_SIZE);
       const lx = rem - lz * CHUNK_SIZE;
-      const wx = src.cx * CHUNK_SIZE + lx;
-      const wz = src.cz * CHUNK_SIZE + lz;
+      const cur = light[i];
+      if (emission <= (cur & 0x0f)) continue;
       // 種子寫入：光源格本身持有 emission（不受「不透明不持有光」限制——
       // 那條規則管的是 BFS 傳播不寫進不透明格）。
-      if (!setLight(world, wx, ly, wz, { sky: skyLightAt(world, wx, ly, wz), block: emission })) {
-        continue;
-      }
-      propagateBlockLight(world, wx, ly, wz, emission);
+      light[i] = (cur & 0xf0) | emission;
+      src.dirty = true;
+      pushQueue(src.cx * CHUNK_SIZE + lx, ly, src.cz * CHUNK_SIZE + lz, emission);
     }
   }
-  // 天空光：3×3 群組的開闊柱**一次**播種＋**一次**多來源 BFS（Task 2 的
-  // 播種語意不變；群組整體收斂見上方效能註記）
+  seedGroupBoundary(world, group, 'block');
+  expandBlockQueue(world);
+  // ── 天空光：群組開闊柱一次播種＋外圈邊界補光＋一次多來源 BFS ──
   resetQueue();
   for (const src of group) seedColumnsIntoQueue(src);
+  seedGroupBoundary(world, group, 'sky');
   expandSkyQueue(world);
   resetQueue();
-  chunk.lightDirty = false;
+  for (const c of group) c.lightDirty = false;
 }
 
 /** 把區塊與其**八個**鄰塊（含對角）標成需要重算光照。
@@ -347,12 +408,13 @@ export function computeChunkTopY(chunk: Chunk): number {
 
 // ── 每幀光照佇列的排序與預算（B6 Task 8）────────────────────────────────────
 //
-// main.ts 把「近→遠排序」與「每幀最多重算幾塊」的判斷委託給這兩支**純函式**
+// main.ts 把「近→遠排序」與「每幀最多取幾項」的判斷委託給這兩支**純函式**
 // （判斷本體住進 lighting.ts 才能被單元測試釘死，見 lighting-perf.test.ts）；
 // main.ts 只留接線。行為與 Task 3 的內聯版本逐位元相同：排序鍵同為
-// `(cx - pcx) ** 2 + (cz - pcz) ** 2`、預算同為每幀 2 塊。
+// `(cx - pcx) ** 2 + (cz - pcz) ** 2`、每幀預算同為 2 項（每項重算一個
+// 3×3 群組；同群組的其餘項由 lightDirty 守門跳過）。
 
-/** 取出本幀要點光的區塊，數量 ≤ budget（讓「每幀 2 區塊」的預算可被單元
+/** 取出本幀要點光的佇列項，數量 ≤ budget（讓「每幀 2 項」的預算可被單元
  *  測試釘死）。純函式：回傳**新陣列**（原佇列的前 `budget` 項）、不改動
  *  原佇列——消費（splice）由呼叫端負責，佇列可能還有下一幀要用的項目。
  *  預算 ≤ 0 → 空批次；預算 ≥ 佇列長度 → 全量的副本。 */

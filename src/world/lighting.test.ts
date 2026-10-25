@@ -5,6 +5,7 @@ import { BLOCK, getBlockDef, type BlockId } from './blocks';
 import { generateChunk } from './terrain';
 import {
   MAX_LIGHT,
+  MIN_LIGHT_FACTOR,
   SKY_SCALE_NIGHT,
   TORCH_LIGHT,
   internalSkyLight,
@@ -327,6 +328,13 @@ describe('sky light engine (B6 Task 2)', () => {
     expect(skyLightScale(0.75)).toBe(SKY_SCALE_NIGHT);
     expect(skyLightScale(0.25)).toBeGreaterThan(skyLightScale(0.75));
   });
+
+  it('the documented night scale and minimum light factor are pinned numbers', () => {
+    // 不只「比正午暗」：0.85／0.05 是計畫與發布說明寫給玩家的數值，改動就是
+    // 視覺契約變更（夜晚亮度、洞穴 5% 下限）→ 用字面值釘住，不能只跟常數自己比。
+    expect(SKY_SCALE_NIGHT).toBe(0.85);
+    expect(MIN_LIGHT_FACTOR).toBe(0.05);
+  });
 });
 
 // ══ 光照生命週期（B6 Task 3）════════════════════════════════════════════════
@@ -363,6 +371,53 @@ describe('light lifecycle (B6 Task 3)', () => {
     computeChunkLight(w, 1, 0);
     expect(w.getChunk(0, 0)!.lightDirty).toBe(false);
     expect(blockLightAt(w, 16, 64, 0)).toBe(13); // 重算後光不變（冪等）
+  });
+
+  it('a diagonal neighbour re-seeds a corner torch when it alone recomputes', () => {
+    // 對角塊重新載入／重算時，光源（火把）在群組的對角塊裡——3×3 群組必須含
+    // 對角，否則只清本塊就再也收不到火把的光（角落永久變暗）。
+    // 這也是「群組整體重算」的迴歸釘：舊版只清本塊時，來源區塊先算、對角塊
+    // 後算（主迴圈的近→遠順序）會讓對角格整片歸 0。
+    const w = new World();
+    for (let cx = -1; cx <= 1; cx++)
+      for (let cz = -1; cz <= 1; cz++) w.addChunk(new Chunk(cx, cz));
+    w.setBlock(0, 64, 0, BLOCK.STONE); // 不透明支撐
+    w.setBlock(0, 65, 0, TORCH); // 區塊角落（世界原點）
+    computeChunkLight(w, 0, 0);
+    expect(blockLightAt(w, -1, 65, -1)).toBe(12);
+    // 只重算對角塊（模擬它重新載入）：光要由 (0,0) 的火把重新餵回。
+    computeChunkLight(w, -1, -1);
+    expect(blockLightAt(w, -1, 65, -1)).toBe(12);
+    expect(blockLightAt(w, -1, 65, 0)).toBe(13);
+  });
+
+  it('a clean outside torch still feeds the group edge after a group relight', () => {
+    // 群組重算會清掉九塊；群組邊界的光若來自**群組外**的乾淨鄰塊，
+    // 必須從外圈邊界補回（否則每次重算都會把外圈光源的光切掉一圈）。
+    const w = new World();
+    for (let cx = -2; cx <= 1; cx++)
+      for (let cz = -1; cz <= 1; cz++) w.addChunk(new Chunk(cx, cz));
+    w.setBlock(-20, 64, 8, BLOCK.STONE);
+    w.setBlock(-20, 65, 8, TORCH); // 群組外（chunk −2,0）
+    computeChunkLight(w, -2, 0); // 先讓外圈的光成為「乾淨且正確」
+    expect(blockLightAt(w, -16, 65, 8)).toBe(10); // 距離 4 → 14 − 4
+    computeChunkLight(w, 0, 0); // 重算中央群組：邊界要從外圈補回
+    expect(blockLightAt(w, -16, 65, 8)).toBe(10);
+    expect(blockLightAt(w, -15, 65, 8)).toBe(9);
+  });
+
+  it('an open outside column feeds sky light under a roofed group edge', () => {
+    // 同上，天空光通道：3×3 群組全部加 1 格厚屋頂，唯一開闊天空在外圈
+    // chunk (−2,0) → 群組邊界 (−16,65,0) 必須是 15 − 1 = 14。
+    const w = new World();
+    for (let cx = -2; cx <= 1; cx++)
+      for (let cz = -1; cz <= 1; cz++) w.addChunk(new Chunk(cx, cz));
+    fill(w, BLOCK.STONE, -16, 93, -16, 15, 93, 15);
+    computeChunkLight(w, -2, 0); // 外圈先算（開闊天空 15）
+    computeChunkLight(w, 0, 0); // 群組重算：屋頂下靠外圈邊界補光
+    expect(skyLightAt(w, -17, 65, 0)).toBe(15); // 屋頂外
+    expect(skyLightAt(w, -16, 65, 0)).toBe(14); // 邊界：外圈 15 − 1
+    expect(skyLightAt(w, -15, 65, 0)).toBe(13); // 往內每格 −1
   });
 
   it('a corner torch leaves no ghost light in the diagonal neighbour', () => {
@@ -433,6 +488,17 @@ describe('torch support (B6 Task 6: 支撐消失 → 火把收回)', () => {
     const popped = popUnsupportedTorches(w, 0, 63, 0);
     expect(popped).toEqual([{ x: 0, y: 64, z: 0 }]);
     expect(w.getBlock(0, 64, 0)).toBe(BLOCK.AIR); // 火把被收回
+  });
+
+  it('a wall torch pops off when only its wall support is removed', () => {
+    // 牆面依附：下方是空氣、唯一支撐在 +x。挖掉那面牆 → 火把收回並回報位置。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(1, 64, 0, BLOCK.STONE);
+    w.setBlock(0, 64, 0, TORCH);
+    w.setBlock(1, 64, 0, BLOCK.AIR);
+    expect(popUnsupportedTorches(w, 1, 64, 0)).toEqual([{ x: 0, y: 64, z: 0 }]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.AIR);
   });
 
   it('a torch with another support stays', () => {

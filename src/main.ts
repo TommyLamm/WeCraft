@@ -1095,8 +1095,9 @@ audio.setVolume(settings.volume);
 //      mesh ≤ r, unload r+2, drop-not-ready with NO re-push) ----
 const pendingGen: Array<[number, number]> = [];
 const pendingMesh: Array<[number, number]> = [];
-// B6 Task 3：光照重算佇列——lightDirty 的區塊進這裡，每幀重算最多 2 塊
-//（先有光再建網格；見 processQueues 的光照預算）。B6 Task 8：排序與預算
+// B6 Task 3：光照重算佇列——lightDirty 的區塊進這裡，每幀從佇列取最多 2 項
+//（先有光再建網格；見 processQueues 的光照預算）。一項會重算整個 3×3 群組，
+// 同群組的其他項因 lightDirty 已清而跳過。B6 Task 8：排序與預算
 // 判斷抽成 lighting.ts 的純函式（sortLightQueueByDistance／takeLightBudget），
 // 佇列項只留 [cx, cz]（距離由排序函式自己算）。
 let pendingLight: Array<[number, number]> = [];
@@ -1340,7 +1341,8 @@ function refreshQueues(): void {
   pendingMesh.sort((a, b) => dist2(a, pcx, pcz) - dist2(b, pcx, pcz));
   // 光照佇列同樣近→遠（2026-10-20 稽核修正）：原設計的 ring 掃描順序會讓遠處
   // 角落優先點亮、玩家附近最後才亮；依「區塊中心到玩家的距離平方」排序後，
-  // 玩家周圍先亮，其餘在後續幀以每幀 2 塊的預算補齊。
+  // 玩家周圍先亮，其餘在後續幀以每幀 2 個佇列項（每項一個 3×3 群組）的
+  // 預算補齊。
   // B6 Task 8：排序判斷抽成純函式（回傳新陣列）→ 重建佇列。
   pendingLight = sortLightQueueByDistance(pendingLight, pcx, pcz);
 
@@ -1373,14 +1375,11 @@ function processQueues(): void {
   const budgetLight = 2;
   let budgetMesh = 2;
   // B6 Task 3：先跑光照預算，再跑網格預算——lightDirty 尚未清除的區塊不能
-  // 建網格（會用 0 光烘焙出全黑 mesh）。重算粒度＝區塊（不做逐格 remove-BFS：
-  // 逐格版本要處理「光要往回吸」的邊界條件，錯誤率高、難測；區塊重算冪等，
-  // 語意由 lighting.test.ts 釘住）。
-  // B6 Task 8：「單幀最多 2 塊」的判斷抽成純函式（takeLightBudget，單元釘死）
-  // → 取一批、消費、逐塊重算。批次內不會有「過期項」：旗標的清除者只有
-  // 本迴圈的 computeChunkLight（作用的對象已在下面的快照裡、逐塊只拜訪一次）
-  // 與開局的出生區同步點亮（發生在任何 refreshQueues 之前）；收集
-  // （refreshQueues）與消費（此處）是相鄰的同步呼叫，之間沒有別的程式碼。
+  // 建網格（會用 0 光烘焙出全黑 mesh）。重算粒度＝3×3 群組（不做逐格 remove-BFS：
+  // 逐格版本要處理「光要往回吸」的邊界條件，錯誤率高、難測；群組重算冪等，
+  // 語意由 lighting.test.ts 釘住；單塊版本會讓對角區塊失去光源，見 lighting.ts）。
+  // B6 Task 8：「單幀最多 2 項」的判斷抽成純函式（takeLightBudget，單元釘死）
+  // → 取一批、消費、逐項重算；同群組的第二項由 lightDirty 守門跳過。
   const lightBatch = takeLightBudget(pendingLight, budgetLight);
   pendingLight.splice(0, lightBatch.length);
   for (const [cx, cz] of lightBatch) {
