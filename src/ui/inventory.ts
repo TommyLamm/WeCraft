@@ -166,10 +166,12 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       if (!target) return;
       const half = Math.ceil(target.count / 2);
       const rest = target.count - half;
-      cursor = { item: target.item, count: half };
+      // B7：耐久跟著堆疊上游標（工具堆疊 1 → 這一步就是整把搬移；沒有 dur
+      // 的話放回格子會被 setSlot materialize 成滿耐久＝洗白）。
+      cursor = { item: target.item, count: half, ...(target.dur !== undefined ? { dur: target.dur } : {}) };
       emitChange(index, rest >= 1 ? { item: target.item, count: rest } : null);
     } else if (!target) {
-      emitChange(index, { item: cursor.item, count: 1 });
+      emitChange(index, { item: cursor.item, count: 1, ...(cursor.dur !== undefined ? { dur: cursor.dur } : {}) });
       cursor = cursor.count > 1 ? { item: cursor.item, count: cursor.count - 1 } : null;
     } else if (target.item === cursor.item && target.count < maxStack(target.item)) {
       emitChange(index, { item: target.item, count: target.count + 1 });

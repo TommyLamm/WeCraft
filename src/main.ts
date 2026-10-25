@@ -485,27 +485,31 @@ function applyAdvancement(ev: AdvancementEvent): void {
 }
 
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
+ *  B7 R6：`dur` 是這疊的剩餘耐久，**必須一路帶到底**——受損工具經 UI 往返
+ *  （合成格交還、游標歸還、`resetCraftGrid` 沖刷）不得被洗成滿耐久；
+ *  非耐久物品照舊沒有 `dur`（呼叫端傳 undefined → 模型 materialize 成滿耐久，
+ *  但工具堆疊上限 1，合併迴圈永遠不會合併它們）。
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
  *  stacks directly (merge partials, then empty slots). That branch is NOT dead
  *  (review #3): the crafting take/give-back paths are survival-only now, but
  *  `resetCraftGrid`'s flush below runs on every inventory open in ANY mode —
  *  a grid staged in survival and then mode-toggled must still hand its items
  *  back instead of losing them to the creative no-op. */
-function giveItem(item: ItemId, count: number): number {
-  if (inventory.mode !== 'creative') return inventory.addItem(item, count);
+function giveItem(item: ItemId, count: number, dur?: number): number {
+  if (inventory.mode !== 'creative') return inventory.addItem(item, count, dur);
   const cap = maxStack(item);
   let rest = count;
   for (let i = 0; i < slots.length && rest > 0; i++) {
     const s = slots[i];
     if (!s || s.item !== item || s.count >= cap) continue;
     const put = Math.min(cap - s.count, rest);
-    inventory.setSlot(i, { item, count: s.count + put });
+    inventory.setSlot(i, { item, count: s.count + put, ...(dur !== undefined ? { dur } : {}) });
     rest -= put;
   }
   for (let i = 0; i < slots.length && rest > 0; i++) {
     if (slots[i]) continue;
     const put = Math.min(cap, rest);
-    inventory.setSlot(i, { item, count: put });
+    inventory.setSlot(i, { item, count: put, ...(dur !== undefined ? { dur } : {}) });
     rest -= put;
   }
   return rest;
@@ -526,11 +530,14 @@ function resetCraftGrid(size: 2 | 3): void {
   craftGrid = emptyGrid(size);
   let front = 0;
   for (const p of pending) {
-    const overflow = giveItem(p.item, p.count);
+    // B7 R6：耐久跟著堆疊走——沖刷與重新停放（craftGrid/craftExcess）都帶著
+    // `p.dur`，受損工具不會在「開背包」這一步被洗白。
+    const overflow = giveItem(p.item, p.count, p.dur);
     if (overflow > 0 && front < craftGrid.length) {
-      craftGrid[front++] = { item: p.item, count: overflow };
+      // 工具堆疊上限 1 → 溢出的工具是整把停在前面幾格，`dur` 原樣保留
+      craftGrid[front++] = { item: p.item, count: overflow, ...(p.dur !== undefined ? { dur: p.dur } : {}) };
     } else if (overflow > 0) {
-      craftExcess.push({ item: p.item, count: overflow });
+      craftExcess.push({ item: p.item, count: overflow, ...(p.dur !== undefined ? { dur: p.dur } : {}) });
     }
   }
 }
@@ -557,8 +564,10 @@ function craftingParams(size: 2 | 3): CraftingParams {
       hud.setHotbar(slots, selected);
       return true;
     },
-    onGiveBack: (item) => {
-      const overflow = giveItem(item, 1);
+    // B7 R6：交還的是「合成格裡那一疊」→ 它的 `dur` 要一起傳（受損工具
+    // 從合成格拿回來仍是受損的）。
+    onGiveBack: (item, dur) => {
+      const overflow = giveItem(item, 1, dur);
       hud.setHotbar(slots, selected);
       return overflow;
     },
@@ -613,7 +622,8 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
   const stack = which === 'input' ? st.input : st.fuel;
   let next: FurnaceState | null = null;
   if (stack && Number.isFinite(stack.count) && stack.count >= 1) {
-    if (giveItem(stack.item, 1) > 0) return; // inventory full → stays put
+    // B7 R6：耐久跟著回背包（熔爐只吃可熔／可燃物 → 對工具不可達，順手一致）
+    if (giveItem(stack.item, 1, stack.dur) > 0) return; // inventory full → stays put
     const rest = stack.count > 1 ? { item: stack.item, count: stack.count - 1 } : null;
     next = which === 'input' ? { ...st, input: rest } : { ...st, fuel: rest };
   } else {
@@ -801,6 +811,9 @@ function dropSelected(wholeStack: boolean): void {
         y: PLAYER_DROP_LIFT_SPEED,
         z: fz * PLAYER_DROP_THROW_SPEED,
       },
+      // B7：掉落物帶著 `dur`，撿回來不會洗成滿耐久（非工具沒有 `dur`，
+      // spawnDrop 不會把 `dur: undefined` 寫進實體）。
+      dur: stack.dur,
     },
   );
   hud.setHotbar(slots, selected); // 熱鍵欄計數變了 → 刷新
@@ -1635,10 +1648,15 @@ function setState(next: GameState): void {
         },
         // 關閉面板 → 把游標上的堆疊交回背包；回傳放不下的餘量（null ＝ 全部
         // 放回了）。背包滿時餘量留在 UI 上，下次開面板還看得到（不再憑空消失）。
+        // B7 R6：游標上的堆疊帶著 `dur` 原樣交回（受損工具不會在關面板時復活）。
         onReturnCursor: (stack) => {
-          const overflow = giveItem(stack.item, stack.count);
+          const overflow = giveItem(stack.item, stack.count, stack.dur);
           hud.setHotbar(slots, selected);
-          return overflow > 0 ? { item: stack.item, count: overflow } : null;
+          // B7 R6：放不下而留在游標上的餘量也要帶著 `dur`（下次開面板再放下
+          // 才不會洗白；工具堆疊 1 → 餘量必是整把）。
+          return overflow > 0
+            ? { item: stack.item, count: overflow, ...(stack.dur !== undefined ? { dur: stack.dur } : {}) }
+            : null;
         },
       },
     );
@@ -3175,6 +3193,9 @@ gs.renderer.setAnimationLoop(() => {
                 if (!held || !Number.isFinite(held.count) || held.count < 1) continue;
                 drops = spawnDrop(drops, held.item, held.count, {
                   x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5,
+                }, {
+                  // B7：掉落物帶著 `dur`，撿回來不會洗成滿耐久（見 drops.ts）
+                  dur: held.dur,
                 });
                 spilled = true;
               }

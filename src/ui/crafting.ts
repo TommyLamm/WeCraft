@@ -40,8 +40,10 @@ export interface CraftingParams {
   /** Remove 1 `item` from `slots[slot]`（slot 是背包活陣列的索引 0..35）;
    *  false → nothing moved (wrong/empty). */
   onSpend(slot: number, item: ItemId): boolean;
-  /** Put 1 `item` back into the inventory; returns overflow (1 = didn't fit). */
-  onGiveBack(item: ItemId): number;
+  /** Put 1 `item` back into the inventory; returns overflow (1 = didn't fit).
+   *  B7 R6：`dur` 是這格堆疊的剩餘耐久（受損工具交還時不得被洗成滿耐久）；
+   *  非耐久物品沒有 `dur`（呼叫端照舊只收到一個引數的有意義值）。 */
+  onGiveBack(item: ItemId, dur?: number): number;
   /** Try to take `result`; false blocks the take and leaves the grid intact. */
   onTake(result: ItemStack): boolean;
 }
@@ -141,7 +143,8 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
     const cellStack = params.grid[i];
     if (validStack(cellStack)) {
       // filled → hand one back; overflow (inventory full) leaves the cell as is
-      if (params.onGiveBack(cellStack.item) > 0) {
+      // B7 R6：耐久跟著堆疊走（受損工具交還不得洗白）
+      if (params.onGiveBack(cellStack.item, cellStack.dur) > 0) {
         render();
         return;
       }
@@ -150,7 +153,9 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
       const src = params.slots[selected];
       if (!validStack(src)) return; // nothing selected to pull from
       if (!params.onSpend(selected, src.item)) return; // slot changed underneath
-      params.grid[i] = { item: src.item, count: 1 };
+      // B7 R6：耐久跟著堆疊進合成格（受損工具拉進來不得洗白）；
+      // 非耐久物品沒有 `dur` → 不寫入 `dur: undefined`。
+      params.grid[i] = { item: src.item, count: 1, ...(src.dur !== undefined ? { dur: src.dur } : {}) };
     }
     render();
   };

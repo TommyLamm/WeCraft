@@ -53,6 +53,10 @@ export interface DropEntity {
   age: number; // seconds since spawn
   pickupDelay: number; // seconds remaining before pickable (spawn = 0.5)
   bounced: boolean; // has it used its single bounce?
+  /** 掉落物的剩餘耐久（B7）；沒有 `dur` 的工具撿起來是滿耐久。
+   *  **地面不是洗衣機**：受損工具丟出去／從熔爐噴出來時帶著 `dur`，
+   *  撿回來仍是受損的。 */
+  dur?: number;
 }
 
 /** Block → drop item, with vanilla-parity overrides:
@@ -135,15 +139,20 @@ export interface SpawnDropOptions {
   pickupDelay?: number;
   /** 初速度；預設 `{ 隨機 ±1.5 的水平速度, y = +3 }`（原地跳一下）。 */
   vel?: { x: number; y: number; z: number };
+  /** 掉落物要帶的剩餘耐久（B7：Q 丟棄的受損工具、挖掉熔爐時噴出的受損工具）。
+   *  **不給時實體完全沒有 `dur` 欄位** → 撿起來由模型 materialize 成滿耐久。 */
+  dur?: number;
 }
 
 /** Append a dropped stack at `pos` — returns a NEW array with one more entity
  *  (unique, max+1 id). Pops upward (vel.y = +3) with a small random horizontal
  *  velocity (x/z ∈ [−1.5, 1.5]) and starts the 0.5 s pickup delay.
  *
- *  `opts` 可覆寫拾取延遲與初速度（玩家丟出的物品要 2 秒不可拾 → 傳
+ *  `opts` 可覆寫拾取延遲、初速度與耐久（玩家丟出的物品要 2 秒不可拾 → 傳
  *  `pickupDelay: PLAYER_DROP_PICKUP_DELAY`）；**不傳時預設行為完全不變**。
- *  傳入的 `pos`／`vel` 一律被**複製**——實體不引用呼叫端的物件。 */
+ *  傳入的 `pos`／`vel` 一律被**複製**——實體不引用呼叫端的物件。
+ *  `opts.dur` 有值時掉落物帶著剩餘耐久 → 撿回來不會洗成滿耐久；沒有值時
+ *  實體不含 `dur` 欄位（不是 `dur: undefined`）。 */
 export function spawnDrop(
   drops: readonly DropEntity[],
   item: ItemId,
@@ -166,6 +175,8 @@ export function spawnDrop(
       age: 0,
       pickupDelay: opts.pickupDelay ?? SPAWN_PICKUP_DELAY,
       bounced: false,
+      // 只在有值時寫入：`dur: undefined` 會讓既有的 deep-equal 斷言多出一個鍵
+      ...(opts.dur !== undefined ? { dur: opts.dur } : {}),
     },
   ];
 }
@@ -273,6 +284,9 @@ export function pickable(
  *  - `overflow === 0`     → fully taken: the entity is removed;
  *  - otherwise            → partial: the entity stays with `count = overflow`.
  *
+ *  B7：`d.dur` 原樣交給 `addItem`——受損工具撿回來仍是受損的（地面不是
+ *  洗衣機）；沒有 `dur` 的掉落物由模型 materialize 成滿耐久。
+ *
  *  Returns `{ drops, overflow }` with a NEW array in every branch (invalid
  *  index → no-op, overflow 0). Creative caveat: `addItem` no-ops returning 0
  *  there, which reads as "fully taken" and WOULD delete ground drops — so
@@ -286,7 +300,7 @@ export function pickup(
   const d = idx >= 0 && idx < drops.length ? drops[idx] : undefined;
   if (!d) return { drops: [...drops], overflow: 0 };
 
-  const overflow = inventory.addItem(d.item, d.count);
+  const overflow = inventory.addItem(d.item, d.count, d.dur); // B7: dur 一起進背包
   if (overflow >= d.count) return { drops: [...drops], overflow: d.count }; // nothing taken
   if (overflow <= 0) return { drops: drops.filter((_, i) => i !== idx), overflow: 0 };
   return {

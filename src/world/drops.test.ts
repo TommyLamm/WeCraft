@@ -542,3 +542,42 @@ describe('chanceDropFor (機率掉落：樹葉 0.5% 蘋果)', () => {
     expect(dropItemFor(BLOCK.SPRUCE_LEAVES)).toBeNull();
   });
 });
+
+// ---- B7 Task 4：掉落物攜帶耐久（地上撿回來的工具不得洗白） --------------------
+describe('B7 drops carry durability', () => {
+  it('spawnDrop carries a durability', () => {
+    const [d] = spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 0, z: 0 }, { dur: 77 });
+    expect(d.dur).toBe(77);
+  });
+
+  it('spawnDrop without a durability option has none', () => {
+    const [d] = spawnDrop([], 'dirt', 1, { x: 0, y: 0, z: 0 });
+    expect(d.dur).toBeUndefined();
+    // 不寫入 `dur: undefined`：實體完全沒有這個欄位，既有 deep-equal 斷言不受影響。
+    expect(Object.hasOwn(d, 'dur')).toBe(false);
+  });
+
+  it('stepping preserves the durability of a lying drop', () => {
+    const [d] = stepDrops(
+      spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 5, z: 0 }, { dur: 77 }),
+      0.1,
+      noGround,
+    );
+    expect(d.dur).toBe(77); // 物理步進只搬位置，不動耐久
+  });
+
+  it('pickup puts the durability back into the inventory', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    const drops = spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 0, z: 0 }, { dur: 77 });
+    const res = pickup(drops, 0, inv);
+    expect(res.overflow).toBe(0);
+    expect(inv.slots[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 77 });
+  });
+
+  it('a drop without a durability is picked up as a full-durability tool', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    const drops = spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 0, z: 0 });
+    pickup(drops, 0, inv);
+    expect(inv.slots[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 250 }); // 鐵滿耐久
+  });
+});

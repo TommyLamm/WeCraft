@@ -425,6 +425,54 @@ describe('inventory panel (B5 Task 8: 36 slots + cursor stacks)', () => {
     inv.close();
   });
 
+  it('B7: right-click cursor round-trips never wash a damaged tool', () => {
+    // 審查追加（與 R6 同類、超出其列舉清單）：右鍵取一半與右鍵放 1 個都用
+    // `{ item, count }` 重建堆疊 → `dur` 掉在游標上，放回格子就被
+    // `setSlot` materialize 成滿耐久。工具堆疊上限 1 → 兩個動作都是「整把
+    // 搬移」，`dur` 必須跟著走。
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'iron_pickaxe', count: 1, dur: 77 };
+    const changes: Array<[number, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        changes.push([i, st]);
+        s[i] = st;
+      },
+    });
+    const hot0 = root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement;
+    const main0 = root.querySelectorAll('.ui-inv-main .ui-slot')[0] as HTMLElement;
+    // 右鍵取一半：1 → 整把上游標（格子清空）
+    hot0.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(changes[0]).toEqual([0, null]);
+    // 右鍵放 1 個：落格的那把必須仍是 77，不是滿耐久 250
+    main0.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(changes[1]).toEqual([9, { item: 'iron_pickaxe', count: 1, dur: 77 }]);
+    inv.close();
+  });
+
+  it('B7: taking a damaged tool onto the cursor and placing it keeps its dur', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[0] = { item: 'stone_pickaxe', count: 1, dur: 40 };
+    const changes: Array<[number, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      onSlotChange: (i, st) => {
+        changes.push([i, st]);
+        s[i] = st;
+      },
+    });
+    const hot0 = root.querySelectorAll('.ui-inv-bar .ui-slot')[0] as HTMLElement;
+    const main0 = root.querySelectorAll('.ui-inv-main .ui-slot')[0] as HTMLElement;
+    hot0.click(); // 左鍵整疊拿上游標
+    expect(changes[0]).toEqual([0, null]);
+    main0.click(); // 左鍵放下
+    expect(changes[1]).toEqual([9, { item: 'stone_pickaxe', count: 1, dur: 40 }]);
+    inv.close();
+  });
+
   it('closing the panel hands the cursor stack back', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);

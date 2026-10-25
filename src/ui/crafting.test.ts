@@ -173,7 +173,9 @@ describe('crafting section (embedded)', () => {
     clickCell(0); // place
     expect(grid[0]).not.toBeNull();
     clickCell(0); // take one back
-    expect(params.onGiveBack).toHaveBeenCalledWith('oak_planks');
+    // B7 R6：`onGiveBack` 多了可選的 `dur` → 非耐久物品明確傳 `undefined`
+    // （斷言強度不變：第二個引數必須是 undefined，不是被省略）。
+    expect(params.onGiveBack).toHaveBeenCalledWith('oak_planks', undefined);
     expect(grid[0]).toBeNull();
   });
 
@@ -279,5 +281,39 @@ describe('crafting overlay (createCrafting)', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(root().querySelector('.ui-craft')).toBeNull();
+  });
+});
+
+// ---- B7 R6：合成格往返不得洗白耐久 ------------------------------------------
+describe('B7 crafting-cell durability round-trip (R6)', () => {
+  it('pulling a damaged tool into an empty cell stages its dur', () => {
+    // 審查發現的洗白路徑（R6）：受損工具拉進合成格時 `dur` 掉了 → 交還時
+    // 被洗成滿耐久。第一半：staging 必須保留 `dur`。
+    const { grid, slots, params } = harness(2);
+    slots[0] = { item: 'iron_pickaxe', count: 1, dur: 77 }; // 選取的熱鍵格：受損鐵鎬
+    mountCrafting(root(), params);
+    clickCell(0);
+    expect(params.onSpend).toHaveBeenCalledWith(0, 'iron_pickaxe');
+    expect(grid[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 77 });
+    expect(slots[0]).toBeNull(); // 工具堆疊上限 1 → 整把移出
+  });
+
+  it('clicking a filled cell that holds a damaged tool passes its dur to onGiveBack', () => {
+    const { grid, params } = harness(2);
+    grid[0] = { item: 'stone_pickaxe', count: 1, dur: 40 };
+    mountCrafting(root(), params);
+    clickCell(0); // 交還背包
+    expect(params.onGiveBack).toHaveBeenCalledWith('stone_pickaxe', 40); // 不是滿耐久 131
+    expect(grid[0]).toBeNull();
+  });
+
+  it('a damaged tool survives the full crafting-cell round-trip', () => {
+    const { grid, slots, params } = harness(2);
+    slots[0] = { item: 'iron_pickaxe', count: 1, dur: 77 };
+    mountCrafting(root(), params);
+    clickCell(0); // 拉進合成格
+    clickCell(0); // 交還背包
+    expect(params.onGiveBack).toHaveBeenCalledWith('iron_pickaxe', 77); // 進了又出仍是 77
+    expect(grid[0]).toBeNull();
   });
 });
