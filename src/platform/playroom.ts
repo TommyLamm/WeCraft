@@ -18,6 +18,18 @@ export interface PlayroomDeps {
   loadModule?: () => Promise<PlayroomModule | null>;
 }
 
+/** The outcome of one save attempt.
+ *  - `saved`: the platform confirmed the write (`saved === true`) — the ONLY
+ *    outcome that proves persistence and may advance the revision.
+ *  - `unconfirmed`: the platform answered without confirming persistence. The
+ *    snapshot must be kept and retried with the same requestId; the revision
+ *    must NOT advance.
+ *  - `unavailable`: nothing was written (preview mode, guest, standalone). */
+export type CloudSaveOutcome =
+  | { status: 'saved'; revision: number }
+  | { status: 'unconfirmed' }
+  | { status: 'unavailable' };
+
 export interface CloudClient {
   readonly status: CloudStatus;
   readonly readyInfo: PlayroomReady | null;
@@ -28,7 +40,7 @@ export interface CloudClient {
     revision: number,
     formatVersion: number,
     requestId: string,
-  ): Promise<{ revision: number } | null>;
+  ): Promise<CloudSaveOutcome>;
 }
 
 /** Upper bound around the SDK's internal 8 s readiness timeout. */
@@ -148,15 +160,23 @@ export function createCloudClient(deps: PlayroomDeps = {}): CloudClient {
       revision: number,
       formatVersion: number,
       requestId: string,
-    ): Promise<{ revision: number } | null> {
-      if (!mod || !readyInfo || readyInfo.progressAvailable === false) return null;
+    ): Promise<CloudSaveOutcome> {
+      if (!mod || !readyInfo || readyInfo.progressAvailable === false) {
+        return { status: 'unavailable' };
+      }
       try {
         // No preview-mode short-circuit here: the SDK already resolves null
         // for preview saves, and that null passes straight through.
         const res = await mod.saveProgress({ data, revision, formatVersion, requestId });
-        if (!res) return null;
+        if (!res) return { status: 'unavailable' };
+        // ONLY `saved === true` proves persistence (platform contract). The
+        // SDK type says `saved: true`, but the runtime value is checked — an
+        // unconfirmed write must never advance the revision or be reported as
+        // synced. The cast keeps the defensive check honest.
+        const saved = (res as { saved?: unknown }).saved;
+        if (saved !== true) return { status: 'unconfirmed' };
         status = 'ready';
-        return { revision: res.revision };
+        return { status: 'saved', revision: res.revision };
       } catch (err) {
         status = statusForError(err);
         throw err;

@@ -44,7 +44,7 @@ describe('createCloudClient', () => {
     const s = await c.init();
     expect(['guest', 'unsupported']).toContain(s);
     await expect(c.load()).resolves.toBeNull();
-    await expect(c.save({}, 0, 1, 'req-1')).resolves.toBeNull();
+    await expect(c.save({}, 0, 1, 'req-1')).resolves.toEqual({ status: 'unavailable' });
   });
 
   it('guest (progressAvailable false) inits to guest and never calls saveProgress', async () => {
@@ -54,7 +54,7 @@ describe('createCloudClient', () => {
     const c = createCloudClient({ loadModule: async () => m });
     await expect(c.init()).resolves.toBe('guest');
     expect(c.status).toBe('guest');
-    await expect(c.save({ a: 1 }, 1, 1, 'r-1')).resolves.toBeNull();
+    await expect(c.save({ a: 1 }, 1, 1, 'r-1')).resolves.toEqual({ status: 'unavailable' });
     expect(saveProgress).not.toHaveBeenCalled();
     await expect(c.load()).resolves.toBeNull();
     expect(loadProgress).not.toHaveBeenCalled();
@@ -95,8 +95,47 @@ describe('createCloudClient', () => {
     });
     const c = createCloudClient({ loadModule: async () => m });
     await expect(c.init()).resolves.toBe('ready');
-    await expect(c.save({ k: 1 }, 7, 1, 'req-123')).resolves.toEqual({ revision: 8 });
+    await expect(c.save({ k: 1 }, 7, 1, 'req-123')).resolves.toEqual({
+      status: 'saved',
+      revision: 8,
+    });
     expect(seen).toMatchObject({ revision: 7, formatVersion: 1, requestId: 'req-123' });
+  });
+
+  it('saveProgress without saved:true is unconfirmed and never advances the revision', async () => {
+    // A2 / the platform contract: only `saved: true` proves persistence. The
+    // SDK type promises `saved: true`, so the runtime value is what counts —
+    // an unconfirmed write must not be reported as synced.
+    const m = modWith(AUTH_READY, {
+      saveProgress: async (input) =>
+        ({
+          data: input.data,
+          revision: 99,
+          formatVersion: input.formatVersion,
+          gameVersion: '0.10.0',
+          updatedAt: '2026-10-26T00:00:00.000Z',
+          saved: false,
+        }) as unknown as Awaited<ReturnType<PlayroomModule['saveProgress']>>,
+    });
+    const c = createCloudClient({ loadModule: async () => m });
+    await c.init();
+    await expect(c.save({ k: 1 }, 7, 1, 'req-1')).resolves.toEqual({ status: 'unconfirmed' });
+  });
+
+  it('saveProgress with a missing saved flag is unconfirmed', async () => {
+    const m = modWith(AUTH_READY, {
+      saveProgress: async (input) =>
+        ({
+          data: input.data,
+          revision: 99,
+          formatVersion: input.formatVersion,
+          gameVersion: '0.10.0',
+          updatedAt: '2026-10-26T00:00:00.000Z',
+        }) as unknown as Awaited<ReturnType<PlayroomModule['saveProgress']>>,
+    });
+    const c = createCloudClient({ loadModule: async () => m });
+    await c.init();
+    await expect(c.save({ k: 1 }, 7, 1, 'req-1')).resolves.toEqual({ status: 'unconfirmed' });
   });
 
   it('SAVE_REVISION_CONFLICT rethrows the original error and sets conflict', async () => {
@@ -183,11 +222,11 @@ describe('createCloudClient', () => {
     expect(c2.status).toBe('conflict');
   });
 
-  it('null saveProgress result passes through as null without changing status', async () => {
+  it('null saveProgress result is unavailable and leaves the status alone', async () => {
     const m = modWith(AUTH_READY, { saveProgress: async () => null });
     const c = createCloudClient({ loadModule: async () => m });
     await expect(c.init()).resolves.toBe('ready');
-    await expect(c.save({}, 1, 1, 'r-1')).resolves.toBeNull();
+    await expect(c.save({}, 1, 1, 'r-1')).resolves.toEqual({ status: 'unavailable' });
     expect(c.status).toBe('ready');
   });
 });

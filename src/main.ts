@@ -1975,10 +1975,19 @@ async function sendPendingCloud(): Promise<void> {
       CLOUD_FORMAT_VERSION,
       snapshot.requestId,
     );
-    if (!res) {
-      // Preview-mode null (Task 3 passthrough): no revision to record — drop
-      // the snapshot without touching flags or the row.
+    if (res.status === 'unavailable') {
+      // Nothing was written (preview mode / guest): drop the snapshot without
+      // touching flags or the row.
       pendingCloud = null;
+      return;
+    }
+    if (res.status === 'unconfirmed') {
+      // The platform did NOT confirm the write (A2): keep the snapshot AND
+      // the revision so the retry can reuse the same requestId. Reporting
+      // this as synced (and advancing the revision) is exactly the bug the
+      // audit flagged.
+      cloudFailureKind = 'NETWORK';
+      cloudRetryable = true;
       return;
     }
     cloudRevision = res.revision;
