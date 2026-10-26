@@ -78,10 +78,22 @@ function fillSlot(slot: HTMLElement, stack: ItemStack | null): void {
   mountDurabilityBar(slot, stack);
 }
 
+/** A mounted crafting section — the owner keeps the handle so it can re-render
+ *  the section after the live grid changed under it (A4) and unmount it. */
+export interface CraftingSection {
+  /** Remove the section from the DOM (idempotent). */
+  unmount(): void;
+  /** Re-render the section from the CURRENT live arrays. The owner may have
+   *  flushed the grid **in place** (the array identity never changes) — the
+   *  section must show the new contents, not the ones it drew at mount time. */
+  refresh(): void;
+}
+
 /** Render the crafting section (grid + arrow + result + hotbar row) into `host`.
- *  Returns an unmount function. The section re-renders itself after every
- *  interaction — all state lives in the params' live arrays + local `selected`. */
-export function mountCrafting(host: HTMLElement, params: CraftingParams): () => void {
+ *  Returns the section handle (`unmount` / `refresh`). The section re-renders
+ *  itself after every interaction — all state lives in the params' live arrays
+ *  + local `selected`. */
+export function mountCrafting(host: HTMLElement, params: CraftingParams): CraftingSection {
   const sourceCount = params.sourceCount ?? DEFAULT_SOURCE_SLOTS;
   let selected =
     Number.isInteger(params.selected) && params.selected >= 0 && params.selected < sourceCount
@@ -176,7 +188,10 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): () => 
 
   render();
   host.appendChild(section);
-  return () => section.remove();
+  return {
+    unmount: () => section.remove(),
+    refresh: () => render(),
+  };
 }
 
 export interface CraftingUi {
@@ -185,13 +200,17 @@ export interface CraftingUi {
   open(params: CraftingOpenParams): void;
   close(): void;
   isOpen(): boolean;
+  /** Re-render the open overlay from the CURRENT live arrays (A4: the owner
+   *  flushed the grid in place → the panel must show the flushed state).
+   *  No-op when the overlay is closed. */
+  refresh(): void;
 }
 
 /** Standalone overlay wrapper around `mountCrafting` (mirrors inventory.ts's
  *  backdrop + Esc lifecycle). The embedded 2×2 path uses `mountCrafting` directly. */
 export function createCrafting(uiRoot: HTMLElement): CraftingUi {
   let el: HTMLElement | null = null;
-  let unmount: (() => void) | null = null;
+  let section: CraftingSection | null = null;
   let escHandler: ((e: KeyboardEvent) => void) | null = null;
 
   const detach = (): void => {
@@ -199,8 +218,8 @@ export function createCrafting(uiRoot: HTMLElement): CraftingUi {
       document.removeEventListener('keydown', escHandler);
       escHandler = null;
     }
-    unmount?.();
-    unmount = null;
+    section?.unmount();
+    section = null;
     el?.remove();
     el = null;
   };
@@ -233,11 +252,14 @@ export function createCrafting(uiRoot: HTMLElement): CraftingUi {
       panel.appendChild(h);
       el.appendChild(panel);
       uiRoot.appendChild(el);
-      unmount = mountCrafting(panel, params);
+      section = mountCrafting(panel, params);
     },
     close() {
       detach();
     },
     isOpen: () => el !== null,
+    refresh() {
+      section?.refresh(); // no-op when closed
+    },
   };
 }

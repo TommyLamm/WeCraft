@@ -9,7 +9,7 @@ import {
 } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
-import { mountCrafting, type CraftingParams } from './crafting';
+import { mountCrafting, type CraftingParams, type CraftingSection } from './crafting';
 import { mountDurabilityBar } from './durbar';
 
 /** Copy a stack into a slot element (own canvas — `itemIcon` caches ONE canvas
@@ -75,12 +75,23 @@ export interface InventoryUi {
   ): void;
   close(): void;
   isOpen(): boolean;
+  /** Re-render the embedded crafting section (and the 36 slots — the owner's
+   *  flush moves items between the grid and the slots, A4). No-op when the
+   *  panel is closed or no crafting section is mounted (creative). */
+  refreshCrafting(): void;
+  /** Drain the cursor stack: clear it and return what it held (A4 — the
+   *  cursor is UI-owned state and must not survive a session boundary).
+   *  The owner already got one chance to take it back (`close` →
+   *  `onReturnCursor`); whatever is left is returned here so the caller can
+   *  decide where it goes (a session boundary drops it on the ground).
+   *  Returns null when the cursor is empty (idempotent). */
+  returnCursor(): ItemStack | null;
 }
 
 export function createInventory(uiRoot: HTMLElement): InventoryUi {
   let el: HTMLElement | null = null;
   let escHandler: ((e: KeyboardEvent) => void) | null = null;
-  let unmountCrafting: (() => void) | null = null;
+  let craftingSection: CraftingSection | null = null;
   // 游標堆疊（點擊選取→點擊放置）存在閉包裡：close 時交還擁有者、
   // 放不下時留在這裡跨 open 顯示。
   let cursor: ItemStack | null = null;
@@ -247,7 +258,7 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       h.textContent = survival ? '背包' : `方塊（點選放入欄位 ${selected + 1}）`;
       panel.appendChild(h);
       // 2×2 crafting section sits above the grids（ survival；creative 無）。
-      if (crafting) unmountCrafting = mountCrafting(panel, crafting);
+      if (crafting) craftingSection = mountCrafting(panel, crafting);
 
       // 27 格主背包對應 slots[9..35]、9 格熱鍵列對應 slots[0..8]。
       // 持久節點＋就地重繪：游標模型點擊後只換內容，不重建節點。
@@ -310,8 +321,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
         document.removeEventListener('keydown', escHandler);
         escHandler = null;
       }
-      unmountCrafting?.();
-      unmountCrafting = null;
+      craftingSection?.unmount();
+      craftingSection = null;
       if (cursorEl) {
         cursorEl.remove();
         cursorEl = null;
@@ -323,5 +334,19 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       el = null;
     },
     isOpen: () => el !== null,
+    refreshCrafting() {
+      if (!el) return; // closed → nothing to re-render
+      // The owner's flush moved items between the grid and the slots: repaint
+      // both (the slot nodes are persistent, so this only swaps their content).
+      render();
+      craftingSection?.refresh();
+    },
+    returnCursor() {
+      const leftover = cursor;
+      cursor = null;
+      cursorEl?.remove();
+      cursorEl = null;
+      return leftover;
+    },
   };
 }

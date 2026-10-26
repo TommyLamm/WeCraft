@@ -76,7 +76,7 @@ function clickCell(i: number, times = 1): void {
 describe('crafting section (embedded)', () => {
   it('2×2 renders 4 grid slots + result slot + hotbar row', () => {
     const { params } = harness(2);
-    const unmount = mountCrafting(root(), params);
+    const { unmount } = mountCrafting(root(), params);
     expect(root().querySelectorAll('.ui-craft-grid .ui-slot').length).toBe(4);
     expect(root().querySelectorAll('.ui-craft-result').length).toBe(1);
     expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
@@ -110,7 +110,7 @@ describe('crafting section (embedded)', () => {
       ...new Array(INVENTORY_SLOTS - params.slots.length).fill(null),
     ];
     wide[INVENTORY_SLOTS - 1] = { item: 'diamond', count: 64 };
-    const unmount = mountCrafting(root(), { ...params, slots: wide, sourceCount: INVENTORY_SLOTS });
+    const { unmount } = mountCrafting(root(), { ...params, slots: wide, sourceCount: INVENTORY_SLOTS });
     expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(INVENTORY_SLOTS);
     const tail = root().querySelector('[data-slot="35"]') as HTMLElement;
     expect(tail).not.toBeNull();
@@ -195,7 +195,7 @@ describe('crafting section (embedded)', () => {
 
   it('placing a matching pattern shows the result live (2 planks vertical → stick ×4)', () => {
     const { params } = harness(2);
-    const unmount = mountCrafting(root(), params);
+    const { unmount } = mountCrafting(root(), params);
     clickCell(0);
     clickCell(2);
     const result = resultSlot();

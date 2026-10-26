@@ -27,7 +27,6 @@ import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENT
 import { damageStack } from './core/durability';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry } from './core/boot-entry';
-import { emptyGrid } from './core/recipes';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
@@ -154,6 +153,9 @@ import { createMenus } from './ui/menus';
 import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
+// A4: the session-boundary reset of the UI-owned state (crafting grid /
+// cursor) — the rules live in a pure module, main only wires it to the UI.
+import { flushCraftGrid } from './ui/session-boundary';
 import { createFurnace } from './ui/furnace';
 import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
@@ -525,26 +527,64 @@ function giveItem(item: ItemId, count: number, dur?: number): number {
  *  don't fit land in the FRONT cells of the new grid — visible and craftable,
  *  never lost. Called on every crafting open (the grid starts empty) and on
  *  every inventory open (see the call site — it must flush in creative too).
- *  Task 13: flush craftGrid before save (staged items live only in this array). */
-function resetCraftGrid(size: 2 | 3): void {
-  const pending: ItemStack[] = [...craftExcess];
-  craftExcess = [];
-  for (const cell of craftGrid) {
-    if (cell && Number.isFinite(cell.count) && cell.count >= 1) pending.push({ ...cell });
+ *  Task 13: flush craftGrid before save (staged items live only in this array).
+ *
+ *  A4: the grid is emptied **IN PLACE** — the open panel captured the array
+ *  reference at open time (the UI writes cells in place); reassigning the
+ *  module variable would orphan the UI's grid (its clicks would hand the same
+ *  item over AGAIN → duplication, and anything staged afterwards would live
+ *  only in the orphan → loss). `dropOverflow` (session boundaries) takes the
+ *  stacks that fit nowhere instead of re-staging them — a re-staged stack
+ *  would leak into the NEXT session's inventory. */
+function resetCraftGrid(size: 2 | 3, dropOverflow?: (stack: ItemStack) => void): void {
+  flushCraftGrid({ grid: craftGrid, excess: craftExcess }, size, { giveItem, dropOverflow });
+  // The flush hands items back to the slots → the hotbar HUD must show them
+  // (the save-time flush can fire mid-game with no panel open).
+  hud.setHotbar(slots, selected);
+  // The open panel holds the SAME (now empty) array → it must be re-rendered.
+  if (craftUi.isOpen()) craftUi.refresh();
+  if (inv.isOpen()) inv.refreshCrafting();
+}
+
+/** A4: 把一疊「哪裡都放不下」的物品丟在玩家腳邊（地面掉落）。
+ *  地面不是洗衣機：受損工具帶著 `dur` 丟出去（撿回來仍是受損的）。 */
+function dropAtPlayer(stack: ItemStack): void {
+  if (!Number.isFinite(stack.count) || stack.count < 1) return;
+  drops = spawnDrop(drops, stack.item, stack.count, player.position, {
+    ...(stack.dur !== undefined ? { dur: stack.dur } : {}),
+  });
+}
+
+/** A4: **session 邊界**——UI 擁有的狀態（合成格／背包游標）一律不得跨場次。
+ *
+ *  兩種跨界的傷害（審查 A4）：
+ *  ① 舞台化的材料在「繼續遊戲」後被沖刷進**已還原的背包** → 複製；
+ *  ② 背包滿時的游標餘量留在 UI closure → 下一場次開背包時多出一份 → 複製。
+ *
+ *  做法（不升 payload 版本——UI 狀態不進存檔）：
+ *  1. `inv.close()`：面板可能還開著 → 游標那一疊交還擁有者（`onReturnCursor`
+ *     → 回到背包）；放不下的部分留在游標上。
+ *  2. `inv.returnCursor()`：把游標**清空**並把剩下的交出來——它**不得**活到
+ *     下一場次（還原後的背包很可能已經有那件物品了 → 留著就是複製）。
+ *  3. `resetCraftGrid()`：舞台材料交還背包（它們被舞台化時就是從背包拿走的）
+ *     —— 放不下的部分交給 `dropOverflow`，**不再重新停在格子里**（重新停放
+ *     ＝ 洩漏進下一場次的背包）。
+ *
+ *  `dropOverflow` 沒有給 → 剩下的東西**丟棄**（隨它所屬的那場次一起結束：
+ *  新局／讀檔／套用雲端都會換掉整個世界）。給了 → 丟到玩家腳邊（回到標題
+ *  時世界還在，玩家撿得回來）。 */
+function resetUiOwnedState(dropOverflow?: (stack: ItemStack) => void): void {
+  // 1. 面板可能還開著 → 關掉（游標交還擁有者；close 是冪等的）。
+  inv.close();
+  // 2. 清空游標：剩下的那一疊交出去（不得活到下一場次）。
+  const leftover = inv.returnCursor();
+  if (leftover) {
+    if (dropOverflow) dropOverflow(leftover);
+    // 沒有 sink → 隨舊場次一起丟棄（不留在 UI 狀態裡）。
   }
-  craftGrid = emptyGrid(size);
-  let front = 0;
-  for (const p of pending) {
-    // B7 R6：耐久跟著堆疊走——沖刷與重新停放（craftGrid/craftExcess）都帶著
-    // `p.dur`，受損工具不會在「開背包」這一步被洗白。
-    const overflow = giveItem(p.item, p.count, p.dur);
-    if (overflow > 0 && front < craftGrid.length) {
-      // 工具堆疊上限 1 → 溢出的工具是整把停在前面幾格，`dur` 原樣保留
-      craftGrid[front++] = { item: p.item, count: overflow, ...(p.dur !== undefined ? { dur: p.dur } : {}) };
-    } else if (overflow > 0) {
-      craftExcess.push({ item: p.item, count: overflow, ...(p.dur !== undefined ? { dur: p.dur } : {}) });
-    }
-  }
+  // 3. 舞台材料交還背包；放不下的部分不重新停放（否則會洩漏進下一場次）。
+  resetCraftGrid(craftUi.isOpen() ? 3 : 2, dropOverflow ?? (() => {}));
+  craftExcess.length = 0; // 邊界上不留任何「停放中」的東西
 }
 
 /** Callback bundle for ui/crafting (Decision A: plain callbacks, no bus).
@@ -1761,20 +1801,18 @@ function syncModeStash(): void {
  *    in `craftGrid` and would be missing from the save otherwise. All four
  *    save triggers route through here; a repeat call is a harmless no-op
  *    (empty grid → nothing to hand back; a full inventory just re-parks the
- *    overflow, nothing is destroyed). The flush is SKIPPED while the
- *    inventory/crafting overlay is open — see the guard below. */
+ *    overflow, nothing is destroyed). A4: the flush is **unconditional** —
+ *    skipping it while a panel is open would LOSE the staged materials
+ *    (the grid is not part of the payload); the flush empties the grid IN
+ *    PLACE, so the open panel keeps working on the same array. */
 function sessionSavePayload(): SavePayload | null {
-  // Flush staged items into the inventory before snapshotting — BUT never
-  // while an overlay is open. resetCraftGrid REASSIGNS the module `craftGrid`,
-  // and the open inventory/crafting UI captured the OLD array reference at
-  // open time (craftingParams; the UI writes cells in place). A flush now
-  // would leave the overlay holding an orphaned grid: clicking its cells would
-  // hand the same item to the inventory AGAIN (dupe), and anything staged
-  // afterwards would live only in the orphan (lost at the next reset).
-  // Reachable because visibilitychange (alt-tab) fires with the overlay open.
-  // Skip instead: staged items are simply absent from THIS save (honest) —
-  // the next save after the overlay closes flushes them normally.
-  if (!inv.isOpen() && !craftUi.isOpen()) resetCraftGrid(2);
+  // A4: **無條件**先把舞台材料沖刷回背包再快照——合成格只活在 `craftGrid`
+  // 裡、**不在 payload 裡**；面板開著時的存檔（alt-tab 的 visibilitychange
+  // 會觸發）若跳過沖刷，那些材料就**掉料**了（審查 A4 ③）。
+  // 沖刷是**原地**的（`craftGrid` 陣列本身不換），所以開著的面板仍然寫得到
+  // 它（`resetCraftGrid` 順便重繪它）。大小跟著開著的面板走：工作台 3×3、
+  // 背包內嵌 2×2、沒開面板 2×2。
+  resetCraftGrid(craftUi.isOpen() ? 3 : 2);
   if (vitals && vitals.hp <= 0) return null; // dead — see doc above
   // B7 Task 2：存檔前用 live 槽位覆寫「目前模式」的 stash 快照（見 syncModeStash）。
   // **必須在 resetCraftGrid 之後**：那一步才把合成格裡的材料交還 inventory，
@@ -1869,6 +1907,11 @@ function persistNow(): void {
  *  clock. `data` is always fresh from acceptCloudData — handing over its
  *  references is safe (later buildCloudData snapshots deep-copy again). */
 function applyCloudData(data: CloudData): void {
+  // A4（邊界）：UI 擁有的狀態（游標／舞台材料）不得活到雲端進度套用之後——
+  // 雲端背包是另一份資料，本機的游標餘量若混進去就是複製。舞台材料交還
+  // **套用前**的背包；放不下的餘量隨本機那一場次丟棄（雲端套用會換掉整個
+  // 世界，丟在腳邊也會被 `resetWorld()` 清掉）。
+  resetUiOwnedState();
   // Settings subset → persist + in-memory + live-apply (the pause-resume path).
   saveSettings({ seed: data.seed, ...data.settings });
   const prevRd = settings.renderDistance;
@@ -2176,10 +2219,15 @@ function cloudPauseOpts(): {
  *  the session (beforeunload stops saving) and resets the player — the title
  *  orbit queues key off player.position, so leaving it far away would orbit a
  *  one-chunk island (Task 17 CR fix). No save happens here — saving is the
- *  explicit job of 儲存並離開 / autosave / beforeunload (Task 14 settled). */
+ *  explicit job of 儲存並離開 / autosave / beforeunload (Task 14 settled).
+ *
+ *  A4: 這是 session 邊界之一——UI 擁有的狀態（游標／舞台材料）不得活到下一
+ *  場次。世界還在（回到標題不換世界），所以放不下的餘量丟在玩家腳邊（玩家
+ *  還在這一頁裡，撿得回來）；舞台材料交還背包。 */
 function quitToTitle(): void {
   audio.stopAmbience(); // Phase 3 Task 10: kill the wind bed + chirp/cricket timer
   sessionStarted = false;
+  resetUiOwnedState(dropAtPlayer); // A4：邊界先清 UI 狀態（再重置玩家位置）
   resetPlayerToSpawn();
   // B2.1：標題畫面的環繞相機也用同一台相機 → 疾跑 FOV 必須在離開遊戲時
   // 歸零（否則標題畫面會停在 77° 的疾跑視野）。
@@ -2239,9 +2287,12 @@ function resetWorld(): void {
 }
 
 function startGame(): void {
-  // B5 Task 8（防禦）：關掉可能還開著的面板 → 游標堆疊交回**舊**背包（在新
-  // 遊戲清空背包之前），才不會把舊游標灌進新局；close 是冪等的。
-  inv.close();
+  // B5 Task 8（防禦）＋ A4（邊界）：關掉可能還開著的面板 → 游標堆疊交回**舊**
+  // 背包（在新遊戲清空背包之前），才不會把舊游標灌進新局；close 是冪等的。
+  // A4：這同時清掉合成格（舞台材料交還**舊**背包），新局不會繼承它。
+  // 沒有 sink → 放不下的餘量隨舊場次一起丟棄（新局本來就換掉整個世界，
+  // 丟在腳邊也會被 `resetWorld()` 一起清掉；丟進**新**世界才是洩漏）。
+  resetUiOwnedState();
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
   modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
@@ -2265,8 +2316,8 @@ function startGame(): void {
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
-  craftGrid = [];
-  craftExcess = [];
+  // A4: the crafting grid is already empty (resetUiOwnedState flushed it into
+  // the OLD inventory above) — the new session starts with an empty grid.
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
   hazardState = createHazardState(); // B3 Task 6: 新局 → 仙人掌計時歸零
@@ -2308,9 +2359,11 @@ function startGame(): void {
  *  4. Clock — time-of-day restored (dayLengthSec stays settings-driven).
  */
 function continueGame(payload: SavePayload): void {
-  // B5 Task 8（防禦）：同 startGame —— 先把可能留著的游標堆疊交回**還原前**的
-  // 背包，再覆寫進度（否則舊游標會在還原後的第一個面板互動被灌進新進度）。
-  inv.close();
+  // B5 Task 8（防禦）＋ A4（邊界）：同 startGame —— 先把可能留著的游標堆疊交回
+  // **還原前**的背包，再覆寫進度（否則舊游標會在還原後的第一個面板互動被灌進
+  // 新進度＝複製）。A4：合成格也一併清掉（舞台材料交還**還原前**的背包，
+  // 放不下的餘量隨舊場次丟棄——不得活到還原後的新場次）。
+  resetUiOwnedState();
   world.applyModified(payload.modified); // 1. world edits (see doc above)
   // Review #4: entities are never persisted — drop any stale in-page session's
   // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are

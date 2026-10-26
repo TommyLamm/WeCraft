@@ -457,6 +457,53 @@ describe('main.ts 接線（A3：本機存檔失敗可見）', () => {
   });
 });
 
+describe('main.ts 接線（A4：session 邊界重置 UI 狀態）', () => {
+  it('the boundary reset drains the cursor and empties the crafting grid', () => {
+    const body = functionBody('resetUiOwnedState');
+    expect(body).toContain('inv.close()');
+    expect(body).toContain('inv.returnCursor()');
+    expect(body).toContain('resetCraftGrid(');
+    expect(body).toContain('craftExcess.length = 0');
+  });
+
+  it('all four session boundaries reset the UI-owned state', () => {
+    for (const fn of ['startGame', 'continueGame', 'applyCloudData', 'quitToTitle']) {
+      expect(functionBody(fn)).toContain('resetUiOwnedState(');
+    }
+  });
+
+  it('quit-to-title drops the leftover at the player (the world survives)', () => {
+    // 回到標題不換世界 → 放不下的餘量丟在腳邊（不得留在 UI 狀態裡）。
+    expect(functionBody('quitToTitle')).toContain('resetUiOwnedState(dropAtPlayer)');
+    const drop = functionBody('dropAtPlayer');
+    expect(drop).toContain('spawnDrop(');
+    expect(drop).toContain('player.position');
+  });
+
+  it('the save path flushes the craft grid unconditionally', () => {
+    const body = functionBody('sessionSavePayload');
+    expect(body).toContain('resetCraftGrid(');
+    // 舊碼的守衛（面板開著就跳過沖刷）＝掉料 → 不得復活。
+    expect(body).not.toContain('!inv.isOpen()');
+  });
+
+  it('resetCraftGrid flushes in place and repaints every view of it', () => {
+    const body = functionBody('resetCraftGrid');
+    expect(body).toContain('flushCraftGrid(');
+    // 沖刷把物品交還槽位 → 熱鍵列 HUD、開著的合成面板、開著的背包面板
+    // 三者都必須看到新狀態（存檔時的沖刷可能發生在完全沒開面板的遊戲中）。
+    expect(body).toContain('hud.setHotbar(slots, selected)');
+    expect(body).toContain('craftUi.refresh()');
+    expect(body).toContain('inv.refreshCrafting()');
+  });
+
+  it('startGame never REASSIGNS the grid (the UI holds the array identity)', () => {
+    const body = functionBody('startGame');
+    expect(body).not.toContain('craftGrid =');
+    expect(body).not.toContain('craftExcess =');
+  });
+});
+
 describe('main.ts 接線（A1：標題先掛、雲端背景載入）', () => {
   it('the title mounts synchronously and the cloud read runs in the background check', () => {
     // The title must be on screen BEFORE the cloud answers — the boot block
