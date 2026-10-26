@@ -177,6 +177,9 @@ import { collectSavePayload, loadGame, saveGame, type SavePayload } from './worl
 // lives here at the composition root.
 import { createCloudClient, type CloudStatus } from './platform/playroom';
 import { CloudSession, cloudRowState } from './platform/cloud-session';
+// A3: the local-save failure policy (pure rules — what the UI does when a
+// save fails) lives in core/; main.ts only wires it to the toast/pause menu.
+import { saveFailurePolicy } from './core/save-failure';
 import {
   acceptCloudData,
   buildCloudData,
@@ -943,6 +946,12 @@ let sessionStarted = false;
 /** Seconds accumulator toward the 30 s autosave while playing. */
 let saveAcc = 0;
 const AUTOSAVE_INTERVAL_SEC = 30;
+/** A3: when a FAILED autosave should be retried (ms epoch; 0 = none pending).
+ *  Set by `persistNow`'s catch, consumed by the playing loop. */
+let localSaveRetryDue = 0;
+/** A3: true once the player has been told about the current failure streak —
+ *  a retry that fails again must not re-push the same toast every 10 s. */
+let localSaveFailureNotified = false;
 /** Last backgrounding-save timestamp (ms) + debounce — review #1: rapid
  *  hidden/visible flips must not spam IDB. */
 let lastBgSave = 0;
@@ -1582,30 +1591,7 @@ function setState(next: GameState): void {
       // Task 14 save point (a): 儲存並離開 — snapshot the live session FIRST,
       // save, then quit (both callbacks are separate buttons; the death
       // screen's quit below deliberately has neither — see handleQuitToTitle).
-      onSaveQuit: () => {
-        // Review #7: unmount the pause menu FIRST — a detached button cannot
-        // receive user clicks, so a double-click can't fire a second save (or
-        // save+resume race) while the first one is still awaiting IDB; the
-        // frozen world shows until the quit lands.
-        menus.hideAll();
-        const payload = sessionSavePayload();
-        if (!payload) {
-          // Unreachable in practice (the pause menu can't open while dead —
-          // review #6's guard) — quit without saving rather than strand the click.
-          quitToTitle();
-          return;
-        }
-        void saveGame(payload).then(
-          () => {
-            savedPayload = payload; // boot check may predate this save
-            // Phase 4 Task 4 checkpoint (b): cloud snapshot after the IDB
-            // success — alongside, never blocking the quit below.
-            void saveCloudNow('save-quit');
-            quitToTitle();
-          },
-          () => quitToTitle(), // best-effort: still quit; savedPayload stays honest
-        );
-      },
+      onSaveQuit: handleSaveQuit,
       // mode toggle (Task 5): emit only — the mode-changed handler above owns
       // persistence + application (Decision A — menus stays bus-free); menus
       // re-renders its label from settings after this callback returns
@@ -1810,19 +1796,68 @@ function sessionSavePayload(): SavePayload | null {
   });
 }
 
+/** 「儲存並離開」（Task 14 save point (a)）：先快照場上狀態、存檔，成功才退出。
+ *  失敗時**不退出**（A3 → `onSaveQuitFailed`）。 */
+function handleSaveQuit(): void {
+  // Review #7: unmount the pause menu FIRST — a detached button cannot
+  // receive user clicks, so a double-click can't fire a second save (or
+  // save+resume race) while the first one is still awaiting IDB; the
+  // frozen world shows until the quit lands.
+  menus.hideAll();
+  const payload = sessionSavePayload();
+  if (!payload) {
+    // Unreachable in practice (the pause menu can't open while dead —
+    // review #6's guard) — quit without saving rather than strand the click.
+    quitToTitle();
+    return;
+  }
+  void saveGame(payload).then(
+    () => {
+      savedPayload = payload; // boot check may predate this save
+      // Phase 4 Task 4 checkpoint (b): cloud snapshot after the IDB
+      // success — alongside, never blocking the quit below.
+      void saveCloudNow('save-quit');
+      quitToTitle();
+    },
+    // A3: a failed 儲存並離開 must NOT quit silently — the player would
+    // believe the session was saved. Stay in the pause menu (they can
+    // press 儲存並離開 again) and say so.
+    onSaveQuitFailed,
+  );
+}
+
+/** 「儲存並離開」失敗（A3）：**不得**退出到標題——玩家會以為存好了，其實
+ *  沒有。留在暫停選單（畫面沒有消失，玩家可以再按一次）＋ 明確告知。 */
+function onSaveQuitFailed(): void {
+  const policy = saveFailurePolicy('save-quit');
+  toasts.push({ title: policy.title, description: policy.description, icon: 'chest' });
+  setState('paused');
+}
+
 /** Fire-and-forget save of the current session (Task 14): the payload is
  *  snapshotted synchronously (state can't drift mid-save); a success caches
- *  it for the title's Continue button, a rejection is swallowed — saving is
- *  best-effort everywhere (autosave, beforeunload — nothing can await). */
+ *  it for the title's Continue button. A rejection is NO LONGER silent (A3):
+ *  the player gets a toast and the save is retried once after a delay (the
+ *  main loop's `localSaveRetryDue` check) — an invisible failed save is how
+ *  progress silently disappears. */
 function persistNow(): void {
   const payload = sessionSavePayload(); // snapshot once — save + cache are identical
   if (!payload) return; // nothing honest to save (review #6: dead session)
   void saveGame(payload)
     .then(() => {
       savedPayload = payload;
+      localSaveRetryDue = 0; // a success cancels any pending retry
+      localSaveFailureNotified = false;
     })
     .catch(() => {
-      /* best-effort: on failure the previous savedPayload stays honest */
+      // A3: surface the failure (once per failure streak) and schedule a retry.
+      const policy = saveFailurePolicy('autosave');
+      if (!localSaveFailureNotified) {
+        localSaveFailureNotified = true;
+        toasts.push({ title: policy.title, description: policy.description, icon: 'chest' });
+      }
+      localSaveRetryDue = Date.now() + policy.retryInMs;
+      /* savedPayload keeps its previous value — it stays honest */
     });
 }
 
@@ -3040,6 +3075,14 @@ gs.renderer.setAnimationLoop(() => {
       saveAcc += dt;
       if (saveAcc >= AUTOSAVE_INTERVAL_SEC) {
         saveAcc = 0;
+        persistNow();
+      }
+
+      // A3: a failed autosave is retried after the policy delay (10 s). The
+      // failure already toasted once — the retry itself stays quiet until it
+      // succeeds (or the streak continues).
+      if (localSaveRetryDue !== 0 && Date.now() >= localSaveRetryDue) {
+        localSaveRetryDue = 0;
         persistNow();
       }
 

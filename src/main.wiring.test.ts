@@ -427,6 +427,36 @@ describe('接線釘子的工具（剔除註解）', () => {
   });
 });
 
+describe('main.ts 接線（A3：本機存檔失敗可見）', () => {
+  it('a failed autosave pushes a toast and schedules a retry', () => {
+    const body = functionBody('persistNow');
+    expect(body).toContain("saveFailurePolicy('autosave')");
+    expect(body).toContain('toasts.push(');
+    expect(body).toContain('localSaveRetryDue = Date.now() +');
+  });
+
+  it('the retry is consumed by the playing loop', () => {
+    const body = playingBranchBody();
+    expect(body).toContain('localSaveRetryDue');
+    expect(body).toContain('persistNow()');
+  });
+
+  it('a failed Save & Quit keeps the player in the game instead of quitting', () => {
+    const body = functionBody('onSaveQuitFailed');
+    expect(body).toContain("saveFailurePolicy('save-quit')");
+    expect(body).toContain("setState('paused')");
+    // The A3 core: a failed save must NEVER look like a successful quit.
+    expect(body).not.toContain('quitToTitle');
+  });
+
+  it('the Save & Quit button wires the failure handler (not a silent quit)', () => {
+    const body = functionBody('handleSaveQuit');
+    expect(body).toContain('onSaveQuitFailed');
+    // the SUCCESS path still quits — only the failure path stays in the game
+    expect(body).toContain('quitToTitle()');
+  });
+});
+
 describe('main.ts 接線（A1：標題先掛、雲端背景載入）', () => {
   it('the title mounts synchronously and the cloud read runs in the background check', () => {
     // The title must be on screen BEFORE the cloud answers — the boot block
