@@ -5,7 +5,7 @@
 // response is retried with the SAME requestId; changing the id turns an
 // idempotent retry into a second write.
 import { describe, expect, it } from 'vitest';
-import { CloudSession, type CloudSaveTransport } from './cloud-session';
+import { CloudSession, cloudRowState, type CloudSaveTransport } from './cloud-session';
 import type { CloudSaveOutcome } from './playroom';
 
 interface SaveCall {
@@ -201,5 +201,71 @@ describe('CloudSession', () => {
     expect(calls[0].requestId).toBe('R1');
     expect(calls[1].requestId).toBe('R1');
     expect(calls[1].data).toEqual({ a: 1 });
+  });
+});
+
+describe('cloudRowState (A2)', () => {
+  it('an unconfirmed save is reported as 尚未同步 (syncing), not as synced', async () => {
+    const { transport } = transportThat(async () => ({ status: 'unconfirmed' }));
+    const s = session(transport);
+    s.setRevision(1);
+
+    await s.checkpoint({ a: 1 });
+
+    const row = cloudRowState(s, 'ready');
+    expect(row.status).toBe('syncing');
+    expect(row.retryable).toBe(true);
+  });
+
+  it('a confirmed save is reported as ready', async () => {
+    const { transport } = transportThat(async () => ({ status: 'saved', revision: 2 }));
+    const s = session(transport);
+    s.setRevision(1);
+
+    await s.checkpoint({ a: 1 });
+
+    const row = cloudRowState(s, 'ready');
+    expect(row.status).toBe('ready');
+    expect(row.retryable).toBe(false);
+  });
+
+  it('a thrown network failure is reported as an error, not as 尚未同步', async () => {
+    const { transport } = transportThat(async () => {
+      throw NETWORK_ERR;
+    });
+    const s = session(transport);
+    s.setRevision(1);
+
+    await s.checkpoint({ a: 1 });
+
+    const row = cloudRowState(s, 'error');
+    expect(row.status).toBe('error');
+    expect(row.retryable).toBe(true);
+  });
+
+  it('a classified conflict reads as 有新進度 (conflict), not as a plain error', async () => {
+    const conflict = Object.assign(new Error('revision conflict'), {
+      machineCode: 'SAVE_REVISION_CONFLICT',
+    });
+    const { transport } = transportThat(async () => {
+      throw conflict;
+    });
+    const s = session(transport);
+    s.setRevision(1);
+
+    await s.checkpoint({ a: 1 });
+
+    // The row must say 雲端：有新進度 (conflict) — a plain 同步失敗 (error)
+    // would hide the fact that another device holds a newer progress.
+    const row = cloudRowState(s, 'ready');
+    expect(row.status).toBe('conflict');
+    expect(row.retryable).toBe(true);
+  });
+
+  it('guest and unsupported clients keep their own rows', () => {
+    const { transport } = transportThat(async () => ({ status: 'unavailable' }));
+    const s = session(transport);
+    expect(cloudRowState(s, 'guest').status).toBe('guest');
+    expect(cloudRowState(s, 'unsupported').status).toBe('unsupported');
   });
 });

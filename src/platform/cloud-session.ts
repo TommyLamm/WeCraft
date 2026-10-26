@@ -16,7 +16,7 @@
 //     locked (format / request-id reuse) or dropped (auth).
 import { classifyCloudError, type CloudErrorKind } from '../core/cloud-save';
 import type { CloudData } from '../core/cloud-save';
-import type { CloudSaveOutcome } from './playroom';
+import type { CloudSaveOutcome, CloudStatus } from './playroom';
 
 export type { CloudSaveOutcome };
 
@@ -68,6 +68,10 @@ export class CloudSession {
   /** 401 / 403 — the session is gone; the game stays playable, writes stop. */
   private authStoppedValue = false;
   private conflictValue: CloudConflict | null = null;
+  /** True when the last attempt was ANSWERED but not confirmed (`saved !== true`).
+   *  Distinct from a thrown network failure: the platform replied, it just did
+   *  not promise persistence — so the row says 尚未同步, not 同步失敗. */
+  private unconfirmedValue = false;
 
   constructor(opts: CloudSessionOptions) {
     this.transport = opts.transport;
@@ -115,8 +119,58 @@ export class CloudSession {
     return this.conflictValue;
   }
 
+  setConflict(conflict: CloudConflict | null): void {
+    this.conflictValue = conflict;
+  }
+
+  /** True when the platform answered the last save without confirming it. */
+  get unconfirmed(): boolean {
+    return this.unconfirmedValue;
+  }
+
   setRevision(revision: number | null): void {
     this.revisionValue = revision;
+  }
+
+  /** Stop account writes for good: the slot's format cannot be written, or the
+   *  request id was reused with different content. The snapshot is dropped —
+   *  there is no safe retry. */
+  lock(kind: 'FORMAT' | 'REQUEST_REUSED'): void {
+    this.lockedValue = true;
+    this.failureKindValue = kind;
+    this.retryableValue = false;
+    this.pendingValue = null;
+  }
+
+  /** Stop account writes (401 / 403). The game stays playable. */
+  stopAuth(): void {
+    this.authStoppedValue = true;
+    this.failureKindValue = 'AUTH';
+    this.retryableValue = false;
+    this.pendingValue = null;
+  }
+
+  /** Forget the frozen snapshot without touching the revision or the flags.
+   *  The auto-apply conflict path uses this once the remote payload HAS become
+   *  the live state (the local snapshot is moot); Task 3 keeps it instead and
+   *  asks the player. */
+  dropPending(): void {
+    this.pendingValue = null;
+  }
+
+  /** Record a read-side failure. The slot stays UNREAD, so the revision stays
+   *  null and no send may overwrite it. */
+  markReadFailure(kind: CloudErrorKind = 'NETWORK'): void {
+    this.failureKindValue = kind;
+    this.retryableValue = true;
+    this.unconfirmedValue = false;
+  }
+
+  /** The read succeeded — the slot is readable again. */
+  clearReadFailure(): void {
+    this.failureKindValue = null;
+    this.retryableValue = false;
+    this.unconfirmedValue = false;
   }
 
   /** Queue a checkpoint. If a snapshot is still unresolved it is resent AS IS
@@ -157,21 +211,25 @@ export class CloudSession {
         this.pendingValue = null;
         this.retryableValue = false;
         this.failureKindValue = null;
+        this.unconfirmedValue = false;
       } else if (outcome.status === 'unconfirmed') {
         // The platform did not confirm the write. Keep the snapshot AND the
         // revision: the next retry must reuse the same requestId, and the
         // revision must not advance on an unconfirmed save.
         this.retryableValue = true;
         this.failureKindValue = 'NETWORK';
+        this.unconfirmedValue = true;
       } else {
         // Unavailable (preview / guest): nothing was written, nothing to keep.
         this.pendingValue = null;
         this.retryableValue = false;
         this.failureKindValue = null;
+        this.unconfirmedValue = false;
       }
     } catch (err) {
       const kind = classifyCloudError(err);
       this.failureKindValue = kind;
+      this.unconfirmedValue = false;
       if (kind === 'FORMAT' || kind === 'REQUEST_REUSED') {
         this.lockedValue = true;
         this.retryableValue = false;
@@ -194,4 +252,32 @@ export class CloudSession {
       this.busyValue = false;
     }
   }
+}
+
+/** Map the session state + the client status onto the pause-menu cloud row.
+ *
+ *  The one rule that matters (A2): a save that was sent but NOT confirmed must
+ *  never read as 已同步. It reads 尚未同步 (syncing) and stays retryable, so the
+ *  player can push the same snapshot again with the same requestId. */
+export function cloudRowState(
+  session: CloudSession,
+  clientStatus: CloudStatus,
+): { status: CloudStatus; retryable: boolean } {
+  if (clientStatus === 'guest') return { status: 'guest', retryable: false };
+  if (clientStatus === 'unknown' || clientStatus === 'unsupported') {
+    return { status: 'unsupported', retryable: false };
+  }
+  if (session.locked || clientStatus === 'format') {
+    return { status: 'format', retryable: false };
+  }
+  if (session.conflict || clientStatus === 'conflict' || session.failureKind === 'CONFLICT') {
+    return { status: 'conflict', retryable: session.retryable };
+  }
+  if (session.unconfirmed) {
+    return { status: 'syncing', retryable: session.retryable };
+  }
+  if (clientStatus === 'error' || session.failureKind !== null) {
+    return { status: 'error', retryable: session.retryable };
+  }
+  return { status: 'ready', retryable: false };
 }

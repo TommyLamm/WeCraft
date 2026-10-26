@@ -176,19 +176,18 @@ import { collectSavePayload, loadGame, saveGame, type SavePayload } from './worl
 // platform client (platform/playroom.ts); all state/load/checkpoint wiring below
 // lives here at the composition root.
 import { createCloudClient, type CloudStatus } from './platform/playroom';
+import { CloudSession, cloudRowState } from './platform/cloud-session';
 import {
   acceptCloudData,
   buildCloudData,
   byteSizeOf,
   shouldAllowSave,
-  classifyCloudError,
   // B5 Task 9：讀取檢查改用「可讀格式集合」；`CLOUD_FORMAT_VERSION` 只剩
   // 寫入端（checkpoint 上傳）在用。
   isReadableCloudFormat,
   CLOUD_FORMAT_VERSION,
   CLOUD_MAX_BYTES,
   type CloudData,
-  type CloudErrorKind,
 } from './core/cloud-save';
 // Task 11–12: progress core (pure rules/state) + the unlock-event/toast wiring
 // below — `applyAdvancement` is the single feed point for every unlock event.
@@ -941,31 +940,24 @@ const BG_SAVE_DEBOUNCE_MS = 2000;
 // The platform client is visitor/standalone-safe (Task 3): every SDK failure
 // degrades to a status, init/load/save never throw for a missing SDK —
 // save() rethrows only genuine platform errors for classification below.
-// `cloudRevision` is the guard from Task 2: null (never read / unreadable)
-// means NO send may ever overwrite the slot; 0 is an explicitly-read empty
-// slot that the first save may claim.
+// The checkpoint lifecycle lives in `CloudSession` (src/platform/cloud-session.ts):
+// ONE pending snapshot with a FROZEN requestId, the revision advancing only on
+// a confirmed save, and the error classification deciding retry/lock/stop.
 const cloud = createCloudClient();
-let cloudRevision: number | null = null;
+/** The checkpoint state machine — the single owner of the revision, the frozen
+ *  snapshot, the in-flight guard and the failure classification. */
+const cloudSession = new CloudSession({
+  transport: {
+    save: (data, revision, formatVersion, requestId) =>
+      cloud.save(data, revision, formatVersion, requestId),
+  },
+  formatVersion: CLOUD_FORMAT_VERSION,
+});
 /** Ruling I/J: true iff the boot read succeeded AND its payload was validated
  *  and applied to the live state (set in the boot IIFE's apply branch, cleared
  *  at session start). Drives the title entry — with BOTH a local save and this
  *  flag, the cloud state wins the entry (Ruling J) via the pure titleEntry(). */
 let cloudAppliedAtBoot = false;
-/** FORMAT / REQUEST_REUSED lock (Ruling D: `error` covers both) — no sends. */
-let cloudLocked = false;
-/** AUTH stop — no sends (re-login has no path this phase; play continues). */
-let cloudAuthStopped = false;
-/** A conflict was reloaded-and-applied — the pause row shows 有新進度＋重試. */
-let cloudConflict = false;
-/** NETWORK-kind failure (or applied conflict) — the pause row offers 重試. */
-let cloudRetryable = false;
-/** Last save-side failure kind (null = none yet); drives the pause row. */
-let cloudFailureKind: CloudErrorKind | 'CONFLICT' | null = null;
-/** Frozen snapshot for sends — a retry reuses this SAME {data, requestId}. */
-let pendingCloud: { data: CloudData; requestId: string } | null = null;
-/** In-flight guard (Ruling: boolean/string guard, no queue) — a second
- *  trigger while one send is in flight is dropped, not queued. */
-let cloudInFlight = false;
 /** Seconds accumulator toward the 60 s cloud checkpoint while playing. */
 let cloudAcc = 0;
 const CLOUD_INTERVAL_SEC = 60;
@@ -1921,8 +1913,10 @@ function applyCloudData(data: CloudData): void {
 async function saveCloudNow(reason: string): Promise<void> {
   void reason; // checkpoint label for future diagnostics; behavior is identical
   try {
-    if (!shouldAllowSave({ revision: cloudRevision })) return;
-    if (cloudRevision === null || cloudLocked || cloudAuthStopped || cloudInFlight) return;
+    if (!shouldAllowSave({ revision: cloudSession.revision })) return;
+    if (cloudSession.revision === null || cloudSession.locked || cloudSession.authStopped) {
+      return;
+    }
     // B7 Task 2：雲端檢查點走的是 `buildCloudData`（**不經過** `collectSavePayload`）
     // → 這裡要自己同步一次，否則送出的 stash 仍是切模式時的舊快照（含已壞掉的
     // 工具），下次讀雲端就把它撿回來。與本機路徑共用同一個 `syncModeStash`。
@@ -1943,89 +1937,36 @@ async function saveCloudNow(reason: string): Promise<void> {
       pushCloudToast('雲端空間不足，僅本機存檔');
       return;
     }
-    pendingCloud = { data, requestId: crypto.randomUUID() };
-    await sendPendingCloud();
+    // C1：若還有一個未確認的快照，這裡**重送那個快照**（同一 requestId），
+    // 絕不換新的資料／新的 ID —— 回應遺失時平台要求沿用原 ID。
+    await runCloudSend(() => cloudSession.checkpoint(data));
   } catch {
     /* best-effort: local snapshot failures must not break gameplay (the
-       cloud.save throw is classified inside sendPendingCloud, not here) */
+       cloud.save throw is classified inside the session, not here) */
   }
 }
 
-/** Send `pendingCloud` with its frozen requestId — a retry reuses this SAME
- *  object (brief). The thrown error is classified HERE (Ruling D): CONFLICT →
- *  reload-and-apply; FORMAT / REQUEST_REUSED → lock further sends (REUSED
- *  reuses the 同步失敗 copy, no retry button); AUTH → stop + 請重新登入;
- *  NETWORK (+ UNAVAILABLE) → keep revision and snapshot for 重試. Total. */
-async function sendPendingCloud(): Promise<void> {
-  if (
-    !pendingCloud ||
-    cloudRevision === null ||
-    cloudLocked ||
-    cloudAuthStopped ||
-    cloudInFlight
-  ) {
+/** Run one send and handle what the session cannot own: the conflict flow
+ *  (the session only classifies the error) and the user-facing toasts. */
+async function runCloudSend(send: () => Promise<void>): Promise<void> {
+  await send();
+  const kind = cloudSession.failureKind;
+  if (kind === 'CONFLICT') {
+    await resolveCloudConflict();
     return;
   }
-  cloudInFlight = true;
-  const snapshot = pendingCloud;
-  try {
-    const res = await cloud.save(
-      snapshot.data,
-      cloudRevision,
-      CLOUD_FORMAT_VERSION,
-      snapshot.requestId,
-    );
-    if (res.status === 'unavailable') {
-      // Nothing was written (preview mode / guest): drop the snapshot without
-      // touching flags or the row.
-      pendingCloud = null;
-      return;
-    }
-    if (res.status === 'unconfirmed') {
-      // The platform did NOT confirm the write (A2): keep the snapshot AND
-      // the revision so the retry can reuse the same requestId. Reporting
-      // this as synced (and advancing the revision) is exactly the bug the
-      // audit flagged.
-      cloudFailureKind = 'NETWORK';
-      cloudRetryable = true;
-      return;
-    }
-    cloudRevision = res.revision;
-    pendingCloud = null;
-    cloudConflict = false;
-    cloudRetryable = false;
-    cloudFailureKind = null;
-  } catch (err) {
-    const kind = classifyCloudError(err);
-    if (kind === 'CONFLICT') {
-      await resolveCloudConflict();
-    } else if (kind === 'FORMAT') {
-      cloudLocked = true;
-      cloudFailureKind = 'FORMAT';
-      cloudRetryable = false;
-      pendingCloud = null;
-      pushCloudToast('雲端格式不相容，僅本機存檔');
-    } else if (kind === 'REQUEST_REUSED') {
-      cloudLocked = true;
-      cloudFailureKind = 'REQUEST_REUSED';
-      cloudRetryable = false;
-      pendingCloud = null;
-      pushCloudToast('雲端同步失敗，僅本機存檔');
-    } else if (kind === 'AUTH') {
-      cloudAuthStopped = true;
-      cloudFailureKind = 'AUTH';
-      cloudRetryable = false;
-      pendingCloud = null;
-      pushCloudToast('請重新登入');
-    } else {
-      // NETWORK + UNAVAILABLE: keep the revision AND the snapshot — the pause
-      // row offers 重試 with the same {data, requestId}.
-      cloudFailureKind = kind;
-      cloudRetryable = true;
-    }
-  } finally {
-    cloudInFlight = false;
+  if (kind === 'FORMAT') {
+    pushCloudToast('雲端格式不相容，僅本機存檔');
+  } else if (kind === 'REQUEST_REUSED') {
+    pushCloudToast('雲端同步失敗，僅本機存檔');
+  } else if (kind === 'AUTH') {
+    pushCloudToast('請重新登入');
   }
+}
+
+/** Resend the pending snapshot with its frozen requestId. */
+async function sendPendingCloud(): Promise<void> {
+  await runCloudSend(() => cloudSession.retry());
 }
 
 /** CONFLICT tail (brief 4.3): re-read the slot and apply it — the other
@@ -2041,32 +1982,26 @@ async function resolveCloudConflict(): Promise<void> {
     // 物品、其餘 27 格留空），下一次檢查點就會以 format 3 覆寫（升級路徑）。
     // 只有**集合外**的格式才鎖。
     if (fresh && !isReadableCloudFormat(fresh.formatVersion)) {
-      cloudLocked = true;
-      cloudFailureKind = 'FORMAT';
-      cloudRetryable = false;
-      pendingCloud = null;
+      cloudSession.lock('FORMAT');
       pushCloudToast('雲端格式不相容，僅本機存檔');
       return;
     }
     const accepted = fresh ? acceptCloudData(fresh.data) : null;
     if (!fresh || !accepted) {
-      cloudFailureKind = 'NETWORK';
-      cloudRetryable = true;
+      cloudSession.markReadFailure();
       return;
     }
     applyCloudData(accepted);
     // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→ 舊的雲端
     // 進度就地告知一次。`applyCloudData` 本身只排隊不跳（開機時玩家還在標題畫面）。
     flushWorldgenNotice();
-    cloudRevision = fresh.revision;
-    pendingCloud = null;
-    cloudConflict = true;
-    cloudRetryable = true;
-    cloudFailureKind = 'CONFLICT';
+    cloudSession.setRevision(fresh.revision);
+    // 遠端內容已成為了本機現況 → 凍結中的本機快照沒有意義了。failureKind 維持
+    // 分類器留下的 CONFLICT → 暫停列顯示「有新進度＋重試」，直到下一次確認成功。
+    cloudSession.dropPending();
     pushCloudToast('雲端有新進度，已同步');
   } catch {
-    cloudFailureKind = 'NETWORK';
-    cloudRetryable = true;
+    cloudSession.markReadFailure();
   }
 }
 
@@ -2088,32 +2023,26 @@ async function retryCloudRead(): Promise<void> {
   try {
     const res = await cloud.load();
     if (!res) {
-      cloudRevision = 0;
-      cloudFailureKind = null;
-      cloudRetryable = false;
+      cloudSession.setRevision(0);
+      cloudSession.clearReadFailure();
       return;
     }
     // B5 Task 9：同 resolveCloudConflict——「可讀格式集合」取代單一版本比較。
     if (!isReadableCloudFormat(res.formatVersion)) {
-      cloudLocked = true;
-      cloudFailureKind = 'FORMAT';
-      cloudRetryable = false;
+      cloudSession.lock('FORMAT');
       return;
     }
     const accepted = acceptCloudData(res.data);
     if (!accepted) {
-      cloudFailureKind = 'NETWORK';
-      cloudRetryable = true;
+      cloudSession.markReadFailure();
       // revision stays null — unreadable payload = still an unread slot (a
       // later retry may succeed if another device rewrites it validly).
       return;
     }
-    cloudRevision = res.revision;
-    cloudFailureKind = null;
-    cloudRetryable = false;
+    cloudSession.setRevision(res.revision);
+    cloudSession.clearReadFailure();
   } catch {
-    cloudFailureKind = 'NETWORK';
-    cloudRetryable = true;
+    cloudSession.markReadFailure();
   }
 }
 
@@ -2124,43 +2053,31 @@ async function retryCloudRead(): Promise<void> {
  *  (revision null, not locked/stopped) the retry is a LOAD-ONLY re-read —
  *  never a mid-session apply. */
 function retryCloudNow(): void {
-  if (cloudInFlight) return;
-  if (cloudRevision === null && !cloudLocked && !cloudAuthStopped) {
+  if (cloudSession.busy) return;
+  if (cloudSession.revision === null && !cloudSession.locked && !cloudSession.authStopped) {
     void retryCloudRead().finally(() => {
       if (state === 'paused') setState('paused');
     });
     return;
   }
-  const done = pendingCloud ? sendPendingCloud() : saveCloudNow('retry');
+  const done = cloudSession.pending ? sendPendingCloud() : saveCloudNow('retry');
   void done.finally(() => {
     if (state === 'paused') setState('paused');
   });
 }
 
-/** Snapshot the pause menu's cloud opts (Phase 4 Task 4): the row copy comes
- *  from the client status + the save-side flags — `error` alone cannot tell a
- *  retryable NETWORK failure from a locked REQUEST_REUSED one (Ruling D), so
- *  `cloudRetryable` carries that distinction for the button. */
+/** Snapshot the pause menu's cloud opts (Phase 4 Task 4): the row comes from
+ *  the pure `cloudRowState(session, clientStatus)` (A2) — an unconfirmed save
+ *  reads 尚未同步 (syncing) with a 重試 button; a thrown NETWORK failure reads
+ *  同步失敗 (error); a locked REQUEST_REUSED stays an error WITHOUT the button
+ *  (Ruling D). The session owns the flags, the client owns the connection. */
 function cloudPauseOpts(): {
   cloudStatus: CloudStatus;
   cloudRetryable: boolean;
   onRetryCloud: () => void;
 } {
-  const s = cloud.status;
-  if (s === 'guest') return { cloudStatus: 'guest', cloudRetryable: false, onRetryCloud: retryCloudNow };
-  if (s === 'unknown' || s === 'unsupported') {
-    return { cloudStatus: 'unsupported', cloudRetryable: false, onRetryCloud: retryCloudNow };
-  }
-  if (cloudFailureKind === 'FORMAT' || s === 'format') {
-    return { cloudStatus: 'format', cloudRetryable: false, onRetryCloud: retryCloudNow };
-  }
-  if (cloudConflict || s === 'conflict') {
-    return { cloudStatus: 'conflict', cloudRetryable: cloudRetryable, onRetryCloud: retryCloudNow };
-  }
-  if (s === 'error' || cloudRetryable || cloudFailureKind !== null) {
-    return { cloudStatus: 'error', cloudRetryable: cloudRetryable, onRetryCloud: retryCloudNow };
-  }
-  return { cloudStatus: 'ready', cloudRetryable: false, onRetryCloud: retryCloudNow };
+  const row = cloudRowState(cloudSession, cloud.status);
+  return { cloudStatus: row.status, cloudRetryable: row.retryable, onRetryCloud: retryCloudNow };
 }
 
 /** Shared quit-to-title tail (pause 回到標題 / 儲存並離開 / death quit): ends
@@ -2653,16 +2570,15 @@ void (async () => {
     try {
       const res = await cloud.load();
       if (!res) {
-        cloudRevision = 0; // empty slot — the first checkpoint may claim it
+        cloudSession.setRevision(0); // empty slot — the first checkpoint may claim it
       } else if (!isReadableCloudFormat(res.formatVersion)) {
-        cloudLocked = true;
-        cloudFailureKind = 'FORMAT';
-        cloudRevision = null; // never overwrite an unreadable-format slot
+        cloudSession.setRevision(null); // never overwrite an unreadable-format slot
+        cloudSession.lock('FORMAT');
       } else {
         const data = acceptCloudData(res.data);
         if (data) {
           applyCloudData(data);
-          cloudRevision = res.revision;
+          cloudSession.setRevision(res.revision);
           // Ruling I: the live state now IS this cloud payload — the title
           // enters it via continueFromCloud() (never re-applies). Cleared at
           // session start (startGame/continueGame/continueFromCloud).
@@ -2671,21 +2587,17 @@ void (async () => {
           // Minor 1: honesty + recovery — the read succeeded but the payload
           // could not be accepted; the row must say so and offer a retry
           // (revision stays null: still no send may overwrite the slot).
-          cloudRevision = null;
-          cloudFailureKind = 'NETWORK';
-          cloudRetryable = true;
+          cloudSession.markReadFailure();
           pushCloudToast('雲端讀取失敗，本機繼續');
         }
       }
     } catch {
       // Minor 1: same honesty + recovery as the null-payload branch above.
-      cloudRevision = null; // guard: no send may overwrite an unread slot
-      cloudFailureKind = 'NETWORK';
-      cloudRetryable = true;
+      cloudSession.markReadFailure(); // revision stays null: no send may overwrite an unread slot
       pushCloudToast('雲端讀取失敗，本機繼續');
     }
   } else {
-    cloudRevision = null; // guest/standalone — local saves only, zero noise
+    cloudSession.setRevision(null); // guest/standalone — local saves only, zero noise
   }
   setState('title');
 })();

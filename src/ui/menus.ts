@@ -240,6 +240,12 @@ export function createMenus(uiRoot: HTMLElement): Menus {
           case 'ready':
             line.textContent = '雲端：已同步';
             break;
+          case 'syncing':
+            // A2: the platform answered but did NOT confirm the write — the
+            // row must never claim 已同步 before `saved: true` arrives.
+            line.textContent = '雲端：尚未同步';
+            showRetry = cloudRetryable;
+            break;
           case 'conflict':
             line.textContent = '雲端：有新進度';
             showRetry = cloudRetryable;

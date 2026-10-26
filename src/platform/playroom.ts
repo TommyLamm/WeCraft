@@ -10,6 +10,8 @@ export type CloudStatus =
   | 'guest'
   | 'unsupported'
   | 'ready'
+  /** A save was sent but the platform did not confirm it (`saved !== true`). */
+  | 'syncing'
   | 'error'
   | 'conflict'
   | 'format';

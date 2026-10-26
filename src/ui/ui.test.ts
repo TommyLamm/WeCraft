@@ -930,6 +930,7 @@ describe('pause cloud row (Phase 4 Task 4)', () => {
     ['guest', false, '雲端：訪客本機遊玩'],
     ['unsupported', false, '雲端：不支援'],
     ['ready', false, '雲端：已同步'],
+    ['syncing', true, '雲端：尚未同步'],
     ['error', true, '雲端：同步失敗（重試）'],
     ['error', false, '雲端：同步失敗'],
     ['conflict', true, '雲端：有新進度'],
@@ -955,8 +956,8 @@ describe('pause cloud row (Phase 4 Task 4)', () => {
   });
 
   it('重試 button appears only in retryable states, and click fires onRetryCloud', () => {
-    // retryable: NETWORK-kind error + applied conflict
-    for (const status of ['error', 'conflict'] as CloudStatus[]) {
+    // retryable: NETWORK-kind error + applied conflict + an unconfirmed save
+    for (const status of ['error', 'conflict', 'syncing'] as CloudStatus[]) {
       document.getElementById('ui-root')!.innerHTML = '';
       const onRetry = vi.fn();
       const root = showCloud(status, true, onRetry);
@@ -972,6 +973,7 @@ describe('pause cloud row (Phase 4 Task 4)', () => {
       ['guest', false],
       ['unsupported', false],
       ['ready', false],
+      ['syncing', false],
     ] as Array<[CloudStatus, boolean]>) {
       document.getElementById('ui-root')!.innerHTML = '';
       const root = showCloud(status, retryable);
