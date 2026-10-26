@@ -549,10 +549,22 @@ const PASSIVE_SPAWN_OFFSET = 2;
  */
 export interface PassiveSpawnCtx {
   /**
+   * 現在是不是白天（`spawn-rules.ts` 的 `isDaylight(clock.t)`）。
+   *
+   * **A5 的修正**：亮度判準（`canSpawnPassive`）看的是**客戶端**天空光，它
+   * **不隨時間衰減**（夜間地表仍是 15）→ 只靠亮度會讓被動生物在夜間地表生成，
+   * 違反 B4 交付的「白天生成」（spec §B4.2）。**時間**是另一條閘門，由呼叫端
+   * 注入時鐘（純邏輯層不 import 時鐘）。
+   */
+  isDaylight: () => boolean;
+  /**
    * 生成點的 per-block 光照查詢（`lighting.spawnLightAt`）：B4 用 `clockLight(t)`
    * 近似（天空光 15／0）→ 被動生物**只在白天生成**；B6 改成**逐隻**在自己的位置
    * 檢查（亮度 = max(客戶端天空光, 方塊光) ≥ 9；MC 的規則是逐隻）→ 夜間地表
    * （客戶端天空光 15，時間無關）仍可生成（與原版一致），全黑才擋。
+   *
+   * A5 之後「白天」由上面的 `isDaylight` 負責；這裡只回答「亮不亮」
+   * （遮蔽的天空／洞穴＋無方塊光 → 擋；火把旁 → 可以）。
    */
   lightAt: (x: number, y: number, z: number) => SpawnLight;
   /** 該格是不是實心方塊（注入，不 import `World`；水**不**算實心）。 */
@@ -661,6 +673,9 @@ function unchanged(mobs: readonly PassiveMob[]): PassiveMob[] {
  * **同一個參考**（`mobs`）→ 呼叫端可以直接 `mobs = trySpawnPassiveGroup(...)`。
  *
  * 流程（任何一步不通就整輪不生成）：
+ * 0. **白天閘門（A5）**：`!ctx.isDaylight()` → 不生成（回同一個參考）。在**最
+ *    前面**——夜間連一次世界查詢都不做（生成排程每 10 秒跑一次，整夜都在跑）。
+ *    為什麼時鐘不在亮度裡：`canSpawnPassive` 看客戶端天空光（時間無關）。
  * 1. **總量上限**：達 {@link MAX_PASSIVE_MOBS} 就不生成（回同一個參考）。
  * 2. **母點**：距玩家 28–48 格、角度均勻（`passiveMotherPoint`）。
  * 3. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
@@ -683,6 +698,10 @@ export function trySpawnPassiveGroup(
   ctx: PassiveSpawnCtx,
 ): PassiveMob[] {
   const rng = ctx.rng ?? Math.random;
+  // 0) 白天閘門（A5）：被動生物**只在白天**生成（B4 交付／spec §B4.2）。這是
+  //    獨立於亮度的**時間**判準——`canSpawnPassive` 看的是客戶端天空光，夜間
+  //    地表仍是 15，不會擋。放在最前面：夜間不做任何世界查詢。
+  if (!ctx.isDaylight()) return unchanged(mobs);
   // 1) 總量上限（**全場上限**：達上限就不發起這一次嘗試 → 回同一個參考；
   //    「加入時也要夾制」見下面第 6 步的註解）
   if (mobs.length >= MAX_PASSIVE_MOBS) return unchanged(mobs);

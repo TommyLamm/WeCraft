@@ -3110,13 +3110,16 @@ gs.renderer.setAnimationLoop(() => {
 
       // 被動生物生成排程（B4 Task 7）：每 10 s 嘗試一次 → 離玩家 ≥ 24 +
       // 成群 2-4 + 上限 12（規則都在 `world/passive-mobs.ts` 這個純邏輯層，
-      // 這裡只提供世界查詢與光照）。**光照（B6 Task 7）**：per-block 的
-      // `spawnLightAt`、逐隻檢查——夜間地表（客戶端天空光 15）仍可生成，
-      // 全黑（遮蔽＋無方塊光）才擋。**沒有生成時回同一個參考** → 直接賦回去即可。
+      // 這裡只提供世界查詢與光照）。**白天閘門（A5）**：`isDaylight(clock.t)`
+      // ——亮度判準看的是客戶端天空光（時間無關），夜間要由時間擋。
+      // **光照（B6 Task 7）**：per-block 的 `spawnLightAt`、逐隻檢查——夜間地表
+      // （客戶端天空光 15）亮但**不生成**（A5），全黑（遮蔽＋無方塊光）也擋。
+      // **沒有生成時回同一個參考** → 直接賦回去即可。
       passiveSpawnAcc += dt;
       if (passiveSpawnAcc >= PASSIVE_SPAWN_INTERVAL_SEC) {
         passiveSpawnAcc = 0;
         passiveMobs = trySpawnPassiveGroup(passiveMobs, player.position, {
+          isDaylight: () => isDaylight(clock.t),
           lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
           isSolidAt: (x, y, z) => world.isSolid(x, y, z),
           blockIdAt: (x, y, z) => world.getBlock(x, y, z),

@@ -23,19 +23,21 @@ describe('spawn rules — 光照判準', () => {
     expect(canSpawnHostile(noonSurface)).toBe(false);
   });
 
-  it('nightlight is the opposite', () => {
-    // B4 的 clockLight(0.75)（{ sky: 0, block: 0 }）在 B6 對應「光照不足的位置」
-    // （天空被遮蔽：洞穴／屋簷深處）→ 被動不行、敵對可以。
+  it('the light rules are time-blind; the DAYTIME gate lives in the spawn attempt (A5)', () => {
+    // 亮度判準本身**不看時間**：客戶端天空光不隨日夜衰減（地表恆 15）→ 夜間
+    // 地表的亮度與正午相同（原版也是兩套判準：亮度一套、時間一套）。
+    //
+    // **A5 的修正**：這裡從前寫的是「夜間地表被動生物仍可生成（與原版一致）」
+    // ——那正是被審查判為錯的行為（B4 交付的是「白天生成」）。時間那一半改由
+    // 生成端 `ctx.isDaylight()` 擋下（`passive-mobs.test.ts` 的夜間案例釘住
+    // 「同一片亮草地，夜晚不生成」）。這條測試現在只負責把**亮度**判準釘在
+    // 「時間無關」上——兩者分離，才不會再有人把「亮」誤讀成「白天」。
     const dark = { sky: 0, internalSky: 0, block: 0 };
     expect(canSpawnPassive(dark)).toBe(false);
     expect(canSpawnHostile(dark)).toBe(true);
-    // 夜間地表**不是** nightlight：客戶端天空光不隨時間衰減（15）→ 被動生物仍可
-    // 生成（與原版一致）；內部天空光衰減到 4 → 敵對生物也生成
-    // （正午地表 internalSky 15 → 敵對不生成——這就是 internalSkyLight 的
-    // 日光曲線要壓的「夜間地表 vs 正午地表」差異）。
     const nightSurface = { sky: 15, internalSky: 4, block: 0 };
-    expect(canSpawnPassive(nightSurface)).toBe(true);
-    expect(canSpawnHostile(nightSurface)).toBe(true);
+    expect(canSpawnPassive(nightSurface)).toBe(true); // 亮度夠亮——時間判準不在這裡
+    expect(canSpawnHostile(nightSurface)).toBe(true); // 內部天空光衰減 → 敵對可以
   });
 
   it('passive mobs need light 9 or more', () => {

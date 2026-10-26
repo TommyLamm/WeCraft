@@ -443,19 +443,28 @@ const grassEverywhere = (x: number, y: number, z: number): number =>
 const player = { x: 0, y: 6, z: 0 };
 
 /** 正午地表（客戶端天空光 15 ≥ 9）＋ 平地草地的生成上下文。
- *  B6 Task 7：光照是 per-block 查詢（`lighting.spawnLightAt`），不再是 `clockLight`。 */
+ *  B6 Task 7：光照是 per-block 查詢（`lighting.spawnLightAt`），不再是 `clockLight`。
+ *  A5：預設 `isDaylight` ＝ 白天（既有的「白天生成」案例都不必改）；夜間的
+ *  案例在自己身上覆寫成 `false`。 */
 function spawnCtxOf(over: Partial<PassiveSpawnCtx> = {}): PassiveSpawnCtx {
   return {
     lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }),
     isSolidAt: groundAt5,
     blockIdAt: grassEverywhere,
+    isDaylight: () => true,
     ...over,
   };
 }
 
 describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () => {
   it('passive mobs spawn on grass in daylight', () => {
-    const out = trySpawnPassiveGroup([], player, spawnCtxOf({ rng: seeded(1) }));
+    const out = trySpawnPassiveGroup(
+      [],
+      player,
+      // A5：白天的閘門是**明示**的（與下面的夜間案例成對——同一片亮草地，
+      // 差別只在 `isDaylight`）。
+      spawnCtxOf({ isDaylight: () => true, rng: seeded(1) }),
+    );
     expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
     expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
     // 每隻都站在草地上（地表頂面 y = 5 → 腳底 y = 6）
@@ -463,9 +472,8 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
   });
 
   it('no passive mob spawns in the dark', () => {
-    // 光照不足（天空遮蔽＋無方塊光）→ 不生成（回**同一個參考**）。
-    // B4 的前提是「夜晚＝clockLight 天空光 0」；B6 換成 per-block 光照——
-    // 夜間**地表**（客戶端天空光 15）仍然可以生成（與原版一致），全黑才擋。
+    // **亮度**判準：光照不足（天空遮蔽＋無方塊光）→ 不生成（回**同一個參考**）。
+    // 這裡測的是「亮不亮」；「是不是白天」是另一條閘門（A5，見下面兩個案例）。
     const input: PassiveMob[] = [];
     const out = trySpawnPassiveGroup(
       input,
@@ -474,6 +482,49 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     );
     expect(out).toBe(input);
     expect(out.length).toBe(0);
+  });
+
+  it('passive mobs never spawn at night even on bright ground (A5)', () => {
+    // 審查 A5：`canSpawnPassive` 看的是**客戶端**天空光，它**不隨時間衰減**
+    // （夜間地表仍是 15）→ 只靠亮度判準會讓被動生物在夜間地表生成，違反 B4
+    // 交付的「白天生成」與 spec §B4.2。時間那一半由 `ctx.isDaylight()` 擋下：
+    // 同一片亮草地（sky 15、草地、距離足夠），只把時間換成夜晚 → 不生成。
+    const input: PassiveMob[] = [];
+    const out = trySpawnPassiveGroup(
+      input,
+      player,
+      spawnCtxOf({
+        isDaylight: () => false,
+        lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }), // 正午等級的亮
+        rng: seeded(1),
+      }),
+    );
+    expect(out).toBe(input); // 回同一個參考（沒有生成）
+    expect(out.length).toBe(0);
+  });
+
+  it('the daylight gate runs BEFORE any world query (night costs nothing)', () => {
+    // 閘門在函式**開頭**：夜間連一次世界查詢（光照／地面／方塊）都不該發生
+    // （生成排程每 10 秒跑一次，整夜都在跑）。
+    const calls = { light: 0, solid: 0, block: 0 };
+    const out = trySpawnPassiveGroup([], player, {
+      isDaylight: () => false,
+      lightAt: () => {
+        calls.light++;
+        return { sky: 15, internalSky: 15, block: 0 };
+      },
+      isSolidAt: () => {
+        calls.solid++;
+        return true;
+      },
+      blockIdAt: () => {
+        calls.block++;
+        return BLOCK.GRASS;
+      },
+      rng: seeded(1),
+    });
+    expect(out).toHaveLength(0);
+    expect(calls).toEqual({ light: 0, solid: 0, block: 0 });
   });
 
   it('a torch makes a dark spot spawnable', () => {

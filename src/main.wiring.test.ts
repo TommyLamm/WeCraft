@@ -759,6 +759,18 @@ describe('main.ts 接線（B4 Task 9：按住右鍵 1.6 秒才吃）', () => {
   });
 });
 
+// ---- A5 接線：被動生物只在白天生成 -----------------------------------------
+// 純邏輯層（`world/passive-mobs.ts`）的時間閘門是**注入**的（那裡不 import
+// 時鐘）→ 「main.ts 有沒有把時鐘接上」只能由這支接線釘子守住。少了它，閘門
+// 恆為 undefined → 整個白天規則消失（夜間照樣生成）。
+describe('main.ts 接線（A5：被動生物只在白天生成）', () => {
+  it('the passive spawn ctx injects the clock daylight gate', () => {
+    const body = playingBranchBody();
+    expect(body).toContain('trySpawnPassiveGroup(');
+    expect(body).toContain('isDaylight: () => isDaylight(clock.t)');
+  });
+});
+
 // ---- B4 Task 10 接線：被動生物跨存檔（附加欄位 `passiveMobs`）---------------
 // 這批把「被動生物每場重來」改成「被動生物跟著存檔走」→ 屬於**行為改變** →
 // 用釘子守住（「接線被拆掉」＝ 存／讀之間生物會無聲消失）。
