@@ -105,7 +105,7 @@ describe('ui smoke', () => {
   it('menus show and hide title', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
+    menus.showTitle({ saveState: 'no', onContinue: () => {}, onNewGame: () => {} });
     expect(menus.isVisible()).toBe(true);
     expect(root.textContent).toContain('單人遊戲');
     menus.hideAll();
@@ -115,11 +115,11 @@ describe('ui smoke', () => {
   it('title screen shows the current mode (Task 5)', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
-    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
+    menus.showTitle({ saveState: 'no', onContinue: () => {}, onNewGame: () => {} });
     expect(root.textContent).toContain('Mode: Survival'); // default mode
     menus.hideAll();
     saveSettings({ mode: 'creative' });
-    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
+    menus.showTitle({ saveState: 'no', onContinue: () => {}, onNewGame: () => {} });
     expect(root.textContent).toContain('Mode: Creative');
     menus.hideAll();
   });
@@ -128,14 +128,14 @@ describe('ui smoke', () => {
     const root = document.getElementById('ui-root')!;
     const menus = createMenus(root);
     // no save → Continue button hidden (settled: hidden, not a fallback)
-    menus.showTitle({ hasSave: false, onContinue: () => {}, onNewGame: () => {} });
+    menus.showTitle({ saveState: 'no', onContinue: () => {}, onNewGame: () => {} });
     expect(root.textContent).toContain('單人遊戲');
     expect(root.textContent).not.toContain('繼續遊戲');
     menus.hideAll();
     // save exists → Continue mounts above new game and is wired
     const onContinue = vi.fn();
     const onNewGame = vi.fn();
-    menus.showTitle({ hasSave: true, onContinue, onNewGame });
+    menus.showTitle({ saveState: 'yes', onContinue, onNewGame });
     const labels = [...root.querySelectorAll('button')].map((b) => b.textContent);
     expect(labels).toContain('繼續遊戲');
     btnByText(root, '繼續遊戲').click();
@@ -144,6 +144,47 @@ describe('ui smoke', () => {
     btnByText(root, '單人遊戲').click();
     expect(onNewGame).toHaveBeenCalledTimes(1);
     menus.hideAll();
+  });
+
+  describe('title saveState tri-state (A1：標題先掛、雲端背景載入)', () => {
+    it('mounts immediately with a DISABLED Continue while the save check is pending', () => {
+      const root = document.getElementById('ui-root')!;
+      const menus = createMenus(root);
+      const onContinue = vi.fn();
+      menus.showTitle({
+        saveState: 'pending',
+        statusText: '正在檢查雲端進度…',
+        onContinue,
+        onNewGame: () => {},
+      });
+      // The title is on screen BEFORE the cloud settles (A1) — but the entry
+      // button must not pretend the answer is known.
+      const labels = [...root.querySelectorAll('button')].map((b) => b.textContent);
+      expect(labels).toContain('繼續遊戲');
+      expect(btnByText(root, '繼續遊戲').disabled).toBe(true);
+      expect(root.textContent).toContain('正在檢查雲端進度…');
+      btnByText(root, '繼續遊戲').click();
+      expect(onContinue).not.toHaveBeenCalled();
+    });
+
+    it('enables Continue once the save state is yes', () => {
+      const root = document.getElementById('ui-root')!;
+      const menus = createMenus(root);
+      const onContinue = vi.fn();
+      menus.showTitle({ saveState: 'yes', onContinue, onNewGame: () => {} });
+      const btn = btnByText(root, '繼續遊戲');
+      expect(btn.disabled).toBe(false);
+      btn.click();
+      expect(onContinue).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides Continue when the save state is no', () => {
+      const root = document.getElementById('ui-root')!;
+      const menus = createMenus(root);
+      menus.showTitle({ saveState: 'no', onContinue: () => {}, onNewGame: () => {} });
+      expect(root.textContent).toContain('單人遊戲');
+      expect(root.textContent).not.toContain('繼續遊戲');
+    });
   });
 
   it('inventory open/close', () => {

@@ -924,6 +924,18 @@ const BIOME_SAMPLE_INTERVAL_SEC = 0.5;
  *  The save itself only changes through this page's saveGame calls, so the
  *  cache matches what loadGame() would return (single-player, single tab). */
 let savedPayload: SavePayload | null = null;
+/** A1: the title's 繼續遊戲 state — `'pending'` until the boot check (local +
+ *  cloud) settles, then `'yes'` when an entry exists and `'no'` when none
+ *  does. The title mounts on `'pending'` (Continue disabled) so a slow network
+ *  can never hold the title screen hostage. */
+let titleSaveState: 'pending' | 'yes' | 'no' = 'pending';
+/** A1: the player pressed 單人遊戲 while the boot check was still running —
+ *  the title shows 「檢查進度中…」 until the settle decides the overwrite
+ *  warning (a cloud-only entry must be warned about too). */
+let newGameWaiting = false;
+/** A1: resolves when the whole boot check (local read → cloud init/read/apply
+ *  → title settle) is done. Reassigned by the boot block below. */
+let bootSettled: Promise<void> = Promise.resolve();
 /** True from game entry (new game OR continue) until a quit-to-title — the
  *  honest guard for the beforeunload save: on the title with no session
  *  there is nothing worth saving (settled). */
@@ -1532,27 +1544,25 @@ function setState(next: GameState): void {
     // or a successful in-session save); no save → hidden (settled).
     // Ruling I/J: a boot-applied CLOUD payload is also an entry (cloud wins
     // when both exist) — the decision is the pure, unit-pinned titleEntry().
-    // B1.4: computed ONCE per render — `hasSave` and the 新遊戲 overwrite
-    // confirm below read the same value, so they can never disagree.
-    const hasSaveEntry =
-      titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !== 'none';
+    // B1.4: the 新遊戲 overwrite confirm reads the SAME state as the button
+    // (titleSaveState / savedPayload), so they can never disagree.
+    // A1: the button state is tri-state while the boot check runs (Continue
+    // disabled until the answer is final); the entry decision itself is still
+    // the pure titleEntry() (local vs boot-applied cloud).
     menus.showTitle({
-      hasSave: hasSaveEntry,
+      saveState: titleSaveState,
+      statusText: newGameWaiting
+        ? '檢查進度中…'
+        : titleSaveState === 'pending'
+          ? '正在檢查雲端進度…'
+          : undefined,
       onContinue: handleContinue,
       // B1.4: 新遊戲 discards the session that 繼續遊戲 offers — an entry
       // (local or boot-applied cloud) must be confirmed first. 取消 returns to
       // the title (save untouched); with no entry it stays the one-click start.
-      onNewGame: () => {
-        if (!hasSaveEntry) {
-          startGame();
-          return;
-        }
-        menus.showConfirm({
-          message: '將覆蓋現有進度。確定要開始新遊戲嗎？',
-          onConfirm: startGame,
-          onCancel: () => setState('title'),
-        });
-      },
+      // A1: while the check is pending the click waits for the settle (a
+      // cloud-only entry must be warned about too) — see handleNewGame.
+      onNewGame: handleNewGame,
     });
     document.exitPointerLock?.();
   } else if (next === 'paused') {
@@ -2408,6 +2418,42 @@ function continueFromCloud(): void {
   relockCanvas(); // the click is a user gesture → controls live
 }
 
+/** B1.4 overwrite guard for 新遊戲: an entry (local or boot-applied cloud) is
+ *  discarded by a new game, so it must be confirmed first. */
+function showNewGameConfirm(): void {
+  menus.showConfirm({
+    message: '將覆蓋現有進度。確定要開始新遊戲嗎？',
+    onConfirm: startGame,
+    onCancel: () => setState('title'),
+  });
+}
+
+/** 新遊戲 (B1.4 + A1): an entry → confirm first; no entry → straight to the
+ *  new game. While the boot check is still pending the overwrite answer is not
+ *  final yet (the cloud may still produce an entry), so the click WAITS for
+ *  the settle instead of guessing; the title shows 檢查進度中… meanwhile. */
+function handleNewGame(): void {
+  if (titleSaveState !== 'pending') {
+    if (titleSaveState === 'yes') showNewGameConfirm();
+    else startGame();
+    return;
+  }
+  if (savedPayload !== null) {
+    // A LOCAL entry is already known — the warning does not depend on the
+    // cloud's answer (either entry leads to the same confirm).
+    showNewGameConfirm();
+    return;
+  }
+  newGameWaiting = true;
+  if (state === 'title') setState('title'); // immediate feedback: 檢查進度中…
+  void bootSettled.then(() => {
+    newGameWaiting = false;
+    if (state !== 'title') return; // the player left the title meanwhile
+    if (titleSaveState === 'yes') showNewGameConfirm();
+    else startGame();
+  });
+}
+
 /** Title 繼續遊戲 (Task 14 + Ruling I/J): route by the pure boot-entry decision.
  *  'cloud' → the boot-applied state; 'local' → apply the cached local payload
  *  synchronously (inside the click gesture, so continueGame's relock works);
@@ -2595,24 +2641,24 @@ window.__wecraft = {
         }
       : null,
 };
-// Task 14: resolve save existence ONCE before the title mounts — Continue
-// renders iff loadGame() found a payload (settled: hidden when there is none,
-// async → title with the conditional button). loadGame never rejects (null on
-// any failure); state already IS 'title', this only (re)renders the menu.
-// Phase 4 Task 4 boot (4.1–4.2): cloud init never blocks the title (Task 3's
-// init is total — failure lands on `unsupported`, never `unknown`/`error` in
-// practice); then, with hasSave settled and BEFORE the first title render, a
-// loadable slot (anything but guest/unsupported) is read — success+valid
-// applies onto the live boot state and records the revision, an empty slot
-// records revision 0, any failure toasts 雲端讀取失敗，本機繼續 and guards
-// (revision null: no send may ever overwrite the unread slot).
-void (async () => {
+/** A1: the boot check (local read → cloud init/read/apply → title settle).
+ *  Runs in the BACKGROUND — the title is already on screen while it works.
+ *  `bootSettled` resolves when it is done (the 新遊戲 overwrite decision waits
+ *  for it: a cloud-only entry must be warned about too). */
+async function runBootCheck(): Promise<void> {
+  // The local read is fast (IndexedDB) and decides the 新遊戲 overwrite
+  // warning; the cloud read decides the rest of the title entry (Ruling J:
+  // a boot-applied cloud payload wins over a local save).
+  try {
+    savedPayload = await loadGame();
+  } catch {
+    /* loadGame never rejects (null on any failure) — defensive only */
+  }
   try {
     await cloud.init();
   } catch {
     /* defensive: createCloudClient.init never rejects — the title mounts anyway */
   }
-  savedPayload = await loadGame();
   if (cloud.status !== 'guest' && cloud.status !== 'unsupported') {
     try {
       const res = await cloud.load();
@@ -2624,12 +2670,15 @@ void (async () => {
       } else {
         const data = acceptCloudData(res.data);
         if (data) {
-          applyCloudData(data);
+          // A1: a session that started while this read was in flight keeps its
+          // own state — the boot payload is never applied over a live session.
+          if (state === 'title' && !sessionStarted) {
+            applyCloudData(data);
+            // Ruling I: the live state now IS this cloud payload — the title
+            // enters it via continueFromCloud() (never re-applies).
+            cloudAppliedAtBoot = true;
+          }
           cloudSession.setRevision(res.revision);
-          // Ruling I: the live state now IS this cloud payload — the title
-          // enters it via continueFromCloud() (never re-applies). Cleared at
-          // session start (startGame/continueGame/continueFromCloud).
-          cloudAppliedAtBoot = true;
         } else {
           // Minor 1: honesty + recovery — the read succeeded but the payload
           // could not be accepted; the row must say so and offer a retry
@@ -2646,8 +2695,21 @@ void (async () => {
   } else {
     cloudSession.setRevision(null); // guest/standalone — local saves only, zero noise
   }
-  setState('title');
-})();
+  // Settle the title: from here the entry is final (the button becomes live
+  // or disappears). Ruling J: a boot-applied cloud payload wins the entry.
+  titleSaveState =
+    titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !== 'none'
+      ? 'yes'
+      : 'no';
+  if (state === 'title') setState('title');
+}
+
+// A1: the title mounts **IMMEDIATELY** (saveState 'pending' → Continue is
+// rendered but disabled) and the boot check runs in the background. The title
+// used to mount only AFTER the cloud answered — a slow or dead network left
+// the player staring at an empty screen (the audit's A1).
+setState('title');
+bootSettled = runBootCheck();
 
 gs.renderer.setAnimationLoop(() => {
   const now = performance.now();

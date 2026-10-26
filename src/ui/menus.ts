@@ -5,10 +5,20 @@ import type { CloudStatus } from '../platform/playroom';
 export type MenuAction = 'play' | 'resume' | 'quit-to-title';
 
 export interface Menus {
-  /** Title screen. `hasSave` gates the 繼續遊戲 (Continue) button — rendered
-   *  ONLY when a save exists (Task 14 settled: hidden, no fallback); 單人遊戲
-   *  always renders and starts a new game. */
-  showTitle(opts: { hasSave: boolean; onContinue: () => void; onNewGame: () => void }): void;
+  /** Title screen. `saveState` gates the 繼續遊戲 (Continue) button (A1):
+   *  - `'pending'`: the save check (local + cloud) has not settled — Continue
+   *    renders DISABLED so the title can mount before the network answers and
+   *    the button can never promise an entry that may not exist.
+   *  - `'yes'`: an entry exists (Task 14 settled: hidden otherwise, no
+   *    fallback for `'no'`).
+   *  單人遊戲 always renders and starts a new game. `statusText` renders under
+   *  the buttons (e.g. 正在檢查雲端進度…). */
+  showTitle(opts: {
+    saveState: 'pending' | 'yes' | 'no';
+    statusText?: string;
+    onContinue: () => void;
+    onNewGame: () => void;
+  }): void;
   /** B1.4: modal confirmation — used by the title screen when 新遊戲 would
    *  overwrite an existing save. SINGLE-FIRE: the FIRST trigger wins
    *  (確定／取消／Esc), the dialog clears itself BEFORE the callback runs, and
@@ -168,7 +178,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
   };
 
   return {
-    showTitle({ hasSave, onContinue, onNewGame }) {
+    showTitle({ saveState, statusText, onContinue, onNewGame }) {
       clear();
       const el = document.createElement('div');
       el.className = 'ui-overlay title-screen interactive';
@@ -176,9 +186,20 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       logo.className = 'ui-logo';
       logo.textContent = 'WeCraft';
       el.append(logo);
-      // Task 14: Continue mounts only when a save exists (hidden otherwise)
-      if (hasSave) el.append(btn('繼續遊戲', onContinue));
+      // A1: while the save check is running the button is present but DISABLED
+      // (a click would have nothing to enter); 'no' hides it (Task 14).
+      if (saveState === 'yes' || saveState === 'pending') {
+        const continueBtn = btn('繼續遊戲', onContinue);
+        if (saveState === 'pending') continueBtn.disabled = true;
+        el.append(continueBtn);
+      }
       el.append(btn('單人遊戲', onNewGame), modeLine('ui-mode')); // display-only, under the buttons
+      if (statusText) {
+        const status = document.createElement('div');
+        status.className = 'ui-mode'; // same quiet styling as the mode line
+        status.textContent = statusText;
+        el.append(status);
+      }
       mount(el);
     },
     showConfirm({ message, onConfirm, onCancel }) {

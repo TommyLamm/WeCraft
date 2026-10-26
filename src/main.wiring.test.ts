@@ -427,6 +427,28 @@ describe('接線釘子的工具（剔除註解）', () => {
   });
 });
 
+describe('main.ts 接線（A1：標題先掛、雲端背景載入）', () => {
+  it('the title mounts synchronously and the cloud read runs in the background check', () => {
+    // The title must be on screen BEFORE the cloud answers — the boot block
+    // mounts it and only THEN starts the background check.
+    expect(mainSource).toContain("setState('title');\nbootSettled = runBootCheck();");
+    const body = functionBody('runBootCheck');
+    expect(body).toContain('await cloud.load()');
+    expect(body).toContain('await cloud.init()');
+  });
+
+  it('the boot payload is never applied over a session that already started', () => {
+    const body = functionBody('runBootCheck');
+    expect(body).toContain("state === 'title' && !sessionStarted");
+  });
+
+  it('the title settle flips the tri-state and re-renders only on the title', () => {
+    const body = functionBody('runBootCheck');
+    expect(body).toContain('titleSaveState');
+    expect(body).toContain("if (state === 'title') setState('title');");
+  });
+});
+
 describe('main.ts 接線（B3 Task 8 的提示時機）', () => {
   it('the cloud apply path does not push the notice (the title screen must stay clean)', () => {
     // applyCloudData 在開機時就跑（早於 setState('title')）→ 這裡 push 的話，
