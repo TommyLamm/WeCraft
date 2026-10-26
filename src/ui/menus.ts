@@ -15,6 +15,16 @@ export interface Menus {
    *  the `fired` guard makes any later trigger (a second click on the now
    *  detached button, a second Esc) a no-op. Esc = cancel. */
   showConfirm(opts: { message: string; onConfirm: () => void; onCancel: () => void }): void;
+  /** C1: the 409 conflict choice. The player picks what happens to two
+   *  divergent cloud slots — keep this device's progress (and overwrite the
+   *  slot), take the other device's, or merge them. SINGLE-FIRE like
+   *  `showConfirm`; Esc = 保留本機 (the choice that overwrites nothing). */
+  showConflictChoice(opts: {
+    message: string;
+    onKeepLocal: () => void;
+    onTakeCloud: () => void;
+    onMerge: () => void;
+  }): void;
   /** `onToggleMode` is required — a mode button that can't notify is a dead
    *  control. main.ts wires it to emit `mode-changed` (Decision A: ui modules
    *  never import the bus; the handler persists + applies). The label re-reads
@@ -200,6 +210,40 @@ export function createMenus(uiRoot: HTMLElement): Menus {
       escHandler = (e: KeyboardEvent) => {
         if (e.code !== 'Escape') return;
         fire(onCancel);
+      };
+      document.addEventListener('keydown', escHandler);
+    },
+    showConflictChoice({ message, onKeepLocal, onTakeCloud, onMerge }) {
+      clear(); // replaces whatever menu was mounted (same single `current` slot)
+      const el = document.createElement('div');
+      el.className = 'ui-overlay interactive';
+      const panel = document.createElement('div');
+      panel.className = 'ui-settings ui-confirm';
+      const msg = document.createElement('div');
+      msg.className = 'ui-confirm-msg';
+      msg.textContent = message;
+      // Same single-fire contract as showConfirm: the FIRST trigger wins,
+      // unmounts the dialog (dropping the Esc listener) and only then runs.
+      let fired = false;
+      const fire = (cb: () => void) => {
+        if (fired) return;
+        fired = true;
+        clear();
+        cb();
+      };
+      panel.append(
+        msg,
+        btn('保留本機', () => fire(onKeepLocal)),
+        btn('採用雲端', () => fire(onTakeCloud)),
+        btn('合併', () => fire(onMerge)),
+      );
+      el.append(panel);
+      mount(el);
+      // Esc = 保留本機: the safe default (the local session stays untouched).
+      clearEsc();
+      escHandler = (e: KeyboardEvent) => {
+        if (e.code !== 'Escape') return;
+        fire(onKeepLocal);
       };
       document.addEventListener('keydown', escHandler);
     },

@@ -204,6 +204,116 @@ describe('CloudSession', () => {
   });
 });
 
+const CONFLICT_ERR = Object.assign(new Error('revision conflict'), {
+  machineCode: 'SAVE_REVISION_CONFLICT',
+});
+
+/** A minimal VALID CloudData payload (passes validateCloudData). */
+function remoteData(slots: Array<{ item: 'stone' | 'dirt'; count: number }> = []) {
+  return {
+    seed: 7,
+    pos: [1, 2, 3] as [number, number, number],
+    yaw: 0,
+    vitals: null,
+    clockT: 0,
+    inventory: slots,
+    advancements: { done: {}, nightSeen: false },
+    settings: {
+      renderDistance: 10,
+      sensitivity: 1,
+      volume: 1,
+      mode: 'survival' as const,
+      dayLengthSec: 600,
+      shadows: true,
+      clouds: true,
+    },
+  };
+}
+
+describe('CloudSession — 409 衝突（C1）', () => {
+  it('a conflict keeps the pending snapshot, blocks sends, and resolveConflict is the only exit', async () => {
+    const { transport, calls } = transportThat(async () => {
+      if (calls.length === 1) throw CONFLICT_ERR;
+      return { status: 'saved', revision: 99 };
+    });
+    const s = session(transport);
+    s.setRevision(5);
+
+    await s.checkpoint({ a: 1 });
+    expect(s.failureKind).toBe('CONFLICT');
+    expect(s.pending?.data).toEqual({ a: 1 });
+    expect(s.revision).toBe(5);
+
+    // While the conflict is unresolved nothing may be sent — not a checkpoint
+    // (a new snapshot) and not a retry (the old one). The player decides.
+    await s.checkpoint({ b: 2 });
+    await s.retry();
+    expect(calls).toHaveLength(1);
+    expect(s.pending?.data).toEqual({ a: 1 });
+    expect(s.revision).toBe(5);
+
+    s.setConflict({ data: remoteData() as never, revision: 7 });
+    await s.resolveConflict('keep-local');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].data).toEqual({ a: 1 }); // the local snapshot, not b
+    expect(calls[1].revision).toBe(7); // on the REMOTE revision
+    expect(calls[1].requestId).not.toBe(calls[0].requestId); // new content ⇒ new id
+    expect(s.revision).toBe(99);
+    expect(s.conflict).toBeNull();
+    expect(s.pending).toBeNull();
+  });
+
+  it('resolveConflict("take-cloud") adopts the remote revision without sending', async () => {
+    const { transport, calls } = transportThat(async () => {
+      throw CONFLICT_ERR;
+    });
+    const s = session(transport);
+    s.setRevision(3);
+    await s.checkpoint({ a: 1 });
+
+    s.setConflict({ data: remoteData() as never, revision: 11 });
+    await s.resolveConflict('take-cloud');
+
+    expect(calls).toHaveLength(1); // nothing was sent
+    expect(s.revision).toBe(11); // the remote slot's revision is now the base
+    expect(s.pending).toBeNull();
+    expect(s.conflict).toBeNull();
+    expect(s.retryable).toBe(false);
+    expect(s.failureKind).toBeNull();
+  });
+
+  it('resolveConflict("merge") sends the merged payload on the remote revision with a NEW requestId', async () => {
+    const { transport, calls } = transportThat(async () => {
+      if (calls.length === 1) throw CONFLICT_ERR;
+      return { status: 'saved', revision: 12 };
+    });
+    const s = session(transport);
+    s.setRevision(3);
+    const local = remoteData([{ item: 'dirt', count: 4 }]);
+    await s.checkpoint(local);
+
+    s.setConflict({ data: remoteData([{ item: 'stone', count: 9 }]) as never, revision: 4 });
+    await s.resolveConflict('merge');
+
+    expect(calls).toHaveLength(2);
+    const sent = calls[1].data as { inventory: Array<{ item: string; count: number } | null> };
+    const items = sent.inventory.filter((x) => x !== null).map((x) => x!.item).sort();
+    expect(items).toEqual(['dirt', 'stone']); // local kept, remote-only added
+    expect(calls[1].revision).toBe(4);
+    expect(calls[1].requestId).toBe('R2');
+    expect(s.revision).toBe(12);
+  });
+
+  it('resolveConflict is a no-op when there is no conflict', async () => {
+    const { transport, calls } = transportThat(async () => ({ status: 'saved', revision: 1 }));
+    const s = session(transport);
+    s.setRevision(0);
+    await s.resolveConflict('merge');
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe('cloudRowState (A2)', () => {
   it('an unconfirmed save is reported as 尚未同步 (syncing), not as synced', async () => {
     const { transport } = transportThat(async () => ({ status: 'unconfirmed' }));

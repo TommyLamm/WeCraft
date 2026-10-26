@@ -214,11 +214,17 @@ function braceMatchedBody(open: number): string {
 
 /** `if (state === 'playing') { … }` 這個分支的**本體**（主迴圈裡的遊戲中分支）。 */
 function playingBranchBody(): string {
+  // 錨點有兩層：先定位**動畫迴圈**，再在迴圈**裡面**找遊戲中分支。
+  // 只用 `if (state === 'playing') {` 當唯一錨點不夠——檔案裡任何較早的函式
+  // （例如雲端衝突的三選一：要先暫停場中遊戲）只要寫出同樣的形狀，就會把
+  // 這個「第一個命中」搶走，於是 9 條主迴圈接線釘子會抓到錯的分支。
+  const loopAt = mainSource.indexOf('gs.renderer.setAnimationLoop(() => {');
+  if (loopAt === -1) throw new Error('main.ts 裡找不到動畫迴圈——請更新這支釘子');
   // 用**完整**的 `if (state === 'playing') {` 當錨點：檔案裡還有別的
   // `state === 'playing' && …` 形式的判斷（暫停、死亡檢查…），用它們當錨點會
   // 抓錯分支。
   const marker = "if (state === 'playing') {";
-  const at = mainSource.indexOf(marker);
+  const at = mainSource.indexOf(marker, loopAt);
   if (at === -1) throw new Error("main.ts 裡找不到 state === 'playing' 分支——請更新這支釘子");
   return braceMatchedBody(at + marker.length - 1);
 }

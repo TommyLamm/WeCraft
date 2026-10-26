@@ -1969,11 +1969,36 @@ async function sendPendingCloud(): Promise<void> {
   await runCloudSend(() => cloudSession.retry());
 }
 
-/** CONFLICT tail (brief 4.3): re-read the slot and apply it — the other
- *  device's progress wins; toast 雲端有新進度，已同步 and the pause row shows
- *  有新進度＋重試. An unreadable reload keeps the snapshot for a manual retry
- *  (a resend re-conflicts and reloads again — self-healing on user clicks);
- *  a format mismatch locks instead of retrying forever. Total. */
+/** Re-render the pause menu after a conflict decision — unless a NEW conflict
+ *  dialog is up (a resolution send that 409'd again), which must stay mounted. */
+function rerenderPauseUnlessConflict(): void {
+  if (state === 'paused' && !cloudSession.conflict) setState('paused');
+}
+
+/** The conflict choice is modal: a checkpoint that lands mid-play must not
+ *  fight pointer lock, so leave the running session first. Releasing the lock
+ *  also pauses (its listener does that); the explicit `setState` covers the
+ *  case where the lock was already gone. */
+function enterModalChoiceState(): void {
+  if (state === 'playing') {
+    document.exitPointerLock?.();
+    if (state === 'playing') setState('paused');
+  }
+}
+
+/** CONFLICT tail (C1): re-read the slot, validate it, then **ASK THE PLAYER**.
+ *
+ *  The upstream contract is explicit — a 409 means another device moved the
+ *  slot and the player decides what happens next. The old behavior applied the
+ *  remote payload on the spot (silently discarding the live session's
+ *  progress); now nothing is applied, nothing is sent and no revision is
+ *  adopted until one of the three choices fires. While the choice is pending
+ *  the session refuses every write, so a stray autosave cannot overwrite the
+ *  slot either way.
+ *
+ *  An unreadable reload keeps the local snapshot and offers 重試 (a later
+ *  retry re-conflicts and asks again); a format mismatch locks instead of
+ *  retrying forever. Total. */
 async function resolveCloudConflict(): Promise<void> {
   try {
     const fresh = await cloud.load();
@@ -1991,15 +2016,37 @@ async function resolveCloudConflict(): Promise<void> {
       cloudSession.markReadFailure();
       return;
     }
-    applyCloudData(accepted);
-    // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→ 舊的雲端
-    // 進度就地告知一次。`applyCloudData` 本身只排隊不跳（開機時玩家還在標題畫面）。
-    flushWorldgenNotice();
-    cloudSession.setRevision(fresh.revision);
-    // 遠端內容已成為了本機現況 → 凍結中的本機快照沒有意義了。failureKind 維持
-    // 分類器留下的 CONFLICT → 暫停列顯示「有新進度＋重試」，直到下一次確認成功。
-    cloudSession.dropPending();
-    pushCloudToast('雲端有新進度，已同步');
+    cloudSession.setConflict({ data: accepted, revision: fresh.revision });
+    enterModalChoiceState();
+    pushCloudToast('雲端有其他裝置的進度，請選擇處理方式');
+    menus.showConflictChoice({
+      message: '雲端有其他裝置的進度，要保留本機、採用雲端，還是合併？',
+      onKeepLocal: () => {
+        // 在**遠端 revision** 上重送本機快照（新 requestId）→ 本機進度勝出。
+        void runCloudSend(() => cloudSession.resolveConflict('keep-local')).finally(
+          rerenderPauseUnlessConflict,
+        );
+      },
+      onTakeCloud: () => {
+        // 採用遠端：session 收下遠端 revision、丟棄本機快照；這裡把資料就
+        // 地套用到進行中的世界（玩家自己選的，才會有覆蓋）。
+        void (async () => {
+          await cloudSession.resolveConflict('take-cloud');
+          applyCloudData(accepted);
+          // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→ 舊的
+          // 雲端進度就地告知一次。`applyCloudData` 本身只排隊不跳。
+          flushWorldgenNotice();
+          pushCloudToast('已採用雲端進度');
+          rerenderPauseUnlessConflict();
+        })();
+      },
+      onMerge: () => {
+        // 以本機為基底＋雲端獨有物品＋成就聯集，在遠端 revision 上送出。
+        void runCloudSend(() => cloudSession.resolveConflict('merge')).finally(
+          rerenderPauseUnlessConflict,
+        );
+      },
+    });
   } catch {
     cloudSession.markReadFailure();
   }

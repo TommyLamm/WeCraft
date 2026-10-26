@@ -14,9 +14,14 @@
 //   - the revision only advances on a confirmed save;
 //   - error classification decides whether the snapshot is kept (retryable),
 //     locked (format / request-id reuse) or dropped (auth).
-import { classifyCloudError, type CloudErrorKind } from '../core/cloud-save';
-import type { CloudData } from '../core/cloud-save';
+import { classifyCloudError, mergeCloudData, validateCloudData } from '../core/cloud-save';
+import type { CloudErrorKind, CloudData } from '../core/cloud-save';
 import type { CloudSaveOutcome, CloudStatus } from './playroom';
+
+/** What the player picked after a 409 (C1). `keep-local` resends the local
+ *  snapshot, `take-cloud` adopts the remote revision without writing, `merge`
+ *  combines both (local base + remote-only items + unioned advancements). */
+export type CloudConflictChoice = 'keep-local' | 'take-cloud' | 'merge';
 
 export type { CloudSaveOutcome };
 
@@ -150,14 +155,6 @@ export class CloudSession {
     this.pendingValue = null;
   }
 
-  /** Forget the frozen snapshot without touching the revision or the flags.
-   *  The auto-apply conflict path uses this once the remote payload HAS become
-   *  the live state (the local snapshot is moot); Task 3 keeps it instead and
-   *  asks the player. */
-  dropPending(): void {
-    this.pendingValue = null;
-  }
-
   /** Record a read-side failure. The slot stays UNREAD, so the revision stays
    *  null and no send may overwrite it. */
   markReadFailure(kind: CloudErrorKind = 'NETWORK'): void {
@@ -180,7 +177,7 @@ export class CloudSession {
     if (this.lockedValue || this.authStoppedValue) return;
     if (this.revisionValue === null) return;
     if (this.busyValue) return;
-    if (this.conflictValue) return;
+    if (this.writesBlockedByConflict()) return;
     if (!this.pendingValue) {
       this.pendingValue = { data, requestId: this.newRequestId() };
     }
@@ -192,8 +189,59 @@ export class CloudSession {
     if (this.lockedValue || this.authStoppedValue) return;
     if (this.revisionValue === null) return;
     if (this.busyValue) return;
-    if (this.conflictValue) return;
+    if (this.writesBlockedByConflict()) return;
     if (!this.pendingValue) return;
+    await this.send(this.pendingValue);
+  }
+
+  /** C1: an UNRESOLVED conflict blocks every write. A 409 means someone else
+   *  moved the slot — resending on the stale revision (or replacing the
+   *  snapshot) before the player has chosen is exactly the auto-overwrite the
+   *  audit flagged. Only `resolveConflict` gets past this. */
+  private writesBlockedByConflict(): boolean {
+    return this.conflictValue !== null || this.failureKindValue === 'CONFLICT';
+  }
+
+  /** C1: apply the player's choice. The conflict is the ONLY state a write can
+   *  resume from — see {@link writesBlockedByConflict}.
+   *  - `keep-local`: resend the local snapshot on the REMOTE revision, with a
+   *    NEW requestId (different revision/content ⇒ different idempotency key).
+   *  - `take-cloud`: adopt the remote revision and drop the local snapshot;
+   *    nothing is sent (the caller applies the remote data to the live state).
+   *  - `merge`: send `mergeCloudData(local, remote)` on the remote revision
+   *    with a NEW requestId.
+   *  A send that conflicts AGAIN re-enters the conflict state (failureKind
+   *  CONFLICT) and the caller asks the player once more. */
+  async resolveConflict(choice: CloudConflictChoice): Promise<void> {
+    const conflict = this.conflictValue;
+    if (!conflict) return;
+    this.conflictValue = null;
+
+    if (choice === 'take-cloud') {
+      this.revisionValue = conflict.revision;
+      this.pendingValue = null;
+      this.retryableValue = false;
+      this.failureKindValue = null;
+      this.unconfirmedValue = false;
+      return;
+    }
+
+    const localData: unknown = this.pendingValue?.data;
+    const data =
+      choice === 'merge' && validateCloudData(localData)
+        ? mergeCloudData(localData, conflict.data)
+        : localData;
+    if (data === undefined) {
+      // No local snapshot to send (a conflict implies one, so this is purely
+      // defensive): adopt the remote base and let the next checkpoint claim it.
+      this.revisionValue = conflict.revision;
+      this.pendingValue = null;
+      this.failureKindValue = null;
+      this.retryableValue = false;
+      return;
+    }
+    this.revisionValue = conflict.revision;
+    this.pendingValue = { data, requestId: this.newRequestId() };
     await this.send(this.pendingValue);
   }
 

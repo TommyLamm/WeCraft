@@ -230,6 +230,64 @@ describe('confirm dialog (B1.4)', () => {
   });
 });
 
+describe('conflict choice dialog (C1)', () => {
+  const MSG = '雲端有其他裝置的進度，要如何處理？';
+
+  it('renders the three choices and fires only the chosen one', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onKeepLocal = vi.fn();
+    const onTakeCloud = vi.fn();
+    const onMerge = vi.fn();
+    menus.showConflictChoice({ message: MSG, onKeepLocal, onTakeCloud, onMerge });
+    const overlay = root.querySelector('.ui-overlay');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.textContent).toContain(MSG);
+    const labels = [...overlay!.querySelectorAll('.ui-btn')].map((b) => b.textContent);
+    expect(labels).toContain('保留本機');
+    expect(labels).toContain('採用雲端');
+    expect(labels).toContain('合併');
+    expect(labels.length).toBe(3);
+
+    btnByText(root, '合併').click();
+    expect(onMerge).toHaveBeenCalledTimes(1);
+    expect(onKeepLocal).not.toHaveBeenCalled();
+    expect(onTakeCloud).not.toHaveBeenCalled();
+    expect(root.querySelector('.ui-overlay')).toBeNull();
+  });
+
+  it('is single-fire: a second click on a detached button never fires', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onKeepLocal = vi.fn();
+    menus.showConflictChoice({
+      message: MSG,
+      onKeepLocal,
+      onTakeCloud: () => {},
+      onMerge: () => {},
+    });
+    const keep = btnByText(root, '保留本機');
+    keep.click();
+    keep.click();
+    expect(onKeepLocal).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape picks 保留本機 — the choice that overwrites nothing', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const onKeepLocal = vi.fn();
+    const onTakeCloud = vi.fn();
+    menus.showConflictChoice({ message: MSG, onKeepLocal, onTakeCloud, onMerge: () => {} });
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onKeepLocal).toHaveBeenCalledTimes(1);
+    expect(onTakeCloud).not.toHaveBeenCalled();
+    expect(root.querySelector('.ui-overlay')).toBeNull();
+    // listener removed with the dialog — a second Esc is a no-op
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(onKeepLocal).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('hud debug overlay', () => {
   it('setDebug shows lines then hides with null', () => {
     const root = document.getElementById('ui-root')!;

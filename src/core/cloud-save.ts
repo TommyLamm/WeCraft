@@ -22,9 +22,14 @@
 // - `game.json` 的 `cloudSave` 同步宣告（測試釘死兩邊一致）。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
-import { INVENTORY_SLOTS, type ItemStack } from './items';
+import { createInventoryModel } from './inventory';
+import { INVENTORY_SLOTS, type ItemId, type ItemStack } from './items';
 import { maxDurability, normalizeDurability } from './durability';
-import { sanitizeAdvancements, type AdvancementState } from './advancements';
+import {
+  sanitizeAdvancements,
+  type AdvancementId,
+  type AdvancementState,
+} from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
 import { WORLDGEN_VERSION, readWorldgenVersion } from '../world/worldgen';
@@ -313,6 +318,96 @@ export function acceptCloudData(x: unknown): CloudData | null {
     // payload 沒有這個鍵 → 空陣列（沒有生物）；單筆壞掉 → 只丟那一筆。
     passiveMobs: normalizePassiveMobs(x.passiveMobs),
   };
+}
+
+/**
+ * C1「合併」：把另一台裝置的進度併進本機（**純函式**、回傳全新物件）。
+ *
+ * 規則（單一真值；`mergeCloudData` 是唯一的合併語意）：
+ * 1. **以本機為基底**——`pos`／`yaw`／`clockT`／`vitals`／`settings`／`seed`／
+ *    `worldgenVersion`／`stash`／`passiveMobs` **一律用本機**。理由：玩家正站在
+ *    本機的世界裡；採用遠端的 seed 或世界生成版本會把腳下的地形換掉，採用遠端
+ *    的設定會當場改變遊戲模式與偏好。合併**不是**「採用雲端」——那是另一個選項
+ *    （take-cloud）。
+ * 2. **只補本機一顆都沒有的 item id**（逐 id 全有全無）：本機總量 > 0 的 id
+ *    完全跳過（合併**不得複製**雙方都有的物品，否則玩家只要按一次合併就能刷
+ *    物品）；本機總量為 0 的 id 以 `addItem` 語意補進背包——**放不下就整個 id
+ *    捨棄**，絕不為了塞雲端物品而動本機任何一格。
+ * 3. **advancements 取聯集**（`done` 逐鍵 OR、`nightSeen` OR）：成就只增不減。
+ * 4. **64 KiB 上限**（防禦縱深）：`CLOUD_MAX_BYTES` 是上傳預算，合併結果不得
+ *    超過；超量時**從最後一個雲端補入的 id 開始回退**，直到放得下為止（本機
+ *    基底本身若已超量，就只剩本機基底——本機內容永遠不被合併捨棄）。
+ *
+ * 耐久物品逐堆疊補入（各自保留 `dur`）——合併既不會修好一把壞掉的鎬，也不會
+ * 把它們疊成一堆。輸入必須是正規化過的 `CloudData`（`acceptCloudData`／
+ * `buildCloudData` 的產物）；本機背包仍會先過 `migrateInventorySlots` 保證
+ * 寬度與深拷貝。
+ */
+export function mergeCloudData(local: CloudData, remote: CloudData): CloudData {
+  // 1. 遠端獨有的 item id（本機總量為 0），順序＝遠端 payload 的出現順序。
+  const localTotals = new Set<ItemId>();
+  for (const s of local.inventory) if (s) localTotals.add(s.item);
+  const candidates: ItemId[] = [];
+  for (const s of remote.inventory) {
+    if (!s || localTotals.has(s.item) || candidates.includes(s.item)) continue;
+    candidates.push(s.item);
+  }
+
+  // 2. 逐 id 全有全無地補進本機（放不下 → 整個 id 捨棄）。
+  const build = (ids: readonly ItemId[]): CloudData => {
+    const inv = createInventoryModel(migrateInventorySlots(local.inventory), 'survival');
+    for (const id of ids) {
+      let total = 0;
+      for (const s of remote.inventory) if (s && s.item === id) total += s.count;
+      if (!inv.fits(id, total)) continue; // 放不下 → 整個 id 捨棄
+      for (const s of remote.inventory) {
+        if (s && s.item === id) inv.addItem(id, s.count, s.dur);
+      }
+    }
+    const localDone = local.advancements?.done ?? {};
+    const remoteDone = remote.advancements?.done ?? {};
+    const done: Partial<Record<AdvancementId, boolean>> = { ...localDone };
+    for (const [k, v] of Object.entries(remoteDone) as Array<
+      [AdvancementId, boolean | undefined]
+    >) {
+      if (v === true) done[k] = true; // union: a true on either side wins
+    }
+    return {
+      seed: local.seed,
+      pos: [local.pos[0], local.pos[1], local.pos[2]],
+      yaw: local.yaw,
+      vitals: local.vitals === null ? null : { ...local.vitals },
+      clockT: local.clockT,
+      inventory: inv.slots.map((s) => (s ? { ...s } : null)),
+      advancements: {
+        done,
+        nightSeen: local.advancements?.nightSeen === true || remote.advancements?.nightSeen === true,
+      },
+      settings: { ...local.settings },
+      ...(local.stash === undefined
+        ? {}
+        : {
+            stash: {
+              survival: local.stash.survival.map((s) => (s ? { ...s } : null)),
+              creative: local.stash.creative.map((s) => (s ? { ...s } : null)),
+              survivalVitals: { ...local.stash.survivalVitals },
+            },
+          }),
+      ...(local.worldgenVersion === undefined ? {} : { worldgenVersion: local.worldgenVersion }),
+      ...(local.passiveMobs === undefined
+        ? {}
+        : { passiveMobs: local.passiveMobs.map((m) => ({ ...m })) }),
+    };
+  };
+
+  // 3. 超量 → 從最後一個雲端補入的 id 開始回退。
+  let ids = candidates;
+  let merged = build(ids);
+  while (byteSizeOf(merged) > CLOUD_MAX_BYTES && ids.length > 0) {
+    ids = ids.slice(0, -1);
+    merged = build(ids);
+  }
+  return merged;
 }
 
 /** Revision observed by the last successful cloud read (null = never read). */
