@@ -42,8 +42,12 @@ export function createHazardState(): HazardState {
 /**
  * 玩家的身體框有沒有碰到仙人掌。
  *
- * 掃描範圍＝身體框（寬 `2 × halfWidth`、高 `height`）**加上腳下 2 層**，
- * 任何一格是 `BLOCK.CACTUS` 就算接觸。
+ * 掃描範圍＝身體框（寬 `2 × halfWidth`、高 `height`）**加上腳下 2 層**；
+ * 一格是 `BLOCK.CACTUS` 時：
+ * 1. **與身體框直接重疊** → 接觸（踩進仙人掌格、跳過它時掃到）。
+ * 2. **在腳下層**（腳底掃描）→ 只有「仙人掌格與身體框之間**同一柱**沒有實心
+ *    方塊」才算接觸（B1：線性視野判定）。站在石頭平台、平台下隔一層的仙人掌
+ *    因此**不會**扣血——舊碼不檢查中間格，實心方塊形同不存在（穿透傷害）。
  *
  * **本作採「整格判定」**：原版是「貼框擦邊判定」（仙人掌的碰撞形狀內縮 1/16，
  * 身體擦過就算受傷）→ **站在仙人掌旁邊的格不會受傷**，只有踩在仙人掌上、
@@ -71,7 +75,19 @@ export function touchesCactus(
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
       for (let z = minZ; z <= maxZ; z++) {
-        if (world.getBlock(x, y, z) === BLOCK.CACTUS) return true;
+        if (world.getBlock(x, y, z) !== BLOCK.CACTUS) continue;
+        // 1) 仙人掌格與身體框重疊（格頂高於腳底）→ 直接接觸，沒有遮擋問題。
+        if (y + 1 > pos.y) return true;
+        // 2) 腳下層：往上掃到腳底為止（嚴格介於仙人掌頂面與身體框底面之間的
+        //    整格）；任何一格實心 → 這一柱被遮擋，換下一個候選格。
+        let blocked = false;
+        for (let yy = y + 1; yy < pos.y; yy++) {
+          if (world.isSolid(x, yy, z)) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) return true;
       }
     }
   }

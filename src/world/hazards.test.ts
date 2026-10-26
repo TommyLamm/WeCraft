@@ -85,6 +85,26 @@ describe('cactus contact damage', () => {
     expect(touchesCactus(w, { x: 0.5, y: 67, z: 0.5 }, HALF_WIDTH, HEIGHT)).toBe(false);
   });
 
+  it('a cactus behind a solid block does not damage the player (B1)', () => {
+    // 審查 B1：腳下固定多掃 2 層、中途不檢查 solid → 站在石頭平台上、
+    // **下方隔著平台**的仙人掌仍每秒扣血（穿透實心方塊）。修法：仙人掌格
+    // 與身體框之間（同一柱）必須沒有實心方塊才算接觸。
+    const w = worldWithCactus(); // 仙人掌在 (0,64,0)
+    w.setBlock(0, 65, 0, BLOCK.STONE); // 平台：實心石頭夾在仙人掌與玩家之間
+    // 玩家站在平台頂端（腳底 y = 66）：掃描會看到 y=64 的仙人掌，
+    // 但中間的 y=65 是實心石頭 → 不得受傷。
+    expect(touchesCactus(w, { x: 0.5, y: 66, z: 0.5 }, HALF_WIDTH, HEIGHT)).toBe(false);
+  });
+
+  it('an overlapping cactus cell still damages even with a solid block above it (B1)', () => {
+    // 遮擋只適用**腳下**的候選格；與身體框**直接重疊**的仙人掌格一律算接觸
+    // （規則的「或直接重疊」那一半——不然把仙人掌塞在牆邊就會免疫）。
+    const w = worldWithCactus();
+    w.setBlock(0, 65, 0, BLOCK.STONE); // 仙人掌上方有石頭
+    // 身體框 y ∈ [64.5, 66.3] 與仙人掌格 y=64 重疊 → 直接接觸。
+    expect(touchesCactus(w, { x: 0.5, y: 64.5, z: 0.5 }, HALF_WIDTH, HEIGHT)).toBe(true);
+  });
+
   it('a non-finite position never touches a cactus', () => {
     const w = worldWithCactus();
     expect(touchesCactus(w, { x: Number.NaN, y: 64, z: 0.5 }, HALF_WIDTH, HEIGHT)).toBe(false);
