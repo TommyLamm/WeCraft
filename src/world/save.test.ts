@@ -20,8 +20,9 @@ import { WORLDGEN_VERSION } from './worldgen';
 import { createPassiveMob } from './passive-mobs';
 // B6 Task 8：光照不入存檔、火把走 modified overlay 的相容性釘子
 import { World } from './world';
+import { Chunk } from './chunk';
 import { BLOCK, getBlockDef } from './blocks';
-import { blockLightAt, computeChunkLight } from './lighting';
+import { blockLightAt, computeChunkLight, popUnsupportedCrosses } from './lighting';
 
 /** DB name is part of the on-disk contract (save.ts) — duplicated here so the
  *  test can delete the whole database between cases without exporting it. */
@@ -1140,5 +1141,48 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
     expect(getBlockDef(999).id).toBe(0); // 舊版視角：未知 id → 空氣
     expect(getBlockDef(999).solid).toBe(false);
     expect(getBlockDef(999).transparent).toBe(true);
+  });
+});
+
+describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', () => {
+  it('a popped cross does not grow back after a save round-trip', () => {
+    // 審查 B2 的後半：自然生成的 cross 被收回後**必須記入 `modified`**，
+    // 否則區塊重新生成時地形又把它放回去。完整路徑：pop → 存檔 →
+    // 新世界 applyModified → 地形重生成 → reapplyModifiedInChunk（main.ts
+    // 生成回應的同一步）→ 仍是 AIR。
+    const sourcesOf = (world: World) => ({
+      world: { seed: 4242, serializeModified: () => world.serializeModified() },
+      player: {
+        pos: [0.5, 70, 0.5] as [number, number, number],
+        yaw: 0,
+        mode: 'survival' as const,
+        inventory: [] as Array<ItemStack | null>,
+      },
+      vitals: null,
+      clockT: 0,
+      advancements: emptyAdvancements(),
+      stash: createModeStash(),
+      passiveMobs: [],
+      savedAt: 0,
+    });
+
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    world.setBlock(0, 63, 0, BLOCK.GRASS);
+    world.setBlock(0, 64, 0, BLOCK.DANDELION); // 自然生成的 cross
+    world.setBlock(0, 63, 0, BLOCK.AIR); // 挖掉支撐
+    expect(popUnsupportedCrosses(world, 0, 63, 0)).toEqual([{ x: 0, y: 64, z: 0 }]);
+    const payload = collectSavePayload(sourcesOf(world));
+    expect(payload.modified).toContainEqual(['0,64,0', BLOCK.AIR]);
+
+    // 新世界：先套用存檔，再模擬「地形整塊重生成又把花放回來」。
+    const restored = new World();
+    restored.applyModified(payload.modified);
+    const regen = new Chunk(0, 0);
+    regen.set(0, 63, 0, BLOCK.GRASS);
+    regen.set(0, 64, 0, BLOCK.DANDELION); // 地形重生成：花又出現了
+    restored.addChunk(regen);
+    restored.reapplyModifiedInChunk(0, 0); // main.ts 生成回應的同一步
+    expect(restored.getBlock(0, 64, 0)).toBe(BLOCK.AIR); // 不會長回來
   });
 });

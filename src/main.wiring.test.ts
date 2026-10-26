@@ -631,6 +631,24 @@ describe('main.ts 接線（B6 Task 6：火把的放置閘門與支撐掉落）',
   });
 });
 
+describe('main.ts 接線（B2 Task 11：cross 的支撐掉落）', () => {
+  it('the break branch pops unsupported crosses after the block is removed', () => {
+    const playing = playingBranchBody();
+    const setAt = playing.indexOf('world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR)');
+    const popAt = playing.indexOf('popUnsupportedCrosses(world, hit.x, hit.y, hit.z)');
+    expect(setAt).toBeGreaterThan(-1);
+    expect(popAt).toBeGreaterThan(setAt); // 先移除方塊，再檢查長在它上面的植被
+    expect(countOf('popUnsupportedCrosses(')).toBe(1); // 全檔唯一呼叫點
+  });
+
+  it('each popped cross becomes a drop through the shared spawn path', () => {
+    const playing = playingBranchBody();
+    // 掉落要用**挖除前**讀到的 cross id（上面那一格）——收走後格子已是 AIR。
+    expect(playing).toContain('world.getBlock(hit.x, hit.y + 1, hit.z)');
+    expect(playing).toContain('spawnBlockDrop(drops, currentMode, aboveId');
+  });
+});
+
 describe('main.ts 接線（B3 Task 9 Step 3：危險傷害與生物群系取樣）', () => {
   it('the hazard step runs inside the playing branch, exactly once per frame', () => {
     const playing = playingBranchBody();

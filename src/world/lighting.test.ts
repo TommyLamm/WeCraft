@@ -14,6 +14,7 @@ import {
   computeChunkTopY,
   isOpaqueAt,
   lightAt,
+  popUnsupportedCrosses,
   popUnsupportedTorches,
   setLight,
   skyLightAt,
@@ -519,5 +520,65 @@ describe('torch support (B6 Task 6: 支撐消失 → 火把收回)', () => {
     w.setBlock(1, 63, 0, BLOCK.STONE); // 側鄰是石頭、上方是空氣
     expect(popUnsupportedTorches(w, 0, 63, 0)).toEqual([]);
     expect(w.getBlock(1, 63, 0)).toBe(BLOCK.STONE);
+  });
+});
+
+describe('cross support (B2 Task 11: 支撐消失 → cross 植被收回)', () => {
+  it('a cross plant pops when its support block is removed', () => {
+    // 審查 B2：破壞分支只呼叫 `popUnsupportedTorches`，cross 不被清理 →
+    // 花／草懸空，而且自然生成的 cross 沒被記入 `modified`（區塊重載又長回來）。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.GRASS);
+    w.setBlock(0, 64, 0, BLOCK.DANDELION); // 長在草上
+    w.setBlock(0, 63, 0, BLOCK.AIR); // 挖掉支撐
+    const popped = popUnsupportedCrosses(w, 0, 63, 0);
+    expect(popped).toEqual([{ x: 0, y: 64, z: 0 }]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.AIR); // 植被被收回
+  });
+
+  it('a cross plant with support stays', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.GRASS); // 支撐還在
+    w.setBlock(0, 64, 0, BLOCK.POPPY);
+    expect(popUnsupportedCrosses(w, 0, 63, 0)).toEqual([]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.POPPY); // 植被還在
+  });
+
+  it('only cross cells pop (torch and solid neighbours are left alone)', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 64, 0, BLOCK.STONE); // 上方是石頭（不是 cross）→ 不動
+    w.setBlock(1, 64, 0, BLOCK.TORCH); // 側鄰是火把 → 不動（那是火把收回的事）
+    expect(popUnsupportedCrosses(w, 0, 63, 0)).toEqual([]);
+    expect(w.getBlock(0, 64, 0)).toBe(BLOCK.STONE);
+    expect(w.getBlock(1, 64, 0)).toBe(BLOCK.TORCH);
+  });
+
+  it('a popped cross is recorded as AIR in the modified map', () => {
+    // 收走要走 `setBlock(..., AIR)` → `modified` overlay 記 AIR。少了這一筆，
+    // 自然生成的 cross 在區塊重新載入／重生成時會**長回來**（審查 B2 的後半）。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(0, 63, 0, BLOCK.GRASS);
+    w.setBlock(0, 64, 0, BLOCK.SHORT_GRASS);
+    w.setBlock(0, 63, 0, BLOCK.AIR); // 挖掉支撐
+    popUnsupportedCrosses(w, 0, 63, 0);
+    expect(w.modified.get('0,64,0')).toBe(BLOCK.AIR);
+  });
+
+  it('a cross pops ONLY when the broken cell was its own support (one layer above)', () => {
+    // 收回只針對「長在被改動格上」的那一格（y+1）。側邊與上方更高處的 cross
+    // 不受影響（它們的支撐不是這一格）。
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.setBlock(1, 64, 0, BLOCK.DANDELION); // 側鄰的 cross（支撐在 (1,63,0)）
+    w.setBlock(1, 63, 0, BLOCK.GRASS);
+    w.setBlock(0, 65, 0, BLOCK.POPPY); // 更高兩層的 cross
+    w.setBlock(0, 64, 0, BLOCK.GRASS);
+    expect(popUnsupportedCrosses(w, 0, 63, 0)).toEqual([]);
+    expect(w.getBlock(1, 64, 0)).toBe(BLOCK.DANDELION);
+    expect(w.getBlock(0, 65, 0)).toBe(BLOCK.POPPY);
   });
 });

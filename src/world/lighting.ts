@@ -35,7 +35,7 @@
  *  的簡化已隨 Task 2 的全高柱掃描（R-T2-1）消失——開闊柱一律種滿 15。 */
 
 import { CHUNK_HEIGHT, CHUNK_SIZE, chunkIndex, type Chunk } from './chunk';
-import { BLOCK, getBlockDef, isTransparent, isSolid } from './blocks';
+import { BLOCK, getBlockDef, isCross, isTransparent, isSolid } from './blocks';
 import type { World } from './world';
 import { torchAttachAt } from './mesher';
 import { dayFactor } from '../core/daynight';
@@ -664,6 +664,37 @@ export function popUnsupportedTorches(
   for (const [cx, cy, cz] of candidates) {
     if (world.getBlock(cx, cy, cz) !== BLOCK.TORCH) continue;
     if (torchAttachAt(world, cx, cy, cz) !== 'free') continue; // 還有別的支撐 → 留著
+    world.setBlock(cx, cy, cz, BLOCK.AIR);
+    popped.push({ x: cx, y: cy, z: cz });
+  }
+  return popped;
+}
+
+/** 支撐被挖掉後，把長在上面的 cross 植被收回（回傳被收回的位置清單）。
+ *
+ *  cross（蒲公英／罌粟／短草，`shape === 'cross'`）畫在**下方那一格**的支撐
+ *  上——沒有支撐就是懸空植被（審查 B2：mesher 照畫，花／草飄在空中）。原版
+ *  的花草在支撐消失時掉落自身。這裡只檢查被改動格的**上方 1 格**：若是 cross
+ *  且下方（＝剛被改動的那一格）已不是實心方塊 → 收回並記下位置。
+ *
+ *  與 `popUnsupportedTorches` 同一個契約：`setBlock(..., AIR)`（`modified`
+ *  overlay 記 AIR → 存檔往返一致；自然生成的植被不會在區塊生成之後**長回來**）、
+ *  光照重算旗標照常觸發。呼叫端（main.ts 破壞分支）負責為回傳的每個位置生成
+ *  掉落物（生存掉自身、創造不掉）。植被**不支撐植被**（支撐必須是實心方塊）
+ *  → 不需要級聯收回。 */
+export function popUnsupportedCrosses(
+  world: World,
+  x: number,
+  y: number,
+  z: number,
+): Array<{ x: number; y: number; z: number }> {
+  const popped: Array<{ x: number; y: number; z: number }> = [];
+  const candidates: ReadonlyArray<readonly [number, number, number]> = [
+    [x, y + 1, z], // 長在被改動格上的 cross（支撐＝被改動的那一格）
+  ];
+  for (const [cx, cy, cz] of candidates) {
+    if (!isCross(world.getBlock(cx, cy, cz))) continue;
+    if (isFullSupport(world, cx, cy - 1, cz)) continue; // 還有支撐 → 留著
     world.setBlock(cx, cy, cz, BLOCK.AIR);
     popped.push({ x: cx, y: cy, z: cz });
   }

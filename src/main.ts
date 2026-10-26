@@ -15,7 +15,7 @@ import { World, chunkKey } from './world/world';
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 // B6 Task 3：光照生命週期接線——生成／改方塊後以「區塊」為粒度重算（每幀
 // 2 區塊預算、近→遠排序），規則本體在 world/lighting.ts。
-import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedTorches, skyLightScale, sortLightQueueByDistance, spawnLightAt, takeLightBudget } from './world/lighting';
+import { computeChunkLight, computeChunkTopY, markLightDirty, popUnsupportedCrosses, popUnsupportedTorches, skyLightScale, sortLightQueueByDistance, spawnLightAt, takeLightBudget } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
@@ -3361,6 +3361,18 @@ gs.renderer.setAnimationLoop(() => {
             }, held);
             if (torchDrops.length !== drops.length) bus.emit('drops-changed', {});
             drops = torchDrops;
+          }
+          // B2 Task 11：支撐被挖掉的 cross 植被跟著收回（與火把同一條路：
+          // setBlock AIR → `modified` 記 AIR → 地形重生成不會讓它長回來）。
+          // 掉落要用**挖除前**讀到的 id——popUnsupportedCrosses 內部已把格子
+          // 設成 AIR，之後就查不到了（唯一候選＝上面那一格，所以一個 id 夠）。
+          const aboveId = world.getBlock(hit.x, hit.y + 1, hit.z);
+          for (const c of popUnsupportedCrosses(world, hit.x, hit.y, hit.z)) {
+            const crossDrops = spawnBlockDrop(drops, currentMode, aboveId, {
+              x: c.x + 0.5, y: c.y + 0.5, z: c.z + 0.5, // block centre
+            }, held);
+            if (crossDrops.length !== drops.length) bus.emit('drops-changed', {});
+            drops = crossDrops;
           }
           if (vitals) setVitals(exhaust(vitals, EXHAUST_BREAK_BLOCK));
           // B7 Task 5：**挖完才扣**（`digStep` 回 true ＝這一幀真正破壞了方塊；
