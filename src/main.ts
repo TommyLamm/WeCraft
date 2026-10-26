@@ -3074,7 +3074,7 @@ gs.renderer.setAnimationLoop(() => {
       const moving = input.state.fwd !== 0 || input.state.strafe !== 0;
       if (sprintState.active && moving && !player.flying && !player.inWater) {
         // Vanilla bills each metre actually sprinted; the bank (and the
-        // > 4-point drain) lives in survival.ts `exhaust`.
+        // ≥ 4-point drain) lives in survival.ts `exhaust`.
         const moved = Math.hypot(player.position.x - preStepX, player.position.z - preStepZ);
         v = exhaust(v, moved * EXHAUST_SPRINT_PER_METER);
       }

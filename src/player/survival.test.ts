@@ -128,10 +128,19 @@ describe('eat / starve', () => {
 });
 
 describe('exhaust', () => {
-  it('accumulates below the 4-point threshold without draining', () => {
-    const v = exhaust(at({ exhaustion: 0, hunger: 20, saturation: 5 }), 4.0);
-    expect(v.exhaustion).toBe(4.0); // banked, NOT spent (the threshold is > 4)
+  it('accumulates below the 4-point threshold without draining (Minor 9: ≥ 4)', () => {
+    const v = exhaust(at({ exhaustion: 0, hunger: 20, saturation: 5 }), 3.9);
+    expect(v.exhaustion).toBeCloseTo(3.9, 5); // banked, NOT spent (the threshold is ≥ 4)
     expect(v.saturation).toBe(5);
+    expect(v.hunger).toBe(20);
+  });
+
+  it('exactly 4 exhaustion drains one saturation (Minor 9: ≥ 4, not > 4)', () => {
+    // 審查 Minor 9：上游是「累積 ≥ 4」——4.0 就該消費一點。舊碼 `> 4` 會把
+    // 整整 4.0 留在銀行裡（永遠差一點才消費）→ 反向釘死的測試已改寫成這條。
+    const v = exhaust(at({ exhaustion: 0, hunger: 20, saturation: 5 }), 4.0);
+    expect(v.exhaustion).toBe(0); // 4.0 ≥ 4 → spent
+    expect(v.saturation).toBe(4);
     expect(v.hunger).toBe(20);
   });
 
@@ -171,12 +180,13 @@ describe('exhaust', () => {
     expect(steps.hunger).toBeCloseTo(once.hunger, 5);
   });
 
-  it('caps accumulation at 40 before draining', () => {
+  it('caps accumulation at 40 before draining (Minor 9: 40 → 10 drains)', () => {
     const v = exhaust(at({ exhaustion: 39, saturation: 0, hunger: 20 }), 10);
-    // min(40, 49) → 40 → 9 completed drains (an uncapped 49 would drain 12)
-    expect(v.exhaustion).toBe(4);
+    // min(40, 49) → 40 → 10 completed drains under ≥ 4 (an uncapped 49 would
+    // drain 12); the old `> 4` stopped at 4 with 9 drains (hunger 11).
+    expect(v.exhaustion).toBe(0);
     expect(v.saturation).toBe(0);
-    expect(v.hunger).toBe(11);
+    expect(v.hunger).toBe(10);
   });
 
   it('a drain floors hunger at 0', () => {
@@ -227,18 +237,20 @@ describe('tickVitals — regen', () => {
   it('fast regeneration at full hunger halves the tick (1 hp per 0.5 s)', () => {
     const v = tickVitals(at({ hp: 10, hunger: 20, saturation: 5, exhaustion: 0 }), 1.0);
     expect(v.hp).toBe(12); // exactly two 0.5 s heals fit in 1.0 s
-    expect(v.saturation).toBe(3); // one per heal: 2 × 6 exhaustion → 2 drains
-    expect(v.hunger).toBe(20); // saturation absorbed both drains
-    expect(v.exhaustion).toBe(4); // 2 × 6 = 12 → two drains, 4 carried
+    expect(v.saturation).toBe(2); // 2 × 6 = 12 banked ≥ 4 → 3 drains (Minor 9)
+    expect(v.hunger).toBe(20); // saturation absorbed all three drains
+    expect(v.exhaustion).toBe(0); // 12 = three full 4s (the old > 4 kept 4 banked)
   });
 
   it('regeneration stops when hunger drops below 18 with no saturation left', () => {
+    // Minor 9（≥ 4）讓每筆 6 點的重生扣款比舊的 `> 4` 早一次消費：19→17 的
+    // 飢餓滑落在**2 次**治療後就結束（舊碼是 3 次後）。
     let v = at({ hp: 10, hunger: 19, saturation: 1 });
     for (let i = 0; i < 10; i++) v = tickVitals(v, 4);
-    expect(v.hp).toBe(13); // 3 heals, then the condition is lost for good
+    expect(v.hp).toBe(12); // 2 heals, then the condition is lost for good
     expect(v.hp).toBeLessThanOrEqual(v.maxHp);
     expect(v.saturation).toBe(0);
-    expect(v.hunger).toBeLessThan(18);
+    expect(v.hunger).toBe(17); // < 18 → no more slow regen
   });
 
   it('stops at maxHp and clamps', () => {

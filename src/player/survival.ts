@@ -4,8 +4,9 @@
  *  forward on each call.
  *
  *  Exhaustion (vanilla 1.20 model): every action banks points; once the bank
- *  passes 4, one saturation — or one hunger once saturation is empty — is spent
- *  and the remainder stays banked. Sources, exported as `EXHAUST_*` constants:
+ *  reaches 4 (≥, Minor 9 — upstream is "accumulate ≥ 4"), one saturation — or
+ *  one hunger once saturation is empty — is spent and the remainder stays
+ *  banked. Sources, exported as `EXHAUST_*` constants:
  *  sprinting 0.1 per metre, a jump 0.05, a sprint-jump 0.2, a landed attack 0.1,
  *  taking damage 0.1, breaking a block 0.005 and 6.0 per hp regenerated. The
  *  bank is capped at 40. Callers report movement/action costs via `exhaust()`;
@@ -29,7 +30,7 @@ export interface Vitals {
   regenAcc: number;
   /** Seconds banked toward the next starvation tick (1 hp per 4 s). */
   starveAcc: number;
-  /** Exhaustion bank 0–40; every completed 4 spends 1 saturation (then hunger). */
+  /** Exhaustion bank 0–40; banked points ≥ 4 spend 1 saturation (then hunger). */
   exhaustion: number;
 }
 
@@ -109,9 +110,10 @@ export const EXHAUST_BREAK_BLOCK = 0.005;
 export const EXHAUST_PER_HP_REGEN = 6;
 
 /** Bank `amount` exhaustion (vanilla accumulation model): the bank is capped at
- *  `EXHAUSTION_MAX` and every completed `EXHAUSTION_DRAIN` points spend one
- *  saturation — or one hunger once saturation is empty — while the remainder
- *  stays banked. Never touches hp — the hp decay rule lives in `tickVitals`.
+ *  `EXHAUSTION_MAX` and every `EXHAUSTION_DRAIN` points (banked **≥ 4**, not
+ *  `> 4` — Minor 9, upstream accumulates ≥ 4) spend one saturation — or one
+ *  hunger once saturation is empty — while the remainder stays banked. Never
+ *  touches hp — the hp decay rule lives in `tickVitals`.
  *  Zero, negative or non-finite amounts are a no-op. Callers must never batch
  *  large sums into one call: the cap applies BEFORE the drain, so an oversized
  *  single add discards what a chunked sequence would have spent — the largest
@@ -121,7 +123,7 @@ export function exhaust(v: Vitals, amount: number): Vitals {
   let exhaustion = Math.min(EXHAUSTION_MAX, v.exhaustion + amount);
   let saturation = v.saturation;
   let hunger = v.hunger;
-  while (exhaustion > EXHAUSTION_DRAIN) {
+  while (exhaustion >= EXHAUSTION_DRAIN) {
     exhaustion -= EXHAUSTION_DRAIN;
     if (saturation > 0) saturation = Math.max(0, saturation - 1);
     else hunger = Math.max(0, hunger - 1);
