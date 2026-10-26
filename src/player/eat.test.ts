@@ -147,11 +147,42 @@ describe('EatProgress', () => {
     expect(p.update(0.01, 'apple', true)).toBe('eaten'); // 累計 1.605 ≥ 1.6
   });
 
-  it('a completed hold resets the accumulator', () => {
+  it('a completed hold does not re-arm while still held (A7)', () => {
     const p = new EatProgress();
     expect(p.update(1.6, 'apple', true)).toBe('eaten');
     expect(p.elapsed).toBe(0);
+    // **還按著** → 不得再吃一份。舊碼在這裡把累積器歸零就重新開始 → 再按
+    // 滿 1.6 秒又會 'eaten'（審查 A7：按住右鍵會連續吃多份，可灌飢餓／經驗）。
     expect(p.update(0.1, 'apple', true)).toBe('eating');
+    expect(p.update(1.6, 'apple', true)).toBe('eating'); // 再按滿 1.6 s 也不吃
+    expect(p.update(1.6, 'apple', true)).toBe('eating');
+  });
+
+  it('holding past completion never eats a second time', () => {
+    const p = new EatProgress();
+    expect(p.update(1.6, 'apple', true)).toBe('eaten');
+    // 一直按著 → 永遠只有第一次 'eaten'。
+    for (let i = 0; i < 20; i++) {
+      expect(p.update(0.5, 'apple', true)).toBe('eating');
+    }
+  });
+
+  it('releasing and pressing again allows a new eat', () => {
+    const p = new EatProgress();
+    expect(p.update(1.6, 'apple', true)).toBe('eaten');
+    // 放開右鍵 → 進度歸零、鎖存解除（'idle'）。
+    expect(eatTick(p, { held: false, item: 'apple', allowed: true, dtSec: 0.016 })).toBe('idle');
+    // 再按住 → 又可以吃一份（一次按壓＝一份）。
+    expect(eatTick(p, { held: true, item: 'apple', allowed: true, dtSec: 1.6 })).toBe('eaten');
+  });
+
+  it('switching the held item clears the completed latch', () => {
+    const p = new EatProgress();
+    expect(p.update(1.6, 'apple', true)).toBe('eaten');
+    // 換成別的食物 → 鎖存解除 → 那一種可以吃一份（規則：「一次按壓吃一份」
+    // 綁的是**按壓**，不是「這一局只能吃一份」）。
+    expect(p.update(0.1, 'raw_beef', true)).toBe('eating');
+    expect(p.update(1.6, 'raw_beef', true)).toBe('eaten');
   });
 
   it('releasing the button resets the progress', () => {

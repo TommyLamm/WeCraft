@@ -102,8 +102,9 @@ export function eatFromSlot(
  *  - `allowed` 為 false 或 `item` 為 null → `reset()` 並回 `'idle'`
  *    （放開右鍵、不是食物、已吃飽……都走這裡）；
  *  - 換手上的物品 → 進度歸零重新累積（不可把上一個食物的按住時間算進去）；
- *  - 累積到 `EAT_TIME_SEC`（1.6 秒）→ 回 `'eaten'` 並歸零累積器，
- *    讓下一次進食從零開始。
+ *  - 累積到 `EAT_TIME_SEC`（1.6 秒）→ 回 `'eaten'` 並歸零累積器；
+ *  - **A7：一次按壓只吃一份** —— 吃過之後 `completed` 鎖存，**還按著**也不再
+ *    回 `'eaten'`（見下）。
  *
  *  回傳 `'idle'`（沒在吃）／`'eating'`（按住中）／`'eaten'`（吃掉了）。
  *  非有限或非正的 `dtSec` 一律當 0（不污染累積器）。 */
@@ -112,11 +113,22 @@ export class EatProgress {
   elapsed = 0;
   /** 正在吃的物品；null ＝ 沒在吃。 */
   item: ItemId | null = null;
+  /**
+   * **A7：這一輪按壓已經吃過一份。**
+   *
+   *  審查 A7：舊碼在 `'eaten'` 後只歸零 `elapsed` → **還按著**的話，每再滿
+   *  1.6 秒又會回 `'eaten'`（探針實測 `eaten eaten`）＝按住右鍵連續吃多份，
+   *  可灌飢餓／經驗。規則「按住右鍵 1.6 s 進食」＝**一次按壓吃一份**。
+   *  只有**放開**（`reset()`）、**換物品**或**不允許進食**才解除鎖存。
+   */
+  completed = false;
 
-  /** 進度歸零（放開按鍵、取消進食）。 */
+  /** 進度歸零（放開按鍵、取消進食）。A7：鎖存一併解除——放開＝下一次按壓
+   *  可以再吃一份。 */
   reset(): void {
     this.elapsed = 0;
     this.item = null;
+    this.completed = false;
   }
 
   /** 推進一幀的進食計時；回傳本幀後的狀態。 */
@@ -126,14 +138,23 @@ export class EatProgress {
       return 'idle';
     }
     if (this.item !== item) {
-      // 換物品 → 重新計時
+      // 換物品 → 重新計時（A7：也解除「已吃過」的鎖存——「一次按壓一份」
+      // 綁的是**按壓**，換了食物再按住可以再吃一份）。
       this.item = item;
       this.elapsed = 0;
+      this.completed = false;
+    }
+    if (this.completed) {
+      // A7：還按著，但這一輪已經吃過 → 不再累積、不再回 'eaten'。
+      // 回 'eating'（不是 'idle'）——狀態仍是「按住進食中」，只是不再觸發；
+      // 呼叫端看到 `elapsed === 0` 就不會顯示進度條。
+      return 'eating';
     }
     const dt = Number.isFinite(dtSec) && dtSec > 0 ? dtSec : 0;
     this.elapsed += dt;
     if (this.elapsed >= EAT_TIME_SEC) {
       this.elapsed = 0;
+      this.completed = true; // A7：吃過一份 → 鎖存到放開／換物品
       return 'eaten';
     }
     return 'eating';
@@ -146,7 +167,9 @@ export class EatProgress {
  *  **那個旗標欄位由 B2（0.5.0）擁有，本模組不碰輸入層**）。
  *  - 放開右鍵 → 進度歸零（回 `'idle'`）；
  *  - 按住且允許進食 → 累積（`'eating'`）；
- *  - 累積滿 `EAT_TIME_SEC`（1.6 秒）→ 回 `'eaten'`（**呼叫端才扣物品**）。
+ *  - 累積滿 `EAT_TIME_SEC`（1.6 秒）→ 回 `'eaten'`（**呼叫端才扣物品**）；
+ *  - **A7：吃過之後還按著就不會再回 `'eaten'`** —— 要放開（或換物品）才能
+ *    再吃一份（一次按壓＝一份；見 `EatProgress.completed`）。
  *
  *  **為什麼「按住」的語意放在這裡（而不是輸入層）**：這樣「按住右鍵才吃東西」
  *  這條規則可以被單元測試釘死（`eatTick` 是純函式），而 B2 擁有的輸入層一行
