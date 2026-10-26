@@ -596,14 +596,52 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     );
     const out = trySpawnPassiveGroup(atCap, player, spawnCtxOf({ rng: seeded(1) }));
     expect(out).toBe(atCap); // 達上限 → 不生成（同一個參考）
-    // 差一隻 → 生成後**恰好 12**（整群被夾制：只補到上限，不會是 13–15）
+    // 差一隻（11）→ 上限只放得下 **1** 隻 → **整輪失敗**（A6：群要是 2–4 隻，
+    // 1 隻的「群」不是群；下一輪排程再試）。
     // → 2026-10-22 審查 I-1／controller 裁決：spec 的用語是「**全場**上限 12」
     //   ＝ 場上的總數永不超過 12；brief 原本的「變 12+」是措辭鬆散，不是設計意圖
     //   （12+ 會與存檔上限「只保留前 12 筆」衝突 → 最多 3 隻生物在存／讀之間消失）。
+    // A6 之後「恰好 12」要從 10 隻開始（放得下 2 隻）才會發生（見下一條測試）。
     const oneBelow = atCap.slice(0, MAX_PASSIVE_MOBS - 1);
     const more = trySpawnPassiveGroup(oneBelow, player, spawnCtxOf({ rng: seeded(1) }));
-    expect(more).not.toBe(oneBelow);
-    expect(more.length).toBe(MAX_PASSIVE_MOBS); // **恰好 12**（不是 12+）
+    expect(more).toBe(oneBelow); // 整輪失敗 → 回同一個參考（仍是 11 隻）
+    expect(more.length).toBe(MAX_PASSIVE_MOBS - 1);
+  });
+
+  it('a group that would be clamped below 2 by the cap is abandoned entirely (A6)', () => {
+    // 11 隻 + 抽到 4 隻的群 → 上限只允許 1 隻 → **整輪失敗**（回同一個參考、
+    // 沒有多一隻）。B4 交付的是「成群 2–4」：寧可這一輪不生成（下一次排程
+    // 再試），也不要一個 1 隻的「群」。
+    const eleven = Array.from({ length: MAX_PASSIVE_MOBS - 1 }, (_, i) =>
+      passive('cow', { pos: { x: i, y: 6, z: 0 } }),
+    );
+    const out = trySpawnPassiveGroup(eleven, player, spawnCtxOf({ rng: seeded(1) }));
+    expect(out).toBe(eleven);
+    expect(out.length).toBe(MAX_PASSIVE_MOBS - 1); // 仍是 11
+  });
+
+  it('a group where only 1 placement succeeds is abandoned (A6)', () => {
+    // 只有**第一隻**成員通過光照檢查 → 群只成得出 1 隻 → 整輪失敗（不是
+    // 「那就生一隻」）。`lightAt` 每隻成員查一次（地面先過才輪到光照）→
+    // 從第二次起回黑暗，後續成員全被略過。
+    const input: PassiveMob[] = [];
+    let lightCalls = 0;
+    const out = trySpawnPassiveGroup(
+      input,
+      player,
+      spawnCtxOf({
+        lightAt: () => {
+          lightCalls++;
+          return lightCalls === 1
+            ? { sky: 15, internalSky: 15, block: 0 }
+            : { sky: 0, internalSky: 0, block: 0 };
+        },
+        rng: seeded(1),
+      }),
+    );
+    expect(lightCalls).toBeGreaterThan(1); // 確實有第二隻被光照擋掉
+    expect(out).toBe(input); // 整輪失敗 → 回同一個參考
+    expect(out.length).toBe(0);
   });
 
   it('the group is clamped so the total never passes 12', () => {

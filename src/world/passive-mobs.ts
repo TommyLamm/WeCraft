@@ -681,13 +681,16 @@ function unchanged(mobs: readonly PassiveMob[]): PassiveMob[] {
  * 3. **母點的地面**：沒有地面／不是草地泥土 → 不生成。
  * 4. **群組成**：2–4 隻、同一種類（四種等機率 → 見 `choosePassiveKind` 的簡化說明）。
  * 5. **成員取位**：母點附近 ±2 格 → 每一隻都重做**光照／地面／頭頂空間**的檢查；
- *    不通過就**跳過該隻** → 群可以少於 2 隻。
+ *    不通過就**跳過該隻**。
  *    **光照門檻（B6）**：每隻在自己的位置查 per-block 光照
  *    `canSpawnPassive(ctx.lightAt(...))`（MC 的規則是逐隻；B4 是群組前用單一
  *    `clockLight` 值粗判＝只在白天生成）→ 位置在暗處的成員被略過。
  * 6. **全場上限的夾制**：加入成員的**過程中**一旦當前總數達到
  *    {@link MAX_PASSIVE_MOBS} 就停止再加入（場上的總數**永不超過 12**；存檔也用
  *    同一個常數 → 存／讀之間不會有生物無聲消失）。
+ * 7. **成群 2–4（A6）**：成員**少於 2 隻** → **整輪失敗**（回同一個參考，下一次
+ *    排程再試）。理由：B4 交付的是「成群 2–4」——1 隻的「群」不是群；上限夾制
+ *    把 4 隻截成 1 隻時（只剩 1 個名額）寧可這一輪不生成。
  *
  * **被動生物不會 despawn**（spec §B4.2；原版被動生物也不會自然消失）→ 這裡
  * 沒有「離太遠就移除」的分支（那是接線層的約束，`main.ts` 也沒有距離過濾）。
@@ -738,7 +741,8 @@ export function trySpawnPassiveGroup(
     if (!hasRoomAbove(x, feetY, z, def.height, ctx.isSolidAt)) continue; // 頭頂空間不足
     created.push(createPassiveMob(kind, { x, y: feetY, z }, rng));
   }
-  // 6) 沒有成員 → 回同一個參考
-  if (created.length === 0) return unchanged(mobs);
+  // 7) **成群 2–4（A6）**：少於 2 隻 → 整輪失敗（回同一個參考）。這同時涵蓋
+  //    「一隻都沒有」與「只成得出 1 隻」兩種情形——1 隻的「群」不是群。
+  if (created.length < PASSIVE_SPAWN_MIN_GROUP) return unchanged(mobs);
   return [...mobs, ...created];
 }
