@@ -121,6 +121,36 @@ describe('crafting section (embedded)', () => {
     expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(9);
   });
 
+  it('the 3x3 source row wraps into rows of 9 slots (B6)', () => {
+    // 審查 B6：36 格單行 ≈ 1664px —— 窄 iframe 下右側來源格在畫面外、點不到。
+    // 修法：每 9 格一列（36 格 = 4 列 × 9 格）；外層 `.ui-craft-hotbar` 改 column。
+    const { params } = harness(3);
+    const wide: Array<ItemStack | null> = [
+      ...params.slots,
+      ...new Array(INVENTORY_SLOTS - params.slots.length).fill(null),
+    ];
+    wide[INVENTORY_SLOTS - 1] = { item: 'diamond', count: 64 };
+    const { unmount } = mountCrafting(root(), {
+      ...params,
+      slots: wide,
+      sourceCount: INVENTORY_SLOTS,
+    });
+    const rows = root().querySelectorAll('.ui-craft-hotbar .ui-craft-source-row');
+    expect(rows.length).toBe(4);
+    for (const row of rows) {
+      expect(row.querySelectorAll('.ui-slot').length).toBe(9);
+    }
+    // wrap 不減格子、data-slot 索引不變（點擊語意不變）。
+    expect(root().querySelectorAll('.ui-craft-hotbar .ui-slot').length).toBe(INVENTORY_SLOTS);
+    expect((root().querySelector('[data-slot="35"]') as HTMLElement).title).toBe('Diamond');
+    // 預設 9 格（熱鍵列）→ 恰好一列 9 格（結構一致：一格都不少）。
+    unmount();
+    mountCrafting(root(), { ...params, slots: wide });
+    const single = root().querySelectorAll('.ui-craft-hotbar .ui-craft-source-row');
+    expect(single.length).toBe(1);
+    expect(single[0].querySelectorAll('.ui-slot').length).toBe(9);
+  });
+
   it('a damaged tool in the source row shows its durability bar', () => {
     // 最終修正波（B7 Task 6 整合釘）：來源列格子與熱鍵欄同一條
     // fillSlot → mountDurabilityBar → 受損工具排在合成來源列也必須掛耐久條。

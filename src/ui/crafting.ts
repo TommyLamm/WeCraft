@@ -138,7 +138,7 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): Crafti
     bar.className = 'ui-craft-hotbar';
     // 來源列：每次 render 重新 slice —— params.slots 是活的 36 格陣列，
     // 取前 sourceCount 格（預設 9 ＝ 熱鍵列；工作台傳 36）。
-    params.slots.slice(0, sourceCount).forEach((stack, i) => {
+    const makeSourceSlot = (stack: ItemStack | null, i: number): HTMLElement => {
       const slot = document.createElement('div');
       slot.className = i === selected ? 'ui-slot selected' : 'ui-slot';
       slot.dataset.slot = String(i);
@@ -149,8 +149,21 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): Crafti
         params.onSlotSelect?.(i);
         render();
       });
-      bar.appendChild(slot);
-    });
+      return slot;
+    };
+    // B6：每 9 格一列（外層 `.ui-craft-hotbar` 改 column）。36 格單行
+    // ≈ 1664px —— 窄 iframe 裡右側的來源格會被切出畫面、點不到；4 列 × 9 格
+    // 兩邊都進得了畫面。預設 9 格＝恰好一列（結構一致、不減格子）。
+    const sourceSlots = params.slots.slice(0, sourceCount);
+    for (let start = 0; start < sourceSlots.length; start += DEFAULT_SOURCE_SLOTS) {
+      const sourceRow = document.createElement('div');
+      sourceRow.className = 'ui-craft-source-row';
+      const end = Math.min(start + DEFAULT_SOURCE_SLOTS, sourceSlots.length);
+      for (let i = start; i < end; i++) {
+        sourceRow.appendChild(makeSourceSlot(sourceSlots[i], i));
+      }
+      bar.appendChild(sourceRow);
+    }
 
     section.replaceChildren(row, bar);
   };

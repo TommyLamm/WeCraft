@@ -352,14 +352,22 @@
 .ui-craft-result {
   background: #7a7a7a;
 }
+/* 來源列（B6）：外層 column、每個 `.ui-craft-source-row` 是一列 9 格。
+   工作台 3×3 傳 36 格來源（主背包）→ 4 列 × 9 格；舊的單行 flex 在 36 格時
+   約 1664px，窄 iframe 下右側格子被切出畫面。預設 9 格＝恰好一列。 */
 .ui-craft-hotbar {
   display: flex;
+  flex-direction: column;
   gap: 2px;
   padding: 3px;
   background: rgba(0, 0, 0, 0.45);
   border: 2px solid rgba(0, 0, 0, 0.6);
   border-radius: 4px;
   align-self: flex-start;
+}
+.ui-craft-source-row {
+  display: flex;
+  gap: 2px;
 }
 .ui-craft-hotbar .ui-slot {
   background: #8b8b8b;
