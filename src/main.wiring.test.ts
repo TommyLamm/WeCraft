@@ -534,37 +534,15 @@ describe('main.ts 接線（A1：標題先掛、雲端背景載入）', () => {
   });
 });
 
-describe('main.ts 接線（B3 Task 8 的提示時機）', () => {
-  it('the cloud apply path does not push the notice (the title screen must stay clean)', () => {
-    // applyCloudData 在開機時就跑（早於 setState('title')）→ 這裡 push 的話，
-    // toast 會疊在標題畫面上、4 秒後消失，玩家進遊戲後可能永遠看不到。
-    const body = functionBody('applyCloudData');
-    expect(body).not.toContain('pushWorldgenNotice(');
-    // 但它必須「排隊」：舊的雲端進度要記下來，等玩家進場時再說。
-    expect(body).toContain('armWorldgenNotice(');
-  });
-
-  it('the cloud entry path pushes the notice (the moment the player enters)', () => {
-    const body = functionBody('continueFromCloud');
-    expect(body).toContain('flushWorldgenNotice(');
-  });
-
-  it('the mid-session cloud apply path pushes the notice (the player is in-game)', () => {
-    const body = functionBody('resolveCloudConflict');
-    expect(body).toContain('flushWorldgenNotice(');
-  });
-
-  it('the local continue path still notifies and stamps the save', () => {
-    const body = functionBody('continueGame');
-    expect(body).toContain('pushWorldgenNotice('); // 舊存檔 → 進場時跳一次
-    expect(body).toContain('saveGame('); // 且立刻把新版本寫回（一次性）
-    expect(body).toContain('worldgenVersion: WORLDGEN_VERSION');
-  });
-
-  it('a new game never notifies (there is no old terrain)', () => {
-    const body = functionBody('startGame');
-    expect(body).not.toContain('pushWorldgenNotice(');
-    expect(body).not.toContain('flushWorldgenNotice(');
+// ---- B3 Task 8 ／ Task 20：世界生成提示的接線 ------------------------------
+// 時機**規則**（版本判準、同 session 一次、arm/flush 的分工）已抽到
+// `world/worldgen-notice.ts` 的純函式，並以行為測試釘住（worldgen-notice.test.ts）
+// ——原本這批字串掃描（9 個 assertion：哪個函式出現 push/arm/flush）依 Task 20
+// 移除（審查 Minor 14：掃描對搬家、改名、換皮的迴歸無感）。這裡只留一行錨點：
+// main.ts 的提示決策確實經過抽取後的純函式。
+describe('main.ts 接線（B3 Task 8：worldgen 提示走抽取後的純函式）', () => {
+  it('the notice decision routes through shouldArmNotice', () => {
+    expect(mainSource).toContain('shouldArmNotice(');
   });
 });
 
@@ -895,17 +873,10 @@ describe('main.ts 接線（B4 Task 10：被動生物跨存檔）', () => {
     expect(ts.isArrayLiteralExpression(value)).toBe(false);
   });
 
-  it('the cloud checkpoint stores the LIVE roster (not an empty array)', () => {
-    const call = findObjectLiteralCall('saveCloudNow', 'buildCloudData');
-    expect(call).not.toBeNull();
-    if (!call) throw new Error('saveCloudNow 沒有呼叫 buildCloudData');
-    const value = propertyValue(call.arguments[0] as ts.ObjectLiteralExpression, 'passiveMobs');
-    expect(value).not.toBeNull();
-    if (!value) throw new Error('buildCloudData 沒有 passiveMobs 屬性');
-    expect(ts.isIdentifier(value)).toBe(true);
-    expect(ts.isIdentifier(value) ? value.text : '').toBe('passiveMobs');
-    expect(ts.isArrayLiteralExpression(value)).toBe(false);
-  });
+  // （Task 20：`saveCloudNow` → `buildCloudData({ passiveMobs })` 的 AST 掃描已
+  // 移除——payload 內容本身由 `core/cloud-save.test.ts` 的行為測試釘住
+  // （`built.passiveMobs` 來自來源、逐欄快照），雲端流程由 cloud-session 測試
+  // 釘住；這裡不必再對 main.ts 比對識別字。）
 
   it('the continue path assigns the restored roster back to the live variable', () => {
     // **結構層**：確實呼叫 `restorePassiveMobs(`；**語意層**：結果**指派回**
@@ -1022,9 +993,12 @@ describe('main.ts 接線（B5 Task 7b：跨地形版本不還原被動生物）'
     }
   });
 
-  it('needsWorldgenNotice now also guards the restore policy', () => {
-    // 原本 2 處（armWorldgenNotice 排隊＋continueGame 的提示）→ 兩個載入端 +2。
-    expect(countOf('needsWorldgenNotice(')).toBe(4);
+  it('needsWorldgenNotice still guards every load-side decision', () => {
+    // 原本 4 處（armWorldgenNotice 排隊＋continueGame 的提示＋兩個載入端的還原
+    // 政策）。Task 20 把 arm 的**決策**搬進 `world/worldgen-notice.ts`（該檔內用
+    // needsWorldgenNotice → shouldArmNotice 的行為測試覆蓋 undefined／同版／舊版／
+    // 新版的判準）→ main.ts 剩 3 處；四個決策點仍共用同一個版本判準。
+    expect(countOf('needsWorldgenNotice(')).toBe(3);
   });
 });
 

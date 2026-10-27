@@ -22,6 +22,7 @@ import { BLOCK } from './world/blocks';
 import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
+import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
 // B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
 import { damageStack } from './core/durability';
@@ -1072,19 +1073,21 @@ function beginNoticeSession(): void {
 }
 
 /** 記下「這份雲端進度是舊的，進場時要跳提示」。**不直接跳**（見上面的說明）。
- *  已經在這個 session 提示過 → 不再重新排隊（同一筆進度被套用多次也只跳一次）。 */
+ *  規則本體（要提示＋這個 session 還沒跳過）住在 `world/worldgen-notice.ts`
+ *  的 `shouldArmNotice`（行為測試在 `worldgen-notice.test.ts`）；這裡只留
+ *  旗標。 */
 function armWorldgenNotice(saved: number | undefined): void {
-  if (!needsWorldgenNotice(saved)) return;
-  if (worldgenNoticeShown) return; // 這個 session 已經說過了
+  if (!shouldArmNotice(saved, worldgenNoticeShown)) return;
   worldgenNoticePending = true;
 }
 
 /** 跳「地形已改變」toast —— 呼叫端必須是「玩家看得到 toast 的那一刻」
- *  （進場、或場中套用雲端進度）。跳完就清掉旗標 → 同一筆進度不重複跳。 */
+ *  （進場、或場中套用雲端進度）。跳完就清掉旗標 → 同一筆進度不重複跳。
+ *  規則本體住 `world/worldgen-notice.ts` 的 `shouldFlushNotice`。 */
 function flushWorldgenNotice(): void {
-  if (!worldgenNoticePending) return;
-  worldgenNoticePending = false;
-  if (worldgenNoticeShown) return; // 這個 session 已經跳過（同一個 session 只一次）
+  const armed = worldgenNoticePending;
+  worldgenNoticePending = false; // 這次 flush 消費掉排隊旗標（無論跳不跳，與舊碼相同）
+  if (!shouldFlushNotice(armed, worldgenNoticeShown)) return;
   worldgenNoticeShown = true;
   pushWorldgenNotice(toasts);
 }
