@@ -27,7 +27,7 @@ import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENT
 // B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
 import { damageStack } from './core/durability';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
-import { titleEntry } from './core/boot-entry';
+import { titleEntry, titleTriState } from './core/boot-entry';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
@@ -989,11 +989,26 @@ const BIOME_SAMPLE_INTERVAL_SEC = 0.5;
  *  The save itself only changes through this page's saveGame calls, so the
  *  cache matches what loadGame() would return (single-player, single tab). */
 let savedPayload: SavePayload | null = null;
-/** A1: the title's 繼續遊戲 state — `'pending'` until the boot check (local +
- *  cloud) settles, then `'yes'` when an entry exists and `'no'` when none
- *  does. The title mounts on `'pending'` (Continue disabled) so a slow network
- *  can never hold the title screen hostage. */
-let titleSaveState: 'pending' | 'yes' | 'no' = 'pending';
+/** A1: true until the boot check (local + cloud) settles. The title's
+ *  繼續遊戲 state itself is NOT cached — see {@link titleSaveStateNow}. The
+ *  title mounts on `'pending'` (Continue disabled) so a slow network can never
+ *  hold the title screen hostage. */
+let bootCheckPending = true;
+
+/** A1／B1.4（修復波 review CR-1）：標題三態**每次 render 由 titleEntry 推導**。
+ *  曾經快取在一個只在開機 settle 時寫入的變數 → `savedPayload` 在場中存檔
+ *  （autosave／儲存並離開）之後，回到標題的快取仍是舊的 `'no'`：**「繼續遊戲」
+ *  消失**，而且新遊戲直接開局、**不再問 B1.4 的覆蓋確認**（下一次 autosave
+ *  就把剛存的進度蓋掉）——正是這個修復波要消滅的「靜默丟進度」。
+ *  `bootCheckPending` 是唯一真正需要狀態的部分（答案還可能被雲端改寫）；
+ *  settle 之後永遠可由現況決定。 */
+function titleSaveStateNow(): 'pending' | 'yes' | 'no' {
+  return titleTriState({
+    pending: bootCheckPending,
+    hasLocalSave: savedPayload !== null,
+    cloudApplied: cloudAppliedAtBoot,
+  });
+}
 /** A1: the player pressed 單人遊戲 while the boot check was still running —
  *  the title shows 「檢查進度中…」 until the settle decides the overwrite
  *  warning (a cloud-only entry must be warned about too). */
@@ -1630,16 +1645,18 @@ function setState(next: GameState): void {
     // or a successful in-session save); no save → hidden (settled).
     // Ruling I/J: a boot-applied CLOUD payload is also an entry (cloud wins
     // when both exist) — the decision is the pure, unit-pinned titleEntry().
-    // B1.4: the 新遊戲 overwrite confirm reads the SAME state as the button
-    // (titleSaveState / savedPayload), so they can never disagree.
+    // B1.4: the 新遊戲 overwrite confirm reads the SAME derived state as the
+    // button, so they can never disagree (both call titleSaveStateNow()).
     // A1: the button state is tri-state while the boot check runs (Continue
-    // disabled until the answer is final); the entry decision itself is still
-    // the pure titleEntry() (local vs boot-applied cloud).
+    // disabled until the answer is final).
+    // 修復波 review CR-1：**推導、不快取**——場中存檔會改變 savedPayload，
+    // 快取會讓這裡顯示過期的 'no'（見 titleSaveStateNow 的說明）。
+    const saveState = titleSaveStateNow();
     menus.showTitle({
-      saveState: titleSaveState,
+      saveState,
       statusText: newGameWaiting
         ? '檢查進度中…'
-        : titleSaveState === 'pending'
+        : saveState === 'pending'
           ? '正在檢查雲端進度…'
           : undefined,
       onContinue: handleContinue,
@@ -2162,10 +2179,23 @@ async function resolveCloudConflict(): Promise<void> {
         // 地套用到進行中的世界（玩家自己選的，才會有覆蓋）。
         void (async () => {
           await cloudSession.resolveConflict('take-cloud');
+          // 修復波 review CR-2：對話框也可能**疊在標題畫面上**（儲存並離開的檢
+          // 查點撞 409 → 標題已掛、玩家還沒進場）。那時候套用等同「開機套用過的
+          // 雲端進度」→ 記號必須補上，否則標題的「繼續遊戲」會走本機分支、用舊的
+          // savedPayload 蓋掉剛採用的遠端進度（下一次檢查點再把遠端較新的資料
+          // 蓋掉）——玩家選了「採用雲端」卻得到相反結果，正是 C1 要消滅的。
+          const onTitle = state === 'title' && !sessionStarted;
           applyCloudData(accepted);
-          // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→ 舊的
-          // 雲端進度就地告知一次。`applyCloudData` 本身只排隊不跳。
-          flushWorldgenNotice();
+          if (onTitle) {
+            cloudAppliedAtBoot = true;
+            setState('title'); // 重繪標題：繼續遊戲改走 continueFromCloud()
+          } else {
+            // B3 Task 8：這裡是**場中**套用（玩家已經在遊戲裡，看得到 toast）→
+            // 舊的雲端進度就地告知一次。`applyCloudData` 本身只排隊不跳。
+            // （標題上的套用**不**在此跳：與開機套用同一條規則——進場時才 flush，
+            // 否則 toast 疊在標題畫面上、玩家進遊戲後看不到。）
+            flushWorldgenNotice();
+          }
           pushCloudToast('已採用雲端進度');
           rerenderPauseUnlessConflict();
         })();
@@ -2563,8 +2593,11 @@ function showNewGameConfirm(): void {
  *  final yet (the cloud may still produce an entry), so the click WAITS for
  *  the settle instead of guessing; the title shows 檢查進度中… meanwhile. */
 function handleNewGame(): void {
-  if (titleSaveState !== 'pending') {
-    if (titleSaveState === 'yes') showNewGameConfirm();
+  // 修復波 review CR-1：問**推導後**的三態（與按鈕顯示同一個來源）——快取會
+  // 在場中存檔後過期，讓「有存檔」的新局不再跳 B1.4 的覆蓋確認。
+  const st = titleSaveStateNow();
+  if (st !== 'pending') {
+    if (st === 'yes') showNewGameConfirm();
     else startGame();
     return;
   }
@@ -2579,7 +2612,7 @@ function handleNewGame(): void {
   void bootSettled.then(() => {
     newGameWaiting = false;
     if (state !== 'title') return; // the player left the title meanwhile
-    if (titleSaveState === 'yes') showNewGameConfirm();
+    if (titleSaveStateNow() === 'yes') showNewGameConfirm();
     else startGame();
   });
 }
@@ -2827,10 +2860,9 @@ async function runBootCheck(): Promise<void> {
   }
   // Settle the title: from here the entry is final (the button becomes live
   // or disappears). Ruling J: a boot-applied cloud payload wins the entry.
-  titleSaveState =
-    titleEntry({ hasLocalSave: savedPayload !== null, cloudApplied: cloudAppliedAtBoot }) !== 'none'
-      ? 'yes'
-      : 'no';
+  // 修復波 review CR-1：這裡只翻「不再 pending」的旗標；三態本身在每次 render
+  // 由 titleSaveStateNow() 推導（場中存檔會改變它，不得快取）。
+  bootCheckPending = false;
   if (state === 'title') setState('title');
 }
 

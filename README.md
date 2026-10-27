@@ -453,7 +453,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1631 tests / 83 files 全綠（效能檔另跑，見下）
+npm test           # vitest run — 1637 tests / 83 files 全綠（效能檔另跑，見下）
 npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
@@ -537,7 +537,7 @@ npm run lint       # eslint .
   驗證：**1453 tests / 76 files**、typecheck／lint／build 全綠、pinned 工具
   pack＋validate 通過；相容性提示（0.8.0 讀不到 block id 32）與已知問題見
   `docs/releases/v0.9.0.md`。
-- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1631 tests / 83 files**、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
+- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1509 tests / 78 files**（0.10.1 修復波後實測 1637 tests / 83 files）、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 - Phase 4 執行計畫（10 任務）：`docs/superpowers/plans/2026-10-11-wecraft-phase4.md`

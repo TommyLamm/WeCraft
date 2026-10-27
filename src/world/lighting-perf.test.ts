@@ -26,6 +26,11 @@ import { meshChunk } from './mesher';
  * - `npm run test:perf` 單檔跑（無跨檔競爭）→ 絕對門檻才有意義；
  * - 每波閘門兩者都跑（見計畫 §每波驗證閘門與 task 報告）。
  *
+ * 《餘裕》：真路徑門檻 33 ms 對實測 27.8–30.8 ms（約 7–16% 餘裕）、攤平門檻
+ * 8 ms/chunk 對實測 5.2–5.8 ms。紅燈時**先看印出來的數字**：接近門檻＝機器忙
+ * （重跑一次），遠超門檻＝真的退化。不要為了壓紅而放寬門檻（舊的 100 ms 就是
+ * 這樣壞掉的）。
+ *
  * 《與既有測試的映射（R-T3-1 先例：同情境不重複）》
  * - brief 的「generating and lighting 16 chunks < 1500 ms」→ 已由
  *   `lighting.test.ts` 的 `'relighting 16 chunks stays inside the generation

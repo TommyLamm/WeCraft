@@ -26,3 +26,20 @@ export function titleEntry({ hasLocalSave, cloudApplied }: TitleEntryInput): 'cl
   if (hasLocalSave) return 'local';
   return 'none';
 }
+
+/** A1 的標題三態（`'pending'`／`'yes'`／`'no'`），**由輸入推導、不得快取**。
+ *
+ *  修復波 review CR-1：`hasLocalSave` 會在**場中存檔**之後改變（autosave／
+ *  儲存並離開）——把它推導出的三態快取在一個只在開機 settle 時寫入的變數，
+ *  會讓回到標題時顯示過期的 `'no'`：「繼續遊戲」消失、新遊戲也不再問 B1.4 的
+ *  覆蓋確認（下一次 autosave 直接蓋掉剛存的進度）。呼叫端（main.ts 的標題
+ *  render 與 handleNewGame）每次都要重算。
+ *
+ *  `pending` 只在開機檢查（本機＋雲端）settle 前成立——那時答案還可能被雲端
+ *  改寫；settle 後 `'yes'`／`'no'` 永遠可由現況決定。 */
+export function titleTriState(
+  input: TitleEntryInput & { pending: boolean },
+): 'pending' | 'yes' | 'no' {
+  if (input.pending) return 'pending';
+  return titleEntry(input) === 'none' ? 'no' : 'yes';
+}

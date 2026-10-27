@@ -527,10 +527,51 @@ describe('main.ts 接線（A1：標題先掛、雲端背景載入）', () => {
     expect(body).toContain("state === 'title' && !sessionStarted");
   });
 
-  it('the title settle flips the tri-state and re-renders only on the title', () => {
+  it('the title settle clears the pending flag and re-renders only on the title', () => {
     const body = functionBody('runBootCheck');
-    expect(body).toContain('titleSaveState');
+    expect(body).toContain('bootCheckPending = false');
     expect(body).toContain("if (state === 'title') setState('title');");
+  });
+
+  // 修復波 review CR-1：標題三態**推導、不快取**。
+  // 快取（只在開機 settle 時寫入）會在場中存檔後過期 → 「繼續遊戲」消失、
+  // 新遊戲不再問 B1.4 的覆蓋確認（下一次 autosave 蓋掉剛存的進度）。
+  it('the title tri-state is derived per render, never cached (CR-1)', () => {
+    // 不得再有「只在開機寫一次」的模組變數（賦值或宣告都不行）。
+    expect(mainSource).not.toContain('let titleSaveState');
+    expect(mainSource).not.toContain('titleSaveState =');
+    // 推導器：pending 旗標 ＋ 現況（savedPayload／cloudAppliedAtBoot）→ 純函式。
+    const body = functionBody('titleSaveStateNow');
+    expect(body).toContain('bootCheckPending');
+    expect(body).toContain('savedPayload !== null');
+    expect(body).toContain('cloudAppliedAtBoot');
+    expect(body).toContain('titleTriState(');
+    // 兩個消費者都走推導器：按鈕顯示（setState 的 title 分支）與 B1.4 的
+    // 覆蓋確認（handleNewGame）——同一個來源，不可能再不一致。
+    expect(functionBody('setState')).toContain('titleSaveStateNow()');
+    const hg = functionBody('handleNewGame');
+    expect(hg).toContain('titleSaveStateNow()');
+    // 順序：**先推導、再決定**（確認框／開局都必須在推導之後）。只斷言
+    // 「有呼叫」不夠——猜一個寫死的值、把呼叫留在後面的 .then 裡也會過；
+    // 這一條讓「先決定才推導（或根本沒推導）」當場紅。
+    expect(hg.indexOf('showNewGameConfirm()')).toBeGreaterThan(hg.indexOf('titleSaveStateNow()'));
+    expect(hg.indexOf('startGame()')).toBeGreaterThan(hg.indexOf('titleSaveStateNow()'));
+  });
+});
+
+// 修復波 review CR-2：C1 的「採用雲端」可能發生在**標題畫面**上（儲存並離開
+// 的檢查點撞 409 → 對話框疊在標題上）。那時套用等同「開機套用過的雲端進度」
+// → 必須補記號並重繪標題，否則「繼續遊戲」會用舊的本機 payload 蓋掉剛採用的
+// 遠端進度（玩家選了採用雲端卻得到相反結果）。
+describe('main.ts 接線（C1：標題上的「採用雲端」CR-2）', () => {
+  it('take-cloud on the title marks the payload as boot-applied and re-renders the title', () => {
+    const body = functionBody('resolveCloudConflict');
+    expect(body).toContain("const onTitle = state === 'title' && !sessionStarted;");
+    expect(body).toContain('cloudAppliedAtBoot = true');
+    expect(body).toContain("setState('title')");
+    // 標題上的套用不得就地跳提示（toast 會疊在標題畫面上、玩家進場後看不到）
+    // ——flush 只在非標題的分支呼叫。
+    expect(body).toContain('flushWorldgenNotice();');
   });
 });
 
