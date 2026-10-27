@@ -333,7 +333,8 @@ npm run dev        # 開啟 http://localhost:5173
 - **背包是 27＋9 的簡化版**：沒有滑鼠拖曳的多格搬運（以**點擊選取→點擊放置**代替）；
   工作台 3×3 的來源列預設只顯示熱鍵列 9 格（工作台面板可看到全部 36 格）；
   創造模式的物品清單是全物品的平鋪清單（**沒有分類頁籤與搜尋**）
-- **礦脈是逐格密度模型**（原版是成團的礦脈 blob）；**煤炭沿用均勻密度**（原版是
+- **礦石為依深度帶密度的逐格灑點**（非成團的 blob 礦脈；0.10.1 審查裁決維持——
+  重寫成 blob 生成器會動到地形，超出修復範圍）；**煤炭沿用均勻密度**（原版是
   近地表的三角帶、且 Y=0 以下無煤）——重排煤炭會讓低窪地形完全沒有燃料，故刻意保留
 - **花與草在原版不掉落**（需要剪刀／絲綢觸碰）；本作讓它們掉落自身以便重新種回
   （自 0.6.0 起的既有決策，0.8.0 把掉落接上）
@@ -452,7 +453,8 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1509 tests / 78 files 全綠
+npm test           # vitest run — 1631 tests / 83 files 全綠（效能檔另跑，見下）
+npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -517,7 +519,7 @@ npm run lint       # eslint .
   維持均勻密度）；**攻擊傷害與工具速度對齊原版**（原表鎬一律 2、斧一律 3）；花草與
   B3 裝飾的**掉落接線**；金礦／生金熔成金錠；**31 份合成配方**（any-planks＋斧左右
   鏡像）；**36 格背包**（27 主＋9 熱鍵列＋2×2、游標堆疊：左鍵拿放／右鍵半堆疊、關閉
-  回填）；創造**可捲動全物品清單**（72 項）；**4 個新進度**（累計 **17** 項）；
+  回填）；創造**可捲動全物品清單**（72 項；B6 加入 torch 後為 73）；**4 個新進度**（累計 **17** 項）；
   **本機 payload v4**（舊 9 格遷移到熱鍵列）、**雲端 format 2**（`readableFormats
   [1,2]`；舊進度自動遷移）；**跨地形版本不還原被動生物**（B4 交接）。
   驗證：**1358 tests / 74 files**、typecheck／lint／build 全綠、pinned 工具
@@ -535,7 +537,7 @@ npm run lint       # eslint .
   驗證：**1453 tests / 76 files**、typecheck／lint／build 全綠、pinned 工具
   pack＋validate 通過；相容性提示（0.8.0 讀不到 block id 32）與已知問題見
   `docs/releases/v0.9.0.md`。
-- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1509 tests / 78 files**、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
+- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1631 tests / 83 files**、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 - Phase 4 執行計畫（10 任務）：`docs/superpowers/plans/2026-10-11-wecraft-phase4.md`
