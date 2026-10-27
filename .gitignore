@@ -4,3 +4,4 @@ artifacts/
 .superpowers/
 *.log
 .worktrees/
+game.zip
