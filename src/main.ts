@@ -1317,7 +1317,9 @@ function spawnPoint(): { x: number; y: number; z: number } {
  *  all live there; this composition-root wrapper only supplies the world
  *  callbacks and pushes the result. Count changes are announced by the caller.
  *  **光照判準**（B6 Task 7）：B4 的 `clockLight` 時鐘近似已刪除 → 每次嘗試用
- *  `spawnLightAt(world, x, y, z, clock.t)` 查候選格的**真的** per-block 光照。 */
+ *  `spawnLightAt(world, x, y, z, clock.t)` 查候選格的**真的** per-block 光照。
+ *  **B3**：未點光的區塊回 `lit:false` → `canSpawnHostile` 不生成（未知不是暗；
+ *  這裡不必另外判斷——同一個 `SpawnLight` 流進純判準層）。 */
 function spawnTick(): void {
   const mob = trySpawnMob(mobs, player.position, {
     lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),

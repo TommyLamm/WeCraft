@@ -448,7 +448,7 @@ const player = { x: 0, y: 6, z: 0 };
  *  案例在自己身上覆寫成 `false`。 */
 function spawnCtxOf(over: Partial<PassiveSpawnCtx> = {}): PassiveSpawnCtx {
   return {
-    lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }),
+    lightAt: () => ({ sky: 15, internalSky: 15, block: 0, lit: true }),
     isSolidAt: groundAt5,
     blockIdAt: grassEverywhere,
     isDaylight: () => true,
@@ -478,7 +478,7 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     const out = trySpawnPassiveGroup(
       input,
       player,
-      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 0 }), rng: seeded(1) }),
+      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 0, lit: true }), rng: seeded(1) }),
     );
     expect(out).toBe(input);
     expect(out.length).toBe(0);
@@ -495,7 +495,7 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
       player,
       spawnCtxOf({
         isDaylight: () => false,
-        lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }), // 正午等級的亮
+        lightAt: () => ({ sky: 15, internalSky: 15, block: 0, lit: true }), // 正午等級的亮
         rng: seeded(1),
       }),
     );
@@ -511,7 +511,7 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
       isDaylight: () => false,
       lightAt: () => {
         calls.light++;
-        return { sky: 15, internalSky: 15, block: 0 };
+        return { sky: 15, internalSky: 15, block: 0, lit: true };
       },
       isSolidAt: () => {
         calls.solid++;
@@ -532,7 +532,7 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
     const out = trySpawnPassiveGroup(
       [],
       player,
-      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 9 }), rng: seeded(1) }),
+      spawnCtxOf({ lightAt: () => ({ sky: 0, internalSky: 0, block: 9, lit: true }), rng: seeded(1) }),
     );
     expect(out.length).toBeGreaterThanOrEqual(PASSIVE_SPAWN_MIN_GROUP);
     expect(out.length).toBeLessThanOrEqual(PASSIVE_SPAWN_MAX_GROUP);
@@ -633,8 +633,8 @@ describe('trySpawnPassiveGroup（B4 Task 7：被動生物生成規則）', () =>
         lightAt: () => {
           lightCalls++;
           return lightCalls === 1
-            ? { sky: 15, internalSky: 15, block: 0 }
-            : { sky: 0, internalSky: 0, block: 0 };
+            ? { sky: 15, internalSky: 15, block: 0, lit: true }
+            : { sky: 0, internalSky: 0, block: 0, lit: true };
         },
         rng: seeded(1),
       }),

@@ -808,7 +808,7 @@ describe('trySpawnMob', () => {
   const ctxOf = (over: Partial<Parameters<typeof trySpawnMob>[2]> = {}) => ({
     // 午夜地表：內部天空光 4 ≤ 7、無方塊光 → 敵對可生成（B6 Task 7 的 fixture：
     // 光照是 per-block 查詢，不再是 clockLight 的時鐘近似）
-    lightAt: () => ({ sky: 15, internalSky: 4, block: 0 }),
+    lightAt: () => ({ sky: 15, internalSky: 4, block: 0, lit: true }),
     isSolidAt: surface,
     blockIdAt: () => BLOCK.DIRT, // any non-bedrock id
     rng: () => 0.5, // angle π, distance 76 → spot (≈0, −76); kind → skeleton
@@ -831,14 +831,14 @@ describe('trySpawnMob', () => {
   it('never spawns in day', () => {
     // 正午地表：內部天空光 15 > 7 → 敵對不可生成（B4 的「白天」近似換成真值）
     expect(
-      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 15, block: 0 }) })),
+      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 15, block: 0, lit: true }) })),
     ).toBeNull();
   });
 
   it('a torch beside the spawn point blocks hostile spawns', () => {
     // 同一個午夜地表位置，但旁邊有火把（方塊光 1）→ 敵對不可生成
     expect(
-      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 4, block: 1 }) })),
+      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 4, block: 1, lit: true }) })),
     ).toBeNull();
   });
 

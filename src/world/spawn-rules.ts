@@ -17,11 +17,17 @@ import { phaseOf } from '../core/daynight';
 
 /** 生成點的光照（0..15）：`sky` 是客戶端天空光（時間無關；MC: sky light is not
  *  reduced at night）、`internalSky` 是內部天空光（隨日夜衰減；MC: internal sky
- *  light）、`block` 是方塊光。由 `lighting.spawnLightAt` 提供。 */
+ *  light）、`block` 是方塊光。由 `lighting.spawnLightAt` 提供。
+ *
+ *  **`lit`（B3）**：這一格的區塊**有沒有光照資料**。未點光／區塊缺席時三個
+ *  數值全回 0——但「未知」不等於「暗」：舊碼讓未點光的區塊看起來全黑 →
+ *  白天在剛載入的區塊生成敵對生物（審查 B3）。`lit:false` 一律不生成。 */
 export interface SpawnLight {
   sky: number;
   internalSky: number;
   block: number;
+  /** 區塊有光照資料（`chunk.light !== null`）。false ＝ 未知，不是暗。 */
+  lit: boolean;
 }
 
 /** 原版：被動生物需要亮度 9 以上才能生成（wiki，2026-10-20 查證）。 */
@@ -40,12 +46,16 @@ export function maxLight(light: SpawnLight): number {
   return Math.max(light.sky, light.block);
 }
 
-/** 被動生物能否在此生成：亮度 ≥ {@link PASSIVE_MIN_LIGHT}。 */
+/** 被動生物能否在此生成：亮度 ≥ {@link PASSIVE_MIN_LIGHT}。
+ *  B3：未點光區塊（`lit:false`）＝未知 → 不生成（不是「夠亮」）。 */
 export function canSpawnPassive(light: SpawnLight): boolean {
+  if (!light.lit) return false;
   return maxLight(light) >= PASSIVE_MIN_LIGHT;
 }
 
-/** 敵對生物能否在此生成：內部天空光 ≤ {@link HOSTILE_MAX_SKY_LIGHT} 且沒有方塊光。 */
+/** 敵對生物能否在此生成：內部天空光 ≤ {@link HOSTILE_MAX_SKY_LIGHT} 且沒有方塊光。
+ *  B3：未點光區塊（`lit:false`）＝未知 → 不生成（未知不是「全黑」）。 */
 export function canSpawnHostile(light: SpawnLight): boolean {
+  if (!light.lit) return false;
   return light.internalSky <= HOSTILE_MAX_SKY_LIGHT && light.block === 0;
 }

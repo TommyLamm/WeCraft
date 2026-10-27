@@ -18,7 +18,7 @@ import {
 describe('spawn rules — 光照判準', () => {
   it('daylight is bright enough for passive mobs and too bright for hostiles', () => {
     // 正午地表：客戶端天空光 15（內部天空光同為 15）、無方塊光
-    const noonSurface = { sky: 15, internalSky: 15, block: 0 };
+    const noonSurface = { sky: 15, internalSky: 15, block: 0, lit: true };
     expect(canSpawnPassive(noonSurface)).toBe(true);
     expect(canSpawnHostile(noonSurface)).toBe(false);
   });
@@ -32,32 +32,40 @@ describe('spawn rules — 光照判準', () => {
     // 生成端 `ctx.isDaylight()` 擋下（`passive-mobs.test.ts` 的夜間案例釘住
     // 「同一片亮草地，夜晚不生成」）。這條測試現在只負責把**亮度**判準釘在
     // 「時間無關」上——兩者分離，才不會再有人把「亮」誤讀成「白天」。
-    const dark = { sky: 0, internalSky: 0, block: 0 };
+    const dark = { sky: 0, internalSky: 0, block: 0, lit: true };
     expect(canSpawnPassive(dark)).toBe(false);
     expect(canSpawnHostile(dark)).toBe(true);
-    const nightSurface = { sky: 15, internalSky: 4, block: 0 };
+    const nightSurface = { sky: 15, internalSky: 4, block: 0, lit: true };
     expect(canSpawnPassive(nightSurface)).toBe(true); // 亮度夠亮——時間判準不在這裡
     expect(canSpawnHostile(nightSurface)).toBe(true); // 內部天空光衰減 → 敵對可以
   });
 
   it('passive mobs need light 9 or more', () => {
     expect(PASSIVE_MIN_LIGHT).toBe(9);
-    expect(canSpawnPassive({ sky: 15, internalSky: 15, block: 0 })).toBe(true); // 正午地表
-    expect(canSpawnPassive({ sky: 0, internalSky: 0, block: 9 })).toBe(true); // 方塊光夠亮（火把旁）
-    expect(canSpawnPassive({ sky: 8, internalSky: 8, block: 0 })).toBe(false); // 半遮蔽且無方塊光（差一格）
-    expect(canSpawnPassive({ sky: 0, internalSky: 0, block: 8 })).toBe(false); // 方塊光差一格
+    expect(canSpawnPassive({ sky: 15, internalSky: 15, block: 0, lit: true })).toBe(true); // 正午地表
+    expect(canSpawnPassive({ sky: 0, internalSky: 0, block: 9, lit: true })).toBe(true); // 方塊光夠亮（火把旁）
+    expect(canSpawnPassive({ sky: 8, internalSky: 8, block: 0, lit: true })).toBe(false); // 半遮蔽且無方塊光（差一格）
+    expect(canSpawnPassive({ sky: 0, internalSky: 0, block: 8, lit: true })).toBe(false); // 方塊光差一格
   });
 
   it('hostile mobs need a dark internal sky and no block light', () => {
     expect(HOSTILE_MAX_SKY_LIGHT).toBe(7);
     // 敵對判準看的是**內部**天空光（隨日夜衰減）：午夜地表 4 → 可以；正午地表
     // 15 → 不行；火把旁（方塊光 1）→ 不行。
-    expect(canSpawnHostile({ sky: 15, internalSky: 4, block: 0 })).toBe(true); // 午夜地表
-    expect(canSpawnHostile({ sky: 15, internalSky: 15, block: 0 })).toBe(false); // 正午地表
-    expect(canSpawnHostile({ sky: 0, internalSky: 0, block: 1 })).toBe(false); // 火把旁
+    expect(canSpawnHostile({ sky: 15, internalSky: 4, block: 0, lit: true })).toBe(true); // 午夜地表
+    expect(canSpawnHostile({ sky: 15, internalSky: 15, block: 0, lit: true })).toBe(false); // 正午地表
+    expect(canSpawnHostile({ sky: 0, internalSky: 0, block: 1, lit: true })).toBe(false); // 火把旁
     // 邊界（B4 既有斷言，改用內部天空光）
-    expect(canSpawnHostile({ sky: 0, internalSky: 7, block: 0 })).toBe(true);
-    expect(canSpawnHostile({ sky: 0, internalSky: 8, block: 0 })).toBe(false);
+    expect(canSpawnHostile({ sky: 0, internalSky: 7, block: 0, lit: true })).toBe(true);
+    expect(canSpawnHostile({ sky: 0, internalSky: 8, block: 0, lit: true })).toBe(false);
+  });
+
+  it('an unlit chunk is unknown, not dark (B3)', () => {
+    // 審查 B3：未點光區塊（chunk.light === null）的 sky/internalSky/block 全回
+    // 0 → 舊判準把「未知」誤讀成「全黑」→ 白天生成敵對生物。`lit:false` 一律
+    // 不生成（兩種生物）——未知既不是暗、也不是亮。
+    expect(canSpawnHostile({ sky: 0, internalSky: 0, block: 0, lit: false })).toBe(false);
+    expect(canSpawnPassive({ sky: 15, internalSky: 15, block: 0, lit: false })).toBe(false);
   });
 
   it('isDaylight follows the day phase', () => {
@@ -67,8 +75,8 @@ describe('spawn rules — 光照判準', () => {
 
   it('maxLight takes the brighter of the sky and block light', () => {
     // 被動判準的亮度只看客戶端天空光與方塊光（不含內部天空光——原版的兩套判準）
-    expect(maxLight({ sky: 15, internalSky: 15, block: 0 })).toBe(15);
-    expect(maxLight({ sky: 3, internalSky: 3, block: 11 })).toBe(11);
-    expect(maxLight({ sky: 0, internalSky: 0, block: 0 })).toBe(0);
+    expect(maxLight({ sky: 15, internalSky: 15, block: 0, lit: true })).toBe(15);
+    expect(maxLight({ sky: 3, internalSky: 3, block: 11, lit: true })).toBe(11);
+    expect(maxLight({ sky: 0, internalSky: 0, block: 0, lit: true })).toBe(0);
   });
 });

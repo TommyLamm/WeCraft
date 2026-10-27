@@ -324,6 +324,19 @@ describe('sky light engine (B6 Task 2)', () => {
     expect(night.block).toBe(0);
   });
 
+  it('an unlit chunk is reported as unknown, not dark (B3)', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15); // 地板
+    // 還沒點光（chunk.light === null）→ 三值全 0，但 `lit:false`（未知）
+    expect(spawnLightAt(w, 4, 62, 4, 0.75)).toEqual({ sky: 0, internalSky: 0, block: 0, lit: false });
+    // 缺席的區塊也是未知（不是「暗」）
+    expect(spawnLightAt(w, 100, 62, 100, 0.75)).toEqual({ sky: 0, internalSky: 0, block: 0, lit: false });
+    // 點光之後：地下（真的暗）→ 數值一樣是 0，但 `lit:true`（「已知的暗」）
+    computeChunkLight(w, 0, 0);
+    expect(spawnLightAt(w, 4, 62, 4, 0.75)).toEqual({ sky: 0, internalSky: 0, block: 0, lit: true });
+  });
+
   it('the rendered sky scale is 1 at noon and dimmer at night', () => {
     expect(skyLightScale(0.25)).toBe(1);
     expect(skyLightScale(0.75)).toBe(SKY_SCALE_NIGHT);

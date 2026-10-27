@@ -466,7 +466,12 @@ export function internalSkyLight(skyLevel: number, t: number): number {
  *  `sky`＝客戶端天空光（時間無關；MC: sky light is not reduced at night）、
  *  `internalSky`＝內部天空光（隨日夜衰減——敵對判準吃這個值）、
  *  `block`＝方塊光（火把）。`SpawnLight` 以 type-only 從 `./spawn-rules`
- *  引入（判準常數住那邊、引擎住這邊 → 無運行期循環依賴）。 */
+ *  引入（判準常數住那邊、引擎住這邊 → 無運行期循環依賴）。
+ *
+ *  **B3：`lit` 區分「未知」與「暗」**。區塊不存在或還沒點光（`chunk.light`
+ *  仍為 null）時三個數值本來就都回 0——但生怪判準不能把「沒有資料」讀成
+ *  「全黑」（否則白天在剛載入的區塊生成敵對生物）。這裡一次 `locate` 同時
+ *  回報數值與 `lit`：缺區塊／未點光 → `{0,0,0, lit:false}`。 */
 export function spawnLightAt(
   world: World,
   x: number,
@@ -474,9 +479,14 @@ export function spawnLightAt(
   z: number,
   t: number,
 ): SpawnLight {
-  const sky = skyLightAt(world, x, y, z);
-  const block = blockLightAt(world, x, y, z);
-  return { sky, internalSky: internalSkyLight(sky, t), block };
+  const cell = locate(world, x, y, z);
+  if (!cell || !cell.chunk.light) {
+    return { sky: 0, internalSky: 0, block: 0, lit: false };
+  }
+  const raw = cell.chunk.light[chunkIndex(cell.lx, cell.ly, cell.lz)];
+  const sky = raw >> 4;
+  const block = raw & 0x0f;
+  return { sky, internalSky: internalSkyLight(sky, t), block, lit: true };
 }
 
 /** 天空光 BFS 主循環：pop 一格 → 6 鄰居擴張。衰減規則與方塊光唯一的差別：
