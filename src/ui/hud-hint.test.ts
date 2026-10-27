@@ -26,7 +26,8 @@ afterEach(() => {
 });
 
 const root = (): HTMLElement => document.getElementById('ui-root')!;
-const hint = (): HTMLElement | null => root().querySelector<HTMLElement>('.ui-hint');
+// B7 Task 17：獨立 class —— `.ui-hint` 是暫停選單的操作提示行（B2 Task 12）。
+const hint = (): HTMLElement | null => root().querySelector<HTMLElement>('.ui-sprint-hint');
 
 describe('createHudHint', () => {
   it('show renders the hint text', () => {

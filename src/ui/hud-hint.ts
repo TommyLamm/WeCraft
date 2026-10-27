@@ -64,7 +64,11 @@ export function createHudHint(
   const now = opts?.now ?? (() => Date.now());
 
   const el = document.createElement('div');
-  el.className = 'ui-hint';
+  // B7 Task 17：**獨立的 class**。原本借用 `.ui-hint`——那正是暫停選單操作
+  // 提示行（B2 Task 12）的 class；本元件的 CSS（fixed／opacity: 0）在樣式表
+  // 後面，會 cascade 到暫停選單那一行 → 整行變透明、還被拉成 fixed 條。兩個
+  // 「提示」是不同東西：這裡是畫面下緣的**短暫浮層**，那裡是選單裡的**文字行**。
+  el.className = 'ui-sprint-hint';
   uiRoot.appendChild(el);
 
   let lastText: string | null = null;

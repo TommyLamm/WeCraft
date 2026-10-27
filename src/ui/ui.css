@@ -81,7 +81,7 @@
 .ui-item-name {
   position: absolute;
   left: 50%;
-  bottom: 70px;
+  bottom: 92px; /* B7 Task 17：70 重疊 vitals 帶（vitals 72..88）→ 92 起跳 */
   transform: translateX(-50%);
   color: #fff;
   text-shadow: 1px 1px 0 #000;
@@ -475,10 +475,12 @@
   text-align: center;
 }
 
-/* Survival vitals HUD: hearts left, hunger right, above the hotbar (Task 4). */
+/* Survival vitals HUD: hearts left, hunger right, above the hotbar (Task 4).
+   B7 Task 17：`bottom: 72px` —— 舊值 52 重疊熱鍵欄頂緣（66px）。72 = 66 + 2px
+   餘裕 ＋ 4px 呼吸空間；圖示 16px → 帶狀頂緣 88px（`.ui-item-name` 從 92 開始）。 */
 .vitals {
   position: fixed;
-  bottom: 52px;
+  bottom: 72px;
   left: 50%;
   transform: translateX(-50%);
   width: 364px;
@@ -502,18 +504,19 @@
    由 ui/eat-progress.ts 掛／收（**規則不依賴它**）。pointer-events 關掉 → 不擋
    滑鼠事件。
 
-   **位置（bottom: 104px）—— 刻意放在「物品名提示」上方**：
-   畫面下緣由下往上的帶狀（同一個 viewport 座標系）：
+   **位置（bottom: 126px；B7 Task 17 由 104 上移）—— 刻意放在「物品名提示」上方**：
+   畫面下緣由下往上的帶狀（同一個 viewport 座標系；B7 後的數值）：
 
      | 8..66px   | `.ui-hotbar`      | 熱鍵欄（48px 的格子 ＋ 內距 ＋ 邊框） |
-     | 52..68px  | `.vitals`         | 血量／飢餓條（16px 的圖示）           |
-     | 70..89px  | `.ui-item-name`   | 物品名提示（16px 字級 → 行高約 19px）  |
-     | 104..116px| `.eat-progress`   | 進度條（本項，8px ＋ 2px 邊框）       |
+     | 72..88px  | `.vitals`         | 血量／飢餓條（16px 的圖示）           |
+     | 92..111px | `.ui-item-name`   | 物品名提示（16px 字級 → 行高約 19px）  |
+     | 126..138px| `.eat-progress`   | 進度條（本項，8px ＋ 2px 邊框）       |
+     | 148..     | `.ui-sprint-hint` | 疾跑取消提示（B5）                    |
 
    **不可與 `.ui-item-name` 重疊**：切換物品後物品名提示會出現 1.2 秒，而那正是
    玩家可能正在按住右鍵進食的時候 → 兩者都在畫面中央下緣、同一條垂直線上。
-   原本的 `bottom: 88px` 正好壓到物品名提示的字尾（88 < 89）→ 往上挪到 104px，
-   與物品名提示之間留 15px 的空隙。
+   B7 把整條帶狀上移（vitals 52→72、物品名 70→92）之後，進度條維持相對間距：
+   126 − 111（物品名行高）＝ 15px 空隙（與 B7 前的 104 − 89 相同）。
 
    **定位：刻意用 `position: fixed`（不是同層熱鍵欄／物品名的 `absolute`）**：
    進度條要固定在**畫面**中央下緣，不受任何容器（含 `#ui-root`）的定位影響；
@@ -521,7 +524,7 @@
    本來就只活在 `#ui-root` 裡；進度條的錨點是「畫面」，所以用 `fixed`。 */
 .eat-progress {
   position: fixed;
-  bottom: 104px;
+  bottom: 126px;
   left: 50%;
   transform: translateX(-50%);
   width: 182px;
@@ -540,12 +543,12 @@
    由 ui/hud-hint.ts 掛 `.visible` → CSS 負責 0.25 s 淡入淡出；2 秒後元件自己
    移除 class。`pointer-events: none` → 不擋滑鼠。
 
-   **位置（bottom: 148px）**：目前下緣帶狀（見上方 `.eat-progress` 的表）最高到
-   116px；Task 17 會把 `.vitals`／`.ui-item-name`／`.eat-progress` 上移到
-   72／92／126（進度條到 138px）→ 148px 仍然在所有元素之上，兩個版本都不重疊。
+   **位置（bottom: 148px）**：Task 17 之後的下緣帶狀（見上方 `.eat-progress`
+   的表）最高到 138px（進度條）；148px 在所有元素之上（提示行本身 14px 字級
+   ＋padding ≈ 23px → 佔 148..171px），與其餘帶狀區間不重疊。
    與 `.eat-progress` 一樣用 `position: fixed`（viewport 錨定），不是 #ui-root
    容器相對定位。 */
-.ui-hint {
+.ui-sprint-hint {
   position: fixed;
   left: 50%;
   bottom: 148px;
@@ -562,7 +565,7 @@
   opacity: 0;
   transition: opacity 0.25s ease;
 }
-.ui-hint.visible {
+.ui-sprint-hint.visible {
   opacity: 1;
 }
 

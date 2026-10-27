@@ -1124,3 +1124,73 @@ describe('durability bar mounts (B7 Task 6)', () => {
     inv.close();
   });
 });
+
+// ---- B7 Task 17：下緣 HUD 帶狀的靜態幾何 --------------------------------------
+// 審查 B7：hotbar `bottom:8px`（48px 格 ＋ padding 3×2 ＋ border 2×2 → 頂緣
+// **66px**），vitals `bottom:52px` → 重疊熱鍵列上緣。jsdom 不算版面，但
+// `css: true`（vite.config.ts）會把 `ui.css` 注入成真實的 <style> → 直接讀
+// `document.styleSheets` 的規則值，把整條帶狀的**相對順序**釘住（不得互相重疊）。
+
+/** 掃描所有樣式表裡 selectorText 恰好等於 `selector` 的宣告。 */
+function ruleStyles(selector: string): CSSStyleDeclaration[] {
+  const found: CSSStyleDeclaration[] = [];
+  for (const sheet of [...document.styleSheets]) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue; // 防禦：跨源樣式表（本測試不會有）
+    }
+    for (const rule of [...rules]) {
+      if (rule instanceof CSSStyleRule && rule.selectorText === selector) found.push(rule.style);
+    }
+  }
+  return found;
+}
+
+/** 取選擇器規則裡的 `bottom`（px）。找不到規則／沒有 bottom → null。 */
+function ruleBottom(selector: string): number | null {
+  const styles = ruleStyles(selector);
+  if (styles.length === 0) return null;
+  const v = styles[0].getPropertyValue('bottom');
+  return v ? Number.parseFloat(v) : null;
+}
+
+describe('bottom HUD band geometry (B7 Task 17)', () => {
+  it('the vitals row sits above the hotbar without overlapping', () => {
+    // 熱鍵欄頂緣＝8（bottom）＋48（格）＋6（padding 3×2）＋4（border 2×2）＝66px。
+    expect(ruleBottom('.ui-hotbar')).toBe(8);
+    const vitals = ruleBottom('.vitals');
+    expect(vitals).not.toBeNull();
+    expect(vitals!).toBeGreaterThanOrEqual(68); // ≥ 66 ＋ 2px 餘裕
+  });
+
+  it('the whole bottom band stacks without overlaps (item name, progress, hint)', () => {
+    const vitals = ruleBottom('.vitals')!;
+    const itemName = ruleBottom('.ui-item-name')!;
+    const eat = ruleBottom('.eat-progress')!;
+    const hint = ruleBottom('.ui-sprint-hint')!;
+    // vitals 的 16px 圖示 → 頂緣 vitals+16；物品名必須整個在上面。
+    expect(itemName).toBeGreaterThan(vitals + 16);
+    // 物品名 16px 字級的單行高約 19px；進度條（8px ＋ 2px×2 邊框）在上面。
+    expect(eat).toBeGreaterThan(itemName + 19);
+    // 疾跑提示在最上面（進度條頂緣 ≈ eat+12）。
+    expect(hint).toBeGreaterThan(eat + 12);
+  });
+
+  it('the sprint overlay CSS never applies to the pause-menu hint class', () => {
+    // 這條釘住 B5 遺留的 class 碰撞：疾跑提示原本也叫 `.ui-hint`（＝暫停選單
+    // 操作提示行的 class）→ 樣式表後面的 `position: fixed; opacity: 0` cascade
+    // 到選單那一行，整行變透明。兩個提示必須是兩個 class。
+    const pauseHint = ruleStyles('.ui-hint');
+    expect(pauseHint.length).toBeGreaterThan(0); // 暫停選單的規則還在
+    for (const s of pauseHint) {
+      expect(s.getPropertyValue('position')).not.toBe('fixed');
+      expect(s.getPropertyValue('opacity')).not.toBe('0');
+    }
+    // 疾跑提示自己的規則：固定在畫面下緣的浮層。
+    expect(
+      ruleStyles('.ui-sprint-hint').some((s) => s.getPropertyValue('position') === 'fixed'),
+    ).toBe(true);
+  });
+});
