@@ -681,6 +681,27 @@ describe('main.ts 接線（B5：疾跑取消原因進 HUD）', () => {
   });
 });
 
+// ---- A8 接線：編輯卡頓分幀（單塊重算＋就緒優先的網格） ----------------------
+// 量測在 lighting-perf.test.ts（真路徑 < 33 ms）；這裡釘住 main.ts 的接線
+// 不被改回「一項＝整個 3×3 群組」或「只看隊頭的 mesh」。
+describe('main.ts 接線（A8：單塊光照分幀）', () => {
+  it('the light budget is one chunk per frame and relights a SINGLE chunk', () => {
+    const body = functionBody('processQueues');
+    expect(body).toContain('const budgetLight = 1;');
+    expect(body).toContain('computeChunkLightOnly(world, cx, cz)');
+    // 群組版不得回到幀內佇列（那正是 52.6 ms 卡頓的來源）；開局同步點亮
+    // （spawnPoint）用群組版是刻意的、不在 processQueues 裡。
+    expect(body).not.toContain('computeChunkLight(world');
+  });
+
+  it('the mesh pass picks the first LIGHT-READY entry, not just the queue head', () => {
+    const body = functionBody('processQueues');
+    expect(body).toContain('pendingMesh.findIndex(');
+    expect(body).toContain('!c.lightDirty && neighborsReady(cx, cz)');
+    expect(body).toContain('if (readyAt === -1) break;');
+  });
+});
+
 describe('main.ts 接線（B3 Task 9 Step 3：危險傷害與生物群系取樣）', () => {
   it('the hazard step runs inside the playing branch, exactly once per frame', () => {
     const playing = playingBranchBody();

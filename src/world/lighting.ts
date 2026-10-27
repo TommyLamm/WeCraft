@@ -379,6 +379,59 @@ export function computeChunkLight(world: World, cx: number, cz: number): void {
   for (const c of group) c.lightDirty = false;
 }
 
+/** 重算**單一區塊**的光照（A8：幀內佇列的粒度；規則與 `computeChunkLight`
+ *  相同的一套「清 0 → 播種 → BFS」，只是範圍縮到一塊）。
+ *
+ *  來源＝本塊自己的發光方塊 ＋ **乾淨**正交鄰塊的邊界光（`seedGroupBoundary`
+ *  以單塊為群組：dirty 的鄰塊跳過——它們的舊光不可信）；天空光＝本塊開闊柱
+ *  重新播種 ＋ 乾淨鄰塊邊界補光。
+ *
+ *  **為什麼單塊分幀也正確（A8 裁決）**：一次編輯把 3×3 都標髒，佇列（近→遠）
+ *  每幀只算一塊 → 最多 9 幀收斂。收斂靠兩條既有規則：
+ *  ①「只寫更高」——新光源（放火把／挖開遮蔽）的光由後續重算的鄰塊補進來；
+ *  ② dirty 鄰塊**不當邊界來源**——移除光源時不會把舊亮光餵進已清空的塊，
+ *     每個 dirty 塊都會被清一次 → 不留幽靈光。
+ *  單塊呼叫不是群組冪等運算（中間幀的鄰塊仍是舊光）；需要「一次算完 3×3」
+ *  的地方（開局同步點亮 `spawnPoint`）仍用 `computeChunkLight`。
+ *  收尾把本塊 `lightDirty` 清掉並標 `dirty`（光可能變暗——沒有任何寫入就沒有
+ *  `dirty`，網格會停在舊的亮面）。 */
+export function computeChunkLightOnly(world: World, cx: number, cz: number): void {
+  const chunk = world.getChunk(cx, cz);
+  if (!chunk) return;
+  resetResolveCache(); // 公開入口：下面的熱迴圈（BFS）要用解析快取
+  const light = chunk.ensureLight();
+  light.fill(0); // 只清這一塊（群組版一次清九塊）
+  const cells = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
+  // ── 方塊光：本塊來源播種 ＋ 乾淨鄰塊邊界 ＋ 一次 BFS ──
+  resetQueue();
+  for (let i = 0; i < cells; i++) {
+    const emission = getBlockDef(chunk.data[i]).emission ?? 0;
+    if (emission <= 0) continue;
+    // 攤平索引 → (lx, ly, lz)；與 chunkIndex 的 layout 一致（x + z*16 + y*256）
+    const ly = Math.floor(i / (CHUNK_SIZE * CHUNK_SIZE));
+    const rem = i - ly * CHUNK_SIZE * CHUNK_SIZE;
+    const lz = Math.floor(rem / CHUNK_SIZE);
+    const lx = rem - lz * CHUNK_SIZE;
+    const cur = light[i];
+    if (emission <= (cur & 0x0f)) continue;
+    light[i] = (cur & 0xf0) | emission;
+    chunk.dirty = true;
+    pushQueue(chunk.cx * CHUNK_SIZE + lx, ly, chunk.cz * CHUNK_SIZE + lz, emission);
+  }
+  seedGroupBoundary(world, [chunk], 'block');
+  expandBlockQueue(world);
+  // ── 天空光：本塊開闊柱播種 ＋ 乾淨鄰塊邊界 ＋ 一次 BFS ──
+  resetQueue();
+  seedColumnsIntoQueue(chunk);
+  seedGroupBoundary(world, [chunk], 'sky');
+  expandSkyQueue(world);
+  resetQueue();
+  chunk.lightDirty = false;
+  // 光可能變暗（移除火把）：BFS 只寫更高 → 沒有任何寫入就沒有 dirty →
+  // 網格會停在舊的亮面。重算過的塊一律重建網格（呼叫端的 mesh 預算會節流）。
+  chunk.dirty = true;
+}
+
 /** 把區塊與其**八個**鄰塊（含對角）標成需要重算光照。
  *  （2026-10-20 稽核修正：只標 4 個正交鄰塊會讓「挖掉區塊角落的火把」在對角
  *  鄰塊留下永久幽靈光——BFS 走 6 鄰居時會經過正交鄰塊寫進對角區塊。）
@@ -410,9 +463,9 @@ export function computeChunkTopY(chunk: Chunk): number {
 //
 // main.ts 把「近→遠排序」與「每幀最多取幾項」的判斷委託給這兩支**純函式**
 // （判斷本體住進 lighting.ts 才能被單元測試釘死，見 lighting-perf.test.ts）；
-// main.ts 只留接線。行為與 Task 3 的內聯版本逐位元相同：排序鍵同為
-// `(cx - pcx) ** 2 + (cz - pcz) ** 2`、每幀預算同為 2 項（每項重算一個
-// 3×3 群組；同群組的其餘項由 lightDirty 守門跳過）。
+// main.ts 只留接線。排序鍵＝`(cx - pcx) ** 2 + (cz - pcz) ** 2`（Task 3 的
+// 內聯版本逐位元相同）。**每幀預算由呼叫端決定**：B6 是 2（每項一個 3×3
+// 群組），A8 起是 **1**（每項只重算一塊，`computeChunkLightOnly`）。
 
 /** 取出本幀要點光的佇列項，數量 ≤ budget（讓「每幀 2 項」的預算可被單元
  *  測試釘死）。純函式：回傳**新陣列**（原佇列的前 `budget` 項）、不改動

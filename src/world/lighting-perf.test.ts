@@ -6,14 +6,25 @@ import { generateChunk } from './terrain';
 import {
   blockLightAt,
   computeChunkLight,
+  computeChunkLightOnly,
   computeChunkTopY,
   skyLightAt,
   sortLightQueueByDistance,
   takeLightBudget,
 } from './lighting';
+import { meshChunk } from './mesher';
 
 /**
  * B6 Task 8：光照的效能回歸門檻與每幀佇列預算（單元釘子）。
+ *
+ * 《為什麼不進 `npm test`（A8 的執行方式裁決）》
+ * 這裡的門檻是**牆鐘**絕對值；`npm test` 以 vitest 平行跑 80+ 個檔案時，同一份
+ * 工作量實測膨脹約 2 倍（本檔單跑 group best 47 ms／真路徑 28 ms；全量平行
+ * 97.9 ms／58.0 ms）→ 絕對門檻在平行負載下必然假紅（舊的 100 ms 門檻正是
+ * 「設寬到躲過噪音、寬到放過 52.6 ms 的卡頓」）。因此：
+ * - `npm test` **排除本檔**（correctness 套件保持決定性）；
+ * - `npm run test:perf` 單檔跑（無跨檔競爭）→ 絕對門檻才有意義；
+ * - 每波閘門兩者都跑（見計畫 §每波驗證閘門與 task 報告）。
  *
  * 《與既有測試的映射（R-T3-1 先例：同情境不重複）》
  * - brief 的「generating and lighting 16 chunks < 1500 ms」→ 已由
@@ -24,35 +35,32 @@ import {
  *   `'the light array is allocated lazily and holds one byte per cell'`
  *   逐項釘住，此處不重複。
  *
- * 《單區塊重算門檻的裁決（R-T3-4 收口，詳見 task-8-report）》
+ * 《單區塊重算門檻的裁決（R-T3-4 收口；A8 改攤平指標＋真路徑守門）》
  * - 計畫 §7／brief 寫「≤ 8 ms／區塊」，但其量測口徑（清 0 ＋ **3×3 群組播種**
  *   ＋ BFS ＋ 跨區塊寫入）與「8 ms」在滿群組下不相容：群組播種本身要掃
  *   9 × 65,536 格。Task 3 實測滿群組 ~30-40 ms（R-T3-4）；本檔 probe 拆解
- *   （同機、種子 1337、暖身後取最快）：**群組＝1 時 5.0 ms（8 ms 原估在其
- *   「單塊」語意下成立）、滿 3×3 群組 46.8 ms（有無火把差 <2 ms）**——成本
- *   幾乎完全線性於群組大小，主體是固定的 9 次全格掃描，不是 BFS。
- *   （群組＝1 的 8 ms 斷言曾放進本檔，全量平行跑時牆鐘被抖到 12.4 ms 假紅
- *   → 拆成「只在報告留實測數字」；滿群組門檻本身已能攔截同等的掃描退化。）
- * - brief 自己列的優化順序已全部耗盡：①天空柱掃描上界改 topY——被 R-T2-1
- *   以**正確性**否決（topY 之上的開闊天空柱會恆 0）；②天空播種改單次多來源
- *   BFS——Task 3 已做；③播種只掃群組內確實存在的區塊——Task 3 已做。
- * - 因此門檻落在「實測值的餘裕」上（SINGLE_RELIGHT_BUDGET_MS＝真實成本
- *   ~47-50 ms 的 ~2 倍、全量平行最差回合的 ~1.4 倍；8 ms 標記為「群組＝1
- *   語意下的規劃值」）。幀預算的後果（一次 3×3 群組重算 ~48 ms；佇列每幀
- *   取 2 項、同群組其餘項跳過 → 一次改動約一幀的幀時間升高）沿用 Task 3
- *   的接受結論。
+ *   （同機、種子 1337、暖身後取最快）：**群組＝1 時 5.0 ms、滿 3×3 群組
+ *   46.8 ms（有無火把差 <2 ms）**——成本幾乎完全線性於群組大小，主體是固定
+ *   的 9 次全格掃描，不是 BFS。
+ * - **A8（0.10.1 審查）**：主執行緒改為**每幀只重算群組中的一塊**
+ *   （`computeChunkLightOnly`，見 main.ts 的 processQueues）→ 「每區塊 8 ms」
+ *   的正確口徑是**攤平值**：`group best / 9 < 8 ms`（實測 ~5.2 ms）。單次
+ *   群組重算只留給開局同步點亮（spawnPoint）。
+ * - 舊的「單次群組重算 < 100 ms」門檻**移除**：它允許 52.6 ms 的編輯卡頓
+ *   （審查 A8 的問題本身，實測 103-113 ms 的全量平行假紅更是噪音）。真路徑
+ *   由下一條「edit → relight → mesh < 33 ms」直接量測。
  */
 
-/** 單區塊重算（滿 3×3 群組＋一支火把）的門檻。量測口徑見下方測試；
- *  數值依據：真實成本 ~47-50 ms（單檔／probe，暖身後取最快）~2 倍餘裕，
- *  也是全量平行負載下最差回合（70.3 ms）的 ~1.4 倍——與 B3 的 16 區塊門檻
- *  （865 → 1500 ms，~1.7 倍）同一紀律；攔截力＝≥2 倍的掃描退化（T3 那種
- *  12.5 倍的退化等級遠超於此）。 */
-const SINGLE_RELIGHT_BUDGET_MS = 100;
+/** 3×3 群組重算攤平到「每區塊」的門檻：群組總成本 / 9。 */
+const PER_CHUNK_BUDGET_MS = 8;
 
-describe('lighting performance budget (B6 Task 8)', () => {
+/** A8 真路徑門檻：一次編輯（setBlock 標髒 → 佇列）→ 單塊光照 → 網格，
+ *  必須落在 60 fps 的兩帧預算內（33 ms；審查 A8 的修法驗收值）。 */
+const EDIT_FRAME_BUDGET_MS = 33;
+
+describe('lighting performance budget (B6 Task 8 / A8)', () => {
   it(
-    'relighting one chunk stays under the frame budget',
+    'a full 3x3 group relight amortizes to under 8 ms per chunk',
     { timeout: 30000 },
     () => {
       // 量測口徑（brief ＋計畫 §7）：`computeChunkLight` 一次呼叫＝清 0 ＋
@@ -87,11 +95,12 @@ describe('lighting performance budget (B6 Task 8)', () => {
         rounds.push(`${ms.toFixed(1)} ms`);
       }
       // 先印後斷言：門檻被觸發時也留得出實測數字（退化還是機器忙）
+      const perChunk = best / 9;
       console.log(
-        `single-chunk relight (full 3x3 group + torch): best ${best.toFixed(1)} ms ` +
-          `(rounds: ${rounds.join(' | ')})`,
+        `full 3x3 group relight: best ${best.toFixed(1)} ms → ` +
+          `${perChunk.toFixed(1)} ms/chunk (rounds: ${rounds.join(' | ')})`,
       );
-      expect(best).toBeLessThan(SINGLE_RELIGHT_BUDGET_MS);
+      expect(perChunk).toBeLessThan(PER_CHUNK_BUDGET_MS);
       // 正確性抽檢（量測不得靠 no-op 變綠）：火把光、天空柱、旗標收尾都在
       expect(blockLightAt(w, 8, surface + 1, 8)).toBe(14);
       expect(skyLightAt(w, 0, 200, 0)).toBe(15); // 開闊天空柱（200 在地形之上）
@@ -101,10 +110,65 @@ describe('lighting performance budget (B6 Task 8)', () => {
   );
 });
 
-describe('per-frame light queue budget (B6 Task 8)', () => {
-  it('the light queue never exceeds two chunks per frame', () => {
-    // brief 的原始情境：fake 佇列排 3 個待處理區塊 → 單幀最多取 2 個
-    //（main.ts 的 processQueues 以同一支純函式取批次，判斷可被釘死）。
+// ---- A8：真路徑守門 --------------------------------------------------------
+// 舊守門量的是「一次 3×3 群組重算」且門檻 100 ms（允許 52.6 ms 的卡頓）。
+// A8 之後主執行緒每幀只重算一塊 → 量測**一次編輯的實際幀工作**：
+// setBlock（標髒＝進佇列）→ computeChunkLightOnly（本幀那一塊）→ meshChunk。
+describe('A8: an edit fits the frame budget end to end', () => {
+  it(
+    'an edit reaches relight and mesh within one frame budget (33 ms)',
+    { timeout: 30000 },
+    () => {
+      // 情境＝真實編輯的常態：3×3 群組九塊全存在（真實地形、種子 1337）、
+      // 中央塊地表一支火把（方塊光也要跑）。編輯格在中央塊、火把上方兩格。
+      const w = new World();
+      for (let cx = -1; cx <= 1; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          const chunk = new Chunk(cx, cz, generateChunk(cx, cz, 1337));
+          w.addChunk(chunk);
+          chunk.topY = computeChunkTopY(chunk);
+        }
+      }
+      let surface = CHUNK_HEIGHT - 1;
+      while (surface > 0 && w.getBlock(8, surface, 8) === BLOCK.AIR) surface--;
+      const torchY = surface + 1;
+      w.setBlock(8, torchY, 8, BLOCK.TORCH);
+      // 暖身（開局同步點亮整組的狀態）→ 之後每輪都是「一次新的編輯」。
+      computeChunkLight(w, 0, 0);
+      meshChunk(w, 0, 0);
+
+      let best = Number.POSITIVE_INFINITY;
+      const rounds: string[] = [];
+      for (let round = 0; round < 5; round++) {
+        const t0 = performance.now();
+        // 真路徑：編輯 → setBlock 已把 3×3 標成 lightDirty（進佇列）→
+        // 本幀只重算編輯所在的那一塊 → 同一幀重建該塊網格。
+        w.setBlock(8, torchY + 2, 8, round % 2 === 0 ? BLOCK.STONE : BLOCK.AIR);
+        computeChunkLightOnly(w, 0, 0);
+        meshChunk(w, 0, 0);
+        const ms = performance.now() - t0;
+        best = Math.min(best, ms);
+        rounds.push(`${ms.toFixed(1)} ms`);
+      }
+      // 先印後斷言（與既有守門同款）：紅燈時留得出實測數字。
+      console.log(
+        `edit → relight → mesh: best ${best.toFixed(1)} ms (rounds: ${rounds.join(' | ')})`,
+      );
+      expect(best).toBeLessThan(EDIT_FRAME_BUDGET_MS);
+      // 正確性抽檢（量測不得靠 no-op 變綠）：火把還在、天空柱在、旗標已收。
+      expect(blockLightAt(w, 8, torchY, 8)).toBe(14);
+      expect(skyLightAt(w, 0, 200, 0)).toBe(15);
+      expect(w.getChunk(0, 0)!.light).not.toBeNull();
+      expect(w.getChunk(0, 0)!.lightDirty).toBe(false);
+    },
+  );
+});
+
+describe('per-frame light queue budget (B6 Task 8 / A8)', () => {
+  it('the light queue takes at most the given per-frame budget', () => {
+    // 純函式與實際預算無關：A8 起 main.ts 每幀只取 **1** 塊（單塊重算），
+    // 這裡用 2 驗證「取前 N 項」的通用語意與邊界（含 0／負數）。
+    // brief 的原始情境：fake 佇列排 3 個待處理區塊 → 單幀最多取 2 個。
     const queue: Array<[number, number]> = [
       [5, 5],
       [6, 5],
