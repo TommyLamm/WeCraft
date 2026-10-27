@@ -161,6 +161,8 @@ import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
 // B4 Task 9：進食進度條（可選的視覺回饋；**規則不依賴它**）。
 import { createEatProgress } from './ui/eat-progress';
+// B5：疾跑取消原因／撞牆角度的提示（純 UI；何時顯示由每幀接線決定）
+import { createHudHint, sprintCancelHint } from './ui/hud-hint';
 // B3 Task 8：「地形已改變」一次性提示（**toast** 路徑，與 B1.4 的模態確認框
 // `menus.showConfirm` 分開——這裡只 import 提示模組，不碰 menus）。
 import { pushWorldgenNotice } from './ui/worldgen-notice';
@@ -356,6 +358,9 @@ const toasts = createToasts(uiRoot);
 const hurtFlash = createHurtFlash(uiRoot);
 // B4 Task 9：進食進度條（按住右鍵吃東西時的視覺回饋；規則不依賴它）
 const eatProgressUi = createEatProgress(uiRoot);
+// B5：疾跑取消提示（撞牆角度／原因）——被動、3 秒節流、2 秒淡出（ui/hud-hint.ts）。
+// 什麼時候值得提示由下面的每幀接線決定；UI 只管顯示。
+const hudHint = createHudHint(uiRoot);
 // Phase 3 Task 10: audio facade — constructing it is inert (the AudioContext is
 // built lazily on the first gesture); every game sound below routes through it.
 const audio = createGameAudio();
@@ -458,6 +463,10 @@ function resetCameraFov(): void {
 function resetSprintAndFov(): void {
   sprintState = createSprintState();
   lastWallAngleDeg = null;
+  // B5：收起上一場次的取消提示（它只有 2 秒生命，但換場次／死亡／回標題時
+  // 不該還掛在畫面下緣）。`hide()` 也重置節流 → 新場次同一個原因可立刻再提示
+  // （這裡刻意不是 `dispose()`：那會把元素永久移除，而這個函式每次換場次都跑）。
+  hudHint.hide();
   resetCameraFov();
 }
 
@@ -2855,6 +2864,7 @@ gs.renderer.setAnimationLoop(() => {
     //  - `attacked`＝**上一幀**的攻擊命中（攻擊分支在本幀的狀態機之後才跑）。
     // 因此這段必須排在 `stepPlayer` 與 `jumpStarted` 之前——疾跑的結果要餵給
     // 本幀的物理（速度）與消耗（0.1/公尺、0.2 的疾跑跳）。
+    const sprintWasActive = sprintState.active; // 狀態機之前：上一幀是否真的在疾跑
     sprintState = updateSprint(sprintState, {
       forward: input.state.fwd > 0, // 只往前才算疾跑（倒退＝取消）
       sneak: input.state.sneak, // 潛行與疾跑互斥
@@ -2867,6 +2877,15 @@ gs.renderer.setAnimationLoop(() => {
       attacked: attackedThisFrame, // 上一幀的攻擊命中
     });
     attackedThisFrame = false; // 一次性旗標：狀態機讀完即清（下一幀才會再被設）
+
+    // B5：**真的取消了一次疾跑**才提示（`lastCancel` 每幀都算——站著按 Shift
+    // 也會有 'sneaking'，那不是「取消」）。'no-forward' 是玩家自己放開 W（已知
+    // 的動作）→ 不提示；型別上 `sprintCancelHint` 也不接受它。同一文案 3 秒內
+    // 不重複（hud-hint 節流）；撞牆角度用的是餵進狀態機的那個值（上一幀實測）。
+    const cancelReason = sprintState.lastCancel;
+    if (sprintWasActive && cancelReason !== null && cancelReason !== 'no-forward') {
+      hudHint.show(sprintCancelHint(cancelReason, lastWallAngleDeg));
+    }
 
     // 移動 — jump start edge (Task 9.5): captured BEFORE physics clears
     // onGround; water swim-strikes and active flight aren't discrete jumps,

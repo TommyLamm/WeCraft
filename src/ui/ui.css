@@ -528,6 +528,36 @@
   background: #d89040;
 }
 
+/* 疾跑取消提示（B5）：畫面中央下緣的一行短字（撞牆角度／取消原因）。
+   由 ui/hud-hint.ts 掛 `.visible` → CSS 負責 0.25 s 淡入淡出；2 秒後元件自己
+   移除 class。`pointer-events: none` → 不擋滑鼠。
+
+   **位置（bottom: 148px）**：目前下緣帶狀（見上方 `.eat-progress` 的表）最高到
+   116px；Task 17 會把 `.vitals`／`.ui-item-name`／`.eat-progress` 上移到
+   72／92／126（進度條到 138px）→ 148px 仍然在所有元素之上，兩個版本都不重疊。
+   與 `.eat-progress` 一樣用 `position: fixed`（viewport 錨定），不是 #ui-root
+   容器相對定位。 */
+.ui-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 148px;
+  transform: translateX(-50%);
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 3px 8px;
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.ui-hint.visible {
+  opacity: 1;
+}
+
 /* Hurt feedback (Task 9): red vignette flashed on every landed mob hit by
    ui/hurt.ts (one node, 300 ms). Passive — pointer-events stay off — and below
    the death screen (10) / toasts (20) in the stack. */

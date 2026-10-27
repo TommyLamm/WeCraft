@@ -649,6 +649,38 @@ describe('main.ts 接線（B2 Task 11：cross 的支撐掉落）', () => {
   });
 });
 
+// ---- B5 接線：疾跑取消原因進 HUD ------------------------------------------
+// 純 UI 元件（ui/hud-hint.ts）有自己的行為測試；這裡只釘**接線**——
+// 「什麼時候顯示」與「用哪個角度」的規則住在 main.ts（jsdom 進不來）。
+describe('main.ts 接線（B5：疾跑取消原因進 HUD）', () => {
+  it('the HUD hint instance is mounted once', () => {
+    expect(countOf('createHudHint(uiRoot)')).toBe(1);
+  });
+
+  it('a hint appears only when an ACTIVE sprint was cancelled', () => {
+    const playing = playingBranchBody();
+    const wasActive = playing.indexOf('const sprintWasActive = sprintState.active;');
+    const update = playing.indexOf('sprintState = updateSprint(');
+    expect(wasActive).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(wasActive); // 先記住「上一幀在疾跑」，再更新
+    // 站著按 Shift 也有 lastCancel === 'sneaking'（狀態機每幀都算）→ 必須用
+    // 「上一幀真的在疾跑」擋掉，否則每個潛行/停步都會跳提示。
+    expect(playing).toContain(
+      "if (sprintWasActive && cancelReason !== null && cancelReason !== 'no-forward')",
+    );
+    // 撞牆角度用餵進狀態機的那個值（上一幀 stepPlayer 的實測夾角）。
+    expect(playing).toContain('hudHint.show(sprintCancelHint(cancelReason, lastWallAngleDeg))');
+  });
+
+  it('session boundaries hide the hint and reset its throttle', () => {
+    const reset = functionBody('resetSprintAndFov');
+    expect(reset).toContain('hudHint.hide()');
+    // dispose() 會永久拆掉元素——這個函式每次換場次／死亡／回標題都跑，
+    // 用了 dispose 之後就再也不會有提示。
+    expect(reset).not.toContain('hudHint.dispose()');
+  });
+});
+
 describe('main.ts 接線（B3 Task 9 Step 3：危險傷害與生物群系取樣）', () => {
   it('the hazard step runs inside the playing branch, exactly once per frame', () => {
     const playing = playingBranchBody();
