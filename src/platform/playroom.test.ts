@@ -32,6 +32,32 @@ function modWith(ready: PlayroomReady, impl: Partial<PlayroomModule>): PlayroomM
 }
 
 describe('createCloudClient', () => {
+  it('a ready() that never answers times out into unsupported (Task 19)', async () => {
+    // 負向路徑：SDK 的 ready() 永不 resolve（卡死的 iframe／斷線的握手）不得
+    // 讓 init() 永遠 pending——標題的 Continue 會永遠停在 disabled、整個雲端
+    // 流程連讀都開始不了。10 秒硬上限（SDK 自己承諾 8 秒）→ unsupported。
+    vi.useFakeTimers();
+    try {
+      const c = createCloudClient({
+        loadModule: async () => modWith(GUEST_READY, { ready: () => new Promise<never>(() => {}) }),
+      });
+      let settled: string | null = null;
+      const p = c.init().then((s) => {
+        settled = s;
+        return s;
+      });
+      // 未到期限：不得 settle（否則就不是逾時，而是提早放棄）。
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(p).resolves.toBe('unsupported');
+      expect(c.status).toBe('unsupported');
+      expect(c.readyInfo).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('default loader never throws in jsdom and inits to guest/unsupported', async () => {
     const c = createCloudClient();
     const s = await c.init();
