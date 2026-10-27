@@ -702,6 +702,25 @@ describe('main.ts 接線（A8：單塊光照分幀）', () => {
   });
 });
 
+// ---- B4 Task 15 接線：worker 逾時與分幀退路 ----------------------------------
+// 行為在 worker-client.test.ts（逾時拒絕＋降級、messageerror、逐幀排空）；
+// 這裡釘住 main.ts 的三條接線不被拆掉。
+describe('main.ts 接線（B4 Task 15：worker 逾時與分幀退路）', () => {
+  it('the fallback is drained inside processQueues, two chunks per frame', () => {
+    // 降級後每個請求都由主迴圈的 drainFallback 逐幀 settle（不再同步生成）。
+    expect(functionBody('processQueues')).toContain('terrain.drainFallback(2)');
+  });
+
+  it('both construction sites attach the one-time degrade callback', () => {
+    // 建構點：boot 一次、applyCloudData 重建一次 → 兩處都要接回呼（否則雲端
+    // 換世界後的降級沒有提示）。
+    expect(countOf('new TerrainWorkerClient(')).toBe(2);
+    expect(countOf('terrain.onDegrade = onTerrainDegrade')).toBe(2);
+    // 回呼內容＝一次性 toast（不新增 UI 元件）。
+    expect(mainSource).toContain('世界生成已切換至備援模式');
+  });
+});
+
 describe('main.ts 接線（B3 Task 9 Step 3：危險傷害與生物群系取樣）', () => {
   it('the hazard step runs inside the playing branch, exactly once per frame', () => {
     const playing = playingBranchBody();

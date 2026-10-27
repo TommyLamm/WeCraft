@@ -354,6 +354,18 @@ const furnaceUi = createFurnace(uiRoot, {
 const deathScreen = createDeathScreen(uiRoot);
 // Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
 const toasts = createToasts(uiRoot);
+// B4 Task 15：worker 逾時／messageerror → **一次性** toast（「備援模式」）。
+// 為什麼放這裡而不是建構子的參數：`terrain` 在 `toasts` 之前就建好（上面的
+// 建構子若當場失敗，這個回呼還沒接上——那種情況下玩家看到的仍是一樣的地形，
+// 只是少一個提示）。降級後的世界由主執行緒分幀生成（drainFallback）。
+const onTerrainDegrade = (): void => {
+  toasts.push({
+    title: '世界生成已切換至備援模式',
+    description: '地形改由主執行緒分幀生成（較慢）',
+    icon: 'dirt',
+  });
+};
+terrain.onDegrade = onTerrainDegrade;
 // Task 9: red hurt vignette — flashed by applyMobEvent on every landed hit
 const hurtFlash = createHurtFlash(uiRoot);
 // B4 Task 9：進食進度條（按住右鍵吃東西時的視覺回饋；規則不依賴它）
@@ -1486,6 +1498,10 @@ function neighborsReady(cx: number, cz: number): boolean {
 }
 
 function processQueues(): void {
+  // B4 Task 15：worker 降級後的退路——每幀同步生成至多 2 塊（舊碼的
+  // `drainPendingSync` 在降級當下一次排空整個佇列＝一次大凍結）。降級後
+  // `terrain.request()` 不再發給 worker，全部由這裡逐幀 settle。
+  terrain.drainFallback(2);
   let budgetGen = 2;
   // A8（0.10.1 審查）：每幀只重算 **1 塊**（`computeChunkLightOnly`，~5–8 ms）。
   // 舊版一項就同步重算整個 3×3 群組（~48 ms，審查實測 52.6 ms）＝每挖／放
@@ -1945,6 +1961,7 @@ function applyCloudData(data: CloudData): void {
   terrainEpoch += 1;
   terrain.dispose();
   terrain = new TerrainWorkerClient(settings.seed);
+  terrain.onDegrade = onTerrainDegrade; // B4 Task 15：重建也要接回單次提示
   resetWorld();
   resetSessionEntities(); // entities are never persisted — drop stale ones
   // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
