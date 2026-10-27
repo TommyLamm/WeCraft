@@ -149,7 +149,7 @@ import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals } from './ui/survival-hud';
-import { createMenus } from './ui/menus';
+import { confirmQuitToTitle, createMenus } from './ui/menus';
 import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
 import { createCrafting, type CraftingParams } from './ui/crafting';
@@ -1661,7 +1661,11 @@ function setState(next: GameState): void {
       },
       // reset to spawn before title: title orbit queues key off player.position —
       // leaving it far away would orbit a one-chunk island (Task 17 CR fix)
-      onQuit: quitToTitle, // plain 回到標題 — UNSAVED quit (Task 14 settled split)
+      // B9（審查）：「回到標題」是**不存檔**離開，卻和「儲存並離開」並排 → 誤按
+      // 即丟掉最多一個 autosave 間隔（30 秒）的進度。離開前先跳二次確認（確認框
+      // 由 ui/menus.ts 組裝；取消 → 回到暫停選單）。死亡畫面的離開**不**確認
+      // （已無進度可救，維持現狀）。
+      onQuit: () => confirmQuitToTitle(menus, quitToTitle, () => setState('paused')),
       // Task 14 save point (a): 儲存並離開 — snapshot the live session FIRST,
       // save, then quit (both callbacks are separate buttons; the death
       // screen's quit below deliberately has neither — see handleQuitToTitle).

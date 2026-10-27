@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHud, formatDebugLines } from './hud';
-import { createMenus } from './menus';
+import { createMenus, confirmQuitToTitle } from './menus';
 import type { CloudStatus } from '../platform/playroom';
 import { createInventory } from './inventory';
 import { HOTBAR_DEFAULT, BLOCK, type BlockId } from '../world/blocks';
@@ -1192,5 +1192,76 @@ describe('bottom HUD band geometry (B7 Task 17)', () => {
     expect(
       ruleStyles('.ui-sprint-hint').some((s) => s.getPropertyValue('position') === 'fixed'),
     ).toBe(true);
+  });
+});
+
+// ---- B9 Task 18：「回到標題」的二次確認 ----------------------------------------
+// 審查 B9：暫停選單的「回到標題」**不存檔**，而且和「儲存並離開」並排 → 誤按
+// 就丟掉最多一個 autosave 間隔（30 秒）的進度。修法：離開前跳確認框（沿用
+// `menus.showConfirm`）——確定才真的離開；取消（按鈕或 Esc）不離開。
+describe('回到標題 asks for confirmation before quitting (B9 Task 18)', () => {
+  /** 掛一個暫停選單；「回到標題」走 B9 的確認流程（onQuit 由呼叫端決定）。 */
+  const showPauseWithConfirm = (
+    root: HTMLElement,
+    menus: ReturnType<typeof createMenus>,
+    quit: () => void,
+    cancel: () => void,
+  ): void => {
+    menus.showPause({
+      onResume: () => {},
+      onQuit: () => confirmQuitToTitle(menus, quit, cancel),
+      onToggleMode: () => {},
+      onToggleShadows: () => {},
+      onToggleClouds: () => {},
+      onSaveQuit: () => {},
+      cloudStatus: 'guest',
+      cloudRetryable: false,
+      onRetryCloud: () => {},
+    });
+    void root;
+  };
+
+  it('the quit button asks first; only 確定 leaves the session', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const quit = vi.fn();
+    const cancel = vi.fn();
+    showPauseWithConfirm(root, menus, quit, cancel);
+    btnByText(root, '回到標題').click();
+    // 確認框出現了，**還沒**離開。
+    const msg = root.querySelector('.ui-confirm-msg');
+    expect(msg).not.toBeNull();
+    expect(msg!.textContent).toBe('回到標題不會儲存進度。確定要離開嗎？');
+    expect(quit).not.toHaveBeenCalled();
+    btnByText(root, '確定').click();
+    expect(quit).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+    menus.hideAll();
+  });
+
+  it('取消 keeps the session alive', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const quit = vi.fn();
+    const cancel = vi.fn();
+    showPauseWithConfirm(root, menus, quit, cancel);
+    btnByText(root, '回到標題').click();
+    btnByText(root, '取消').click();
+    expect(quit).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    menus.hideAll();
+  });
+
+  it('Esc cancels the confirmation (never quits)', () => {
+    const root = document.getElementById('ui-root')!;
+    const menus = createMenus(root);
+    const quit = vi.fn();
+    const cancel = vi.fn();
+    showPauseWithConfirm(root, menus, quit, cancel);
+    btnByText(root, '回到標題').click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
+    expect(quit).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    menus.hideAll();
   });
 });

@@ -455,6 +455,14 @@ describe('main.ts 接線（A3：本機存檔失敗可見）', () => {
     // the SUCCESS path still quits — only the failure path stays in the game
     expect(body).toContain('quitToTitle()');
   });
+
+  it('the pause menu quit asks for confirmation before leaving (B9)', () => {
+    // 回到標題＝不存檔離開 → 走二次確認（行為測試在 ui.test.ts）；取消回到
+    // 暫停選單，不是直接離開、也不是放著消失。
+    expect(mainSource).toContain('confirmQuitToTitle(menus, quitToTitle, () => setState(\'paused\'))');
+    // 死亡畫面的離開**不**經確認（已無進度可救）——維持單一直接接線。
+    expect(countOf('onQuit: handleQuitToTitle')).toBe(1);
+  });
 });
 
 describe('main.ts 接線（A4：session 邊界重置 UI 狀態）', () => {

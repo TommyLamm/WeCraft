@@ -68,6 +68,33 @@ export interface Menus {
   isVisible(): boolean;
 }
 
+/** B9：暫停選單「回到標題」的二次確認文案（玩家看得到的文字，不可更動）。 */
+export const QUIT_TO_TITLE_CONFIRM_MESSAGE = '回到標題不會儲存進度。確定要離開嗎？';
+
+/** B9（審查）：暫停選單的「回到標題」是**不存檔**離開，卻和「儲存並離開」並排
+ *  → 誤按即丟掉最多一個 autosave 間隔（30 秒）的進度。離開前先跳確認框（沿用
+ *  `showConfirm` 的單次觸發契約：確定／取消／Esc 只有第一個有效）。
+ *
+ *  為什麼是 ui 模組的 helper、而不是 main.ts 直接寫 `menus.showConfirm(...)`：
+ *  這樣這條流程能在 `ui.test.ts` 用**真實的 UI**做行為測試（點「回到標題」→
+ *  確認框出現 → 確定才離開；取消／Esc 不離開），不必靠 main.ts 的字串掃描。
+ *  「離開要做什麼」仍由 main.ts 決定（onQuit＝quitToTitle、onCancel＝回到暫停
+ *  選單）。
+ *
+ *  死亡畫面的「回到標題」**不**走這裡（`ui/death.ts` 自己的按鈕）——那時玩家
+ *  已經死了，沒有進度可救，維持一鍵離開。 */
+export function confirmQuitToTitle(
+  menus: Menus,
+  onQuit: () => void,
+  onCancel: () => void,
+): void {
+  menus.showConfirm({
+    message: QUIT_TO_TITLE_CONFIRM_MESSAGE,
+    onConfirm: onQuit,
+    onCancel,
+  });
+}
+
 function relockCanvas(): void {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement | null;
   if (!canvas || typeof canvas.requestPointerLock !== 'function') return;
