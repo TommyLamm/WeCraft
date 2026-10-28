@@ -12,9 +12,12 @@
 // B7 Task 2: payload v5 — the durability batch. The SHAPE is v4's (36 slots,
 // stash, worldgenVersion, passiveMobs); what changed is the MEANING of an
 // inventory entry: a durable stack (`ItemStack.dur`) now travels with the save.
-// 版本鏈：v1（原始）→ v2（進度 advancements）→ v3（雙模式 stash）→ v4（36 格
-// 背包）→ v5（`dur`）。`loadGame` 一律升到 v5；舊記錄的工具**沒有** `dur`
-// → 載入時拿到滿耐久（＝上限），不是 0。
+//
+// B8 Task 4: payload v6 — the block entities (chest contents + furnace
+// states) join the payload. 版本鏈：v1（原始）→ v2（進度 advancements）→
+// v3（雙模式 stash）→ v4（36 格背包）→ v5（`dur`）→ v6（塊實體）。
+// `loadGame` 一律升到 v6；舊記錄沒有塊實體欄位 → 空清單（箱子與熔爐在 B8
+// 之前根本不存在，那不是壞檔）；工具沒有 `dur` → 滿耐久（＝上限），不是 0。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { INVENTORY_SLOTS, sanitizeSlots, type ItemStack } from '../core/items';
@@ -31,6 +34,11 @@ import {
   type PassiveMobRecord,
 } from './passive-save';
 import type { PassiveMob } from './passive-mobs';
+import {
+  normalizeBlockEntities,
+  serializeBlockEntities,
+  type BlockEntity,
+} from './block-entities';
 
 /** Pre-v2 payload shape (Task 11): kept for the migration path so records
  *  written by earlier builds still validate and load. */
@@ -103,20 +111,29 @@ export interface SavePayloadV5 extends Omit<SavePayloadV4, 'version'> {
 	version: 5;
 }
 
+/** Current payload (B8 Task 4): v5 plus the block entities — the chest contents
+ *  and the furnace states. `loadGame` ALWAYS returns this shape: v1–v5 records
+ *  migrate with an EMPTY list (chests and furnaces did not exist before B8),
+ *  and a v6 record's list is sanitized entry by entry. */
+export interface SavePayloadV6 extends Omit<SavePayloadV5, 'version'> {
+	version: 6;
+	blockEntities: BlockEntity[];
+}
+
 /** The shape written to / read from the single local slot. */
-export type SavePayload = SavePayloadV5;
+export type SavePayload = SavePayloadV6;
 
 /**
- * v5 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
+ * v6 payload ＋ **一定有** `passiveMobs`（正規化後的陣列）。
  *
  * B4 Task 10：`loadGame`（讀取端）與 `collectSavePayload`（寫出端）**一律**帶這個
  * 鍵 → 用這個型別把「一定有」表達出來，呼叫端不必寫 `?? []` 或「有沒有這個鍵」
  * 的分支。磁碟上的**舊**記錄仍然可以沒有這個欄位 → 那由 `loadGame` 的正規化補上
  * （空陣列 ＝ 沒有生物，不是壞檔）。
  *
- * 它是 {@link SavePayload}（＝`SavePayloadV5`）的**子型** → 既有呼叫端
+ * 它是 {@link SavePayload}（＝`SavePayloadV6`）的**子型** → 既有呼叫端
  * （`saveGame(payload: SavePayload)` 等）完全不受影響。 */
-export interface SavePayloadWithPassiveMobs extends SavePayloadV5 {
+export interface SavePayloadWithPassiveMobs extends SavePayloadV6 {
 	passiveMobs: PassiveMobRecord[];
 }
 
@@ -141,6 +158,10 @@ export interface SaveSources {
 	 *  `{ kind, x, y, z, hp, yaw }` records. **必填**（沒有生物也要明寫空陣列）
 	 *  → 少了它 typecheck 直接紅，呼叫端不會漏掉「被動生物要存檔」這件事。 */
 	passiveMobs: readonly PassiveMob[];
+	/** Live block entities (B8 Task 4) — chest contents and furnace states,
+	 *  deep-copied into the payload. **必填**（沒有塊實體也要明寫空陣列）
+	 *  → 少了它 typecheck 直接紅，呼叫端不會漏掉「塊實體要存檔」這件事。 */
+	blockEntities: ReadonlyArray<BlockEntity>;
 	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
 	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
 	 *  value only matters for tests / pre-save inspection. */
@@ -156,9 +177,10 @@ export interface SaveSources {
  *  是唯一會蓋值的地方（讀取端從不補值，所以舊存檔仍然看得出是舊存檔）。 */
 export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMobs {
 	return {
-		// B7 Task 2：v5——背包的每一格都經過 `sanitizeStack`（耐久物品必然帶
-		// 明確的 `dur`）；`stash` 的複製語意不變（原樣複製傳進來的 stash，見下）。
-		version: 5,
+		// B8 Task 4：v6——v5（背包的每一格都經過 `sanitizeStack`，耐久物品必然
+		// 帶明確的 `dur`）＋ 塊實體清單；`stash` 的複製語意不變（原樣複製傳進
+		// 來的 stash，見下）。
+		version: 6,
 		savedAt: args.savedAt ?? Date.now(),
 		worldSeed: args.world.seed,
 		modified: args.world.serializeModified(),
@@ -186,16 +208,19 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 		// B4 Task 10：被動生物的持久化記錄（種類／座標／血量／朝向）。
 		// `vel`／`kbVel` 是暫態 → 不寫進存檔。
 		passiveMobs: serializePassiveMobs(args.passiveMobs),
+		// B8 Task 4：塊實體（箱子內容＋熔爐狀態）——逐筆深拷貝（`dur` 一起帶走）。
+		blockEntities: serializeBlockEntities(args.blockEntities),
 	};
 }
 
-/** Shape-validate an unknown value as a v1…v5 save payload (review
+/** Shape-validate an unknown value as a v1…v6 save payload (review
  *  #2; Task 11 widened the accepted versions to v1/v2, B1.3 to v3, B5 Task 7
- *  to v4, B7 Task 2 to v5 — older records migrate in loadGame). IndexedDB
+ *  to v4, B7 Task 2 to v5, B8 Task 4 to v6 — older records migrate in
+ *  loadGame). IndexedDB
  *  records can be
  *  written by an older or broken build — continueGame trusts this shape
  *  completely (destructuring, setBlock keys, DOM writes), so a record must
- *  prove: object, version ∈ {1, 2, 3, 4, 5}, a
+ *  prove: object, version ∈ {1, 2, 3, 4, 5, 6}, a
  *  player with a finite pos triple and finite yaw (a NaN yaw would reach camera
  *  render state without ever throwing), mode ∈ {survival, creative}, an
  *  inventory of null | {item: string, count: finite number}, vitals
@@ -207,13 +232,21 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
  *  B4 Task 10：附加欄位 `passiveMobs` 同樣**不在**這個檢查裡（交給載入路徑的
  *  `normalizePassiveMobs` 逐筆處理）——髒值不會讓整筆記錄被拒收，只是那一筆
  *  生物被丟棄。
+ *  B8 Task 4：附加欄位 `blockEntities` 同樣**不在**這個檢查裡（交給載入路徑的
+ *  `normalizeBlockEntities` 逐筆處理）——一筆壞箱子不該讓整份存檔讀不進來。
  *  B3 Task 7：附加欄位 `worldgenVersion` **不在**這個檢查裡——基本結構檢查完全不動
  *  （既不放寬也不收緊）：沒有這個欄位的舊 v1/v2/v3 記錄照樣通過；帶著髒值（`'x'`）
  *  的記錄也照樣被讀出來（讀取端會把該鍵剝除，而不是整筆拒收）。
  *  Pure: exported for tests, called by loadGame. */
 export function isValidSavePayload(
 	x: unknown,
-): x is SavePayloadV1 | SavePayloadV2 | SavePayloadV3 | SavePayloadV4 | SavePayloadV5 {
+): x is
+	| SavePayloadV1
+	| SavePayloadV2
+	| SavePayloadV3
+	| SavePayloadV4
+	| SavePayloadV5
+	| SavePayloadV6 {
 	if (typeof x !== 'object' || x === null) return false;
 	const r = x as Partial<SavePayloadV1>;
 	if (
@@ -221,7 +254,8 @@ export function isValidSavePayload(
 		r.version !== 2 &&
 		r.version !== 3 &&
 		r.version !== 4 &&
-		r.version !== 5
+		r.version !== 5 &&
+		r.version !== 6
 	) {
 		return false;
 	}
@@ -301,11 +335,11 @@ export async function saveGame(payload: SavePayload): Promise<void> {
 
 /** Load the saved payload, or null if missing/corrupt/incompatible. Never rejects.
  *  Shape-validated (review #2; v1/v2 Task 11, v3 B1.3, v4 B5 Task 7, v5 B7
- *  Task 2): a
+ *  Task 2, v6 B8 Task 4): a
  *  supported-version record with a broken shape (missing player, non-finite
  *  pos, bad mode, NaN clock, …) reads as "no save". ALWAYS returns a
- *  normalized v5 payload (36-slot inventory: hotbar row 0..8 + 27 main slots;
- *  durable stacks carry an explicit `dur`):
+ *  normalized v6 payload (36-slot inventory: hotbar row 0..8 + 27 main slots;
+ *  durable stacks carry an explicit `dur`; block entities sanitized):
  *  - v1 migrates to `{...v1, version: 2, advancements: emptyAdvancements()}`
  *    first (old saves keep loading; progress starts fresh), then the stash is
  *    derived from the recorded mode/inventory/vitals;
@@ -326,6 +360,8 @@ export async function saveGame(payload: SavePayload): Promise<void> {
  *  stash's survival snapshot — so the live model always sees the full shape.
  *  B4 Task 10——附加欄位 `passiveMobs` **一律回傳**（正規化後的陣列；舊記錄缺
  *  欄位 → `[]`＝沒有生物，不報錯；單筆壞掉 → 只丟那一筆，不整包拒絕）。
+ *  B8 Task 4——附加欄位 `blockEntities` **一律回傳**（正規化後的清單；v1–v5
+ *  舊記錄缺欄位 → `[]`；單筆壞掉 → 只丟那一筆；同座標重複 → 保留第一筆）。
  *  B3 Task 7——附加欄位 `worldgenVersion` **原樣帶回、絕不在這裡補值**：記錄沒有
  *  這個鍵 → 回傳物件就沒有這個鍵（那正是「舊存檔」的判準）；記錄上是有限數字 →
  *  原樣保留；記錄上是髒值（例如字串 `'x'`——基本結構檢查刻意不看這個附加欄位）
@@ -376,9 +412,20 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			};
 			// B7 Task 2：v5 ＝ v4 ＋ `ItemStack.dur`（耐久已在上一步 materialize：
 			// `sanitizeSlots` 是同一支清洗器，不必重跑）→ 這裡只升版本號。
-			const migrated: SavePayloadV5 = {
+			const migratedV5: SavePayloadV5 = {
 				...v4,
 				version: 5,
+			};
+			// B8 Task 4：v6 ＝ v5 ＋ 塊實體。v1–v5 的舊記錄沒有這個欄位 →
+			// `normalizeBlockEntities(undefined)` → 空清單（不是壞檔）；壞的
+			// 單筆只丟那一筆（逐筆丟棄、絕不整包拒絕）——一筆手改過的箱子
+			// 不該讓玩家的整個世界消失。
+			const migrated: SavePayloadV6 = {
+				...migratedV5,
+				version: 6,
+				blockEntities: normalizeBlockEntities(
+					(value as Partial<SavePayloadV6>).blockEntities,
+				),
 			};
 			// B3 Task 7：附加欄位 `worldgenVersion` 的三條規則——
 			// 1) 絕不自動補值：舊記錄沒有這個鍵 → 回傳物件就**沒有**這個鍵

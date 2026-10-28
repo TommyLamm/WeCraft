@@ -11,6 +11,7 @@ import {
   type SavePayloadV2,
   type SavePayloadV3,
   type SavePayloadV4,
+  type SavePayloadV5,
 } from './save';
 import { createVitals } from '../player/survival';
 import { emptyAdvancements } from '../core/advancements';
@@ -50,8 +51,8 @@ function deleteSaveDb(): Promise<void> {
 
 function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
   return {
-    // B7 Task 2：payload v5（v4 的 36 格語意 ＋ `ItemStack.dur`）。
-    version: 5,
+    // B8 Task 4：payload v6（v5 的 36 格語意 ＋ `ItemStack.dur` ＋ 塊實體清單）。
+    version: 6,
     savedAt: 0, // saveGame must stamp its own value
     worldSeed: 1337,
     modified: [
@@ -88,6 +89,8 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
     // B4 Task 10：附加欄位（payload 版本仍是 3）——被動生物的持久化記錄。
     // fixture 帶著空陣列 → round-trip 的 deep-equal 才成立。
     passiveMobs: [],
+    // B8 Task 4：塊實體欄位（箱子內容／熔爐狀態）；空的 fixture 讓 deep-equal 成立。
+    blockEntities: [],
     ...patch,
   };
 }
@@ -155,15 +158,26 @@ function makeV3Payload(): SavePayloadV3 {
   };
 }
 
-/** A raw v4 record: v3 + the 36-slot inventory semantics (B5) — i.e. the same
- *  shape as {@link makePayload} minus the `dur` field v5 introduced. */
+/** {@link makePayload} 去掉 B8 的 `blockEntities` 欄位——v1–v5 的舊形狀共用。 */
+function withoutBlockEntities(p: SavePayload): Omit<SavePayload, 'blockEntities'> {
+  const copy: Partial<SavePayload> = { ...p };
+  delete copy.blockEntities;
+  return copy as Omit<SavePayload, 'blockEntities'>;
+}
+
+/** A raw v4 record: v3 + the 36-slot inventory semantics (B5). */
 function makeV4Payload(): SavePayloadV4 {
-  const current = makePayload(); // 現況（v5）的 fixture——只差 `dur` 與版本號
+  const current = makePayload();
   return {
-    ...current,
+    ...withoutBlockEntities(current),
     version: 4,
     player: { ...current.player, inventory: slots({ item: 'stone', count: 32 }) },
   } as SavePayloadV4;
+}
+
+/** A raw v5 record (B7): v4 + `ItemStack.dur`; no `blockEntities`. */
+function makeV5Payload(): SavePayloadV5 {
+  return { ...withoutBlockEntities(makePayload()), version: 5 } as SavePayloadV5;
 }
 
 /** Create the save DB at a version save.ts cannot open → every save.ts call fails. */
@@ -252,7 +266,7 @@ describe('saveGame / loadGame', () => {
     expect(reloaded?.stash.creative).toEqual(slots());
   });
 
-  it('derives the stash when a v5 record carries a corrupt or missing one', async () => {
+  it('derives the stash when a v6 record carries a corrupt or missing one', async () => {
     const expected = {
       survival: slots(
         { item: 'stone', count: 32 },
@@ -267,7 +281,7 @@ describe('saveGame / loadGame', () => {
       await putRawRecord({ ...makePayload(), stash });
       expect((await loadGame())?.stash).toEqual(expected);
     }
-    // a v5 record missing the key entirely falls back the same way
+    // a v6 record missing the key entirely falls back the same way
     const noStash = makePayload() as Partial<SavePayload>;
     delete noStash.stash;
     await putRawRecord(noStash);
@@ -277,13 +291,15 @@ describe('saveGame / loadGame', () => {
     expect(expected.creative).toHaveLength(INVENTORY_SLOTS);
   });
 
-  it('migrates a raw v1 record to v5 with derived stash and empty advancements', async () => {
+  it('migrates a raw v1 record to v6 with derived stash and empty advancements', async () => {
     const v1 = makeV1Payload();
     await putRawRecord(v1);
     const loaded = await loadGame();
     expect(loaded).toEqual({
       ...v1,
-      version: 5,
+      version: 6,
+      // B8 Task 4：v1 沒有塊實體欄位 → 空清單（不是壞檔）。
+      blockEntities: [],
       player: {
         ...v1.player,
         // 舊的 9 格資料落在前 9 格（熱鍵列），其餘 27 格留空。
@@ -300,20 +316,23 @@ describe('saveGame / loadGame', () => {
       // 記錄沒有這個欄位 → 空陣列（舊存檔＝沒有生物，不是錯誤）。
       passiveMobs: [],
     });
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     expect(loaded!.player.inventory).toHaveLength(36);
     expect(loaded!.player.inventory[0]).toEqual({ item: 'stone', count: 32 });
     expect(loaded!.player.inventory.slice(1)).toEqual(new Array(35).fill(null));
     expect(loaded!.stash.survival).toHaveLength(36);
   });
 
-  it('migrates a raw v2 record to v5, deriving stash from the recorded mode', async () => {
+  it('migrates a raw v2 record to v6, deriving stash from the recorded mode', async () => {
     const v2 = makeV2Payload();
     await putRawRecord(v2);
     const loaded = await loadGame();
     expect(loaded).toEqual({
       ...v2,
-      version: 5,
+      version: 6,
+      // B8 Task 4：v2 沒有塊實體欄位 → 空清單。
+      blockEntities: [],
       player: {
         ...v2.player,
         // 舊 9 格 → 熱鍵列（前 9 格），其餘留空。
@@ -327,7 +346,8 @@ describe('saveGame / loadGame', () => {
       // B4 Task 10：同上——舊記錄缺欄位 → 空陣列。
       passiveMobs: [],
     });
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     expect(loaded!.player.inventory).toHaveLength(36);
     expect(loaded!.player.inventory[0]).toEqual({ item: 'oak_planks', count: 12 });
     expect(loaded!.player.inventory.slice(1)).toEqual(new Array(35).fill(null));
@@ -335,7 +355,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.stash.creative).toHaveLength(36);
   });
 
-  it('migrates a raw v3 record to v5 and keeps the nine old slots in the hotbar row', async () => {
+  it('migrates a raw v3 record to v6 and keeps the nine old slots in the hotbar row', async () => {
     const v3 = {
       ...makeV3Payload(),
       version: 3 as const,
@@ -351,7 +371,8 @@ describe('saveGame / loadGame', () => {
     };
     await putRawRecord(v3);
     const loaded = await loadGame();
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     expect(loaded!.player.inventory[0]).toEqual({ item: 'dirt', count: 5 });
     expect(loaded!.player.inventory[1]).toEqual({ item: 'stone', count: 1 });
     expect(loaded!.player.inventory[2]).toBeNull();
@@ -383,7 +404,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.player.inventory.slice(9)).toEqual(new Array(27).fill(null));
   });
 
-  it('keeps B4 passiveMobs through the v3→v5 migration', async () => {
+  it('keeps B4 passiveMobs through the v3→v6 migration', async () => {
     // 跨批介面：v4 只改背包寬度，不得把 B4 的可選欄位吃掉。
     const v3 = {
       ...makeV3Payload(),
@@ -391,7 +412,8 @@ describe('saveGame / loadGame', () => {
     };
     await putRawRecord(v3);
     const loaded = await loadGame();
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     expect(loaded!.passiveMobs).toEqual([
       { kind: 'cow', x: 1, y: 2, z: 3, hp: 10, yaw: 0 },
     ]);
@@ -400,11 +422,11 @@ describe('saveGame / loadGame', () => {
   // ── B7 Task 2：payload v5——耐久隨存檔旅行 ─────────────────────────────────
   //
   // `sanitizeStack` 保證「耐久物品必然帶**明確**的 `dur`」→ 這幾條釘住三件事：
-  // 1) 新的 v5 記錄把 `dur` 原樣帶回（滿／受損都要）；
+  // 1) 新的 v6 記錄（B8 起）把 `dur` 原樣帶回（滿／受損都要）；
   // 2) v1–v4 的舊記錄（那時根本沒有這個欄位）在載入時拿到**滿耐久**，不是
   //    「dur 0 ＝ 一用就壞」——舊存檔不得弄壞玩家的工具；
   // 3) 壞值（負數／超過上限）一律不往下傳（負數→滿耐久、超上限→夾到上限）。
-  it('a v5 payload round-trips the durability through IndexedDB', async () => {
+  it('a v6 payload round-trips the durability through IndexedDB', async () => {
     const p = makePayload({
       player: {
         ...makePayload().player,
@@ -416,7 +438,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.player.inventory[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 137 });
   });
 
-  it('migrates a raw v4 record to v5 and gives an old tool full durability', async () => {
+  it('migrates a raw v4 record to v6 and gives an old tool full durability', async () => {
     // 本批最重要的遷移斷言：v4 記錄裡沒有 `dur` → 工具必須是**滿耐久**
     //（木鎬上限 59），而不是 0（一用就壞）。
     const v4 = {
@@ -426,23 +448,25 @@ describe('saveGame / loadGame', () => {
     };
     await putRawRecord(v4);
     const loaded = await loadGame();
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     expect(loaded!.player.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
   });
 
-  it('migrates a raw v1 record to v5 and gives an old tool full durability', async () => {
+  it('migrates a raw v1 record to v6 and gives an old tool full durability', async () => {
     const v1 = makeV1Payload();
     await putRawRecord({
       ...v1,
       player: { ...v1.player, inventory: [{ item: 'stone_axe', count: 1 }] },
     });
     const loaded = await loadGame();
-    expect(loaded!.version).toBe(5);
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
     // 石斧上限 131——舊記錄沒有 `dur` → 滿耐久。
     expect(loaded!.player.inventory[0]).toEqual({ item: 'stone_axe', count: 1, dur: 131 });
   });
 
-  it('a v5 record keeps a damaged tool durability', async () => {
+  it('a v6 record keeps a damaged tool durability', async () => {
     // 受損的工具不得被「修理」成滿耐久（那等於無聲的作弊）。
     await saveGame(
       makePayload({
@@ -456,7 +480,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.player.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 12 });
   });
 
-  it('a v5 record with a corrupt durability falls back to full durability', async () => {
+  it('a v6 record with a corrupt durability falls back to full durability', async () => {
     await putRawRecord({
       ...makePayload(),
       player: {
@@ -469,7 +493,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.player.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
   });
 
-  it('a v5 record with an over-max durability is clamped', async () => {
+  it('a v6 record with an over-max durability is clamped', async () => {
     await putRawRecord({
       ...makePayload(),
       player: {
@@ -482,7 +506,7 @@ describe('saveGame / loadGame', () => {
     expect(loaded!.player.inventory[0]).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 59 });
   });
 
-  it('a v5 record with a wrong slot count is padded or truncated', async () => {
+  it('a v6 record with a wrong slot count is padded or truncated', async () => {
     const base = makePayload();
     for (const [width, count] of [[3, 3], [40, 36]] as const) {
       await putRawRecord({
@@ -602,13 +626,13 @@ describe('saveGame / loadGame', () => {
     const v1 = makeV1Payload();
     await putRawRecord({ ...v1, player: { ...v1.player, vitals: legacyVitals } });
     const loaded = await loadGame();
-    expect(loaded?.version).toBe(5);
+    expect(loaded?.version).toBe(6);
     expect(loaded?.player.vitals).toEqual({ ...legacyVitals, exhaustion: 0 });
     // the migrated stash's survival vitals carry the same normalized record
     expect(loaded?.stash.survivalVitals).toEqual({ ...legacyVitals, exhaustion: 0 });
   });
 
-  it('loads a v5 payload with garbage advancements and sanitizes them', async () => {
+  it('loads a v6 payload with garbage advancements and sanitizes them', async () => {
     await putRawRecord({
       ...makePayload(),
       advancements: {
@@ -633,7 +657,7 @@ describe('saveGame / loadGame', () => {
   });
 
   it('returns null for a record with an unsupported version', async () => {
-    await putRawRecord({ version: 6 });
+    await putRawRecord({ version: 7 });
     expect(await loadGame()).toBeNull();
   });
 
@@ -665,6 +689,8 @@ describe('saveGame / loadGame', () => {
     expect(await loadGame()).toBeNull();
     await putRawRecord({ version: 5 });
     expect(await loadGame()).toBeNull();
+    await putRawRecord({ version: 6 });
+    expect(await loadGame()).toBeNull();
     // non-finite pos coordinate
     await putRawRecord({ ...base, player: { ...base.player, pos: [1, Number.NaN, 3] } });
     expect(await loadGame()).toBeNull();
@@ -681,11 +707,78 @@ describe('saveGame / loadGame', () => {
     await saveGame(base);
     expect(await loadGame()).not.toBeNull();
   });
+
+  // ── B8 Task 4：塊實體（箱子／熔爐）進本機 payload v6 ──────────────────────
+
+  it('a v5 record migrates to v6 with an empty block entity list', async () => {
+    await putRawRecord(makeV5Payload());
+    const loaded = await loadGame();
+    expect(loaded!.version).toBe(6);
+    expect(loaded!.blockEntities).toEqual([]);
+  });
+
+  it('a v6 record round-trips the chest contents through IndexedDB', async () => {
+    const p = makePayload({
+      blockEntities: [
+        { kind: 'chest', x: 5, y: 70, z: 5, slots: new Array(27).fill(null), input: null, fuel: null, output: null, progressSec: 0, fuelUnits: 0 },
+      ],
+    });
+    p.blockEntities[0].slots![0] = { item: 'stone', count: 12 };
+    await saveGame(p);
+    const loaded = await loadGame();
+    expect(loaded!.blockEntities).toHaveLength(1);
+    expect(loaded!.blockEntities[0].slots![0]).toEqual({ item: 'stone', count: 12 });
+    expect(loaded!.blockEntities[0].slots).toHaveLength(27);
+  });
+
+  it('a v6 record round-trips the furnace state through IndexedDB', async () => {
+    const p = makePayload({
+      blockEntities: [
+        { kind: 'furnace', x: 1, y: 2, z: 3, slots: null, input: { item: 'raw_iron', count: 3 }, fuel: { item: 'coal', count: 1 }, output: { item: 'iron_ingot', count: 2 }, progressSec: 4.5, fuelUnits: 7 },
+      ],
+    });
+    await saveGame(p);
+    const loaded = await loadGame();
+    expect(loaded!.blockEntities[0].input).toEqual({ item: 'raw_iron', count: 3 });
+    expect(loaded!.blockEntities[0].fuel).toEqual({ item: 'coal', count: 1 });
+    expect(loaded!.blockEntities[0].output).toEqual({ item: 'iron_ingot', count: 2 });
+    expect(loaded!.blockEntities[0].progressSec).toBe(4.5);
+    expect(loaded!.blockEntities[0].fuelUnits).toBe(7);
+  });
+
+  it('a v6 record round-trips the durability of a tool inside a chest', async () => {
+    const p = makePayload({
+      blockEntities: [
+        { kind: 'chest', x: 5, y: 70, z: 5, slots: new Array(27).fill(null), input: null, fuel: null, output: null, progressSec: 0, fuelUnits: 0 },
+      ],
+    });
+    p.blockEntities[0].slots![0] = { item: 'iron_pickaxe', count: 1, dur: 77 };
+    await saveGame(p);
+    const loaded = await loadGame();
+    expect(loaded!.blockEntities[0].slots![0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 77 });
+  });
+
+  it('a corrupt block entity is dropped but the rest of the record survives', async () => {
+    const p = makePayload({
+      blockEntities: [
+        { kind: 'chest', x: 1.5, y: 2, z: 3, slots: [] },                                  // 座標不是整數 → 丟棄
+        { kind: 'nope', x: 0, y: 0, z: 0 },                                                 // 未知種類 → 丟棄
+        { kind: 'chest', x: 5, y: 6, z: 7, slots: [{ item: 'mystery', count: 1 }] },        // 壞格 → 該格變空
+      ] as never,
+    });
+    await saveGame(p);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.player.inventory[0]).toEqual({ item: 'stone', count: 32 }); // 玩家進度沒被連坐
+    expect(loaded!.blockEntities).toHaveLength(1);
+    expect(loaded!.blockEntities[0].x).toBe(5);
+    expect(loaded!.blockEntities[0].slots![0]).toBeNull();
+  });
 });
 
 /**
  * B4 Task 10：被動生物的持久化 —— payload 只多一個附加欄位 `passiveMobs`
- *（B4 當時的本機版本號是 v3；B7 Task 2 起是 v5，這個欄位的語意一字不變）。
+ *（B4 當時的本機版本號是 v3；B7 Task 2 起是 v5、B8 起是 v6，這個欄位的語意一字不變）。
  *
  * **舊存檔缺欄位 ≠ 壞檔**：舊記錄沒有 `passiveMobs` → 載入得空陣列（＝沒有
  * 生物），不整包拒絕、不報錯。
@@ -693,7 +786,7 @@ describe('saveGame / loadGame', () => {
 describe('B4 Task 10：被動生物跨存檔（本機 payload 的附加欄位）', () => {
   beforeEach(deleteSaveDb);
 
-  it('a v5 record without passiveMobs loads with an empty list', async () => {
+  it('a v6 record without passiveMobs loads with an empty list', async () => {
     const noMobs = makePayload() as Partial<SavePayload>;
     delete noMobs.passiveMobs;
     await putRawRecord(noMobs);
@@ -769,8 +862,8 @@ describe('B4 Task 10：被動生物跨存檔（本機 payload 的附加欄位）
  *  build — loadGame must validate the SHAPE before handing a payload to
  *  continueGame, which trusts it (destructure, setBlock, DOM writes). */
 describe('isValidSavePayload', () => {
-  it('accepts a fully valid payload (v1–v5 all pass base validation)', () => {
-    expect(isValidSavePayload(makePayload())).toBe(true); // v5 — the current shape
+  it('accepts a fully valid payload (v1–v6 all pass base validation)', () => {
+    expect(isValidSavePayload(makePayload())).toBe(true); // v6 — the current shape
     expect(
       isValidSavePayload(makePayload({ player: { ...makePayload().player, vitals: null } })),
     ).toBe(true);
@@ -778,13 +871,14 @@ describe('isValidSavePayload', () => {
     expect(isValidSavePayload(makeV2Payload())).toBe(true); // migration input
     expect(isValidSavePayload(makeV3Payload())).toBe(true); // migration input
     expect(isValidSavePayload(makeV4Payload())).toBe(true); // migration input
+    expect(isValidSavePayload(makeV5Payload())).toBe(true); // migration input
   });
 
   it('rejects non-objects, wrong version and a missing player', () => {
     expect(isValidSavePayload(null)).toBe(false);
     expect(isValidSavePayload('garbage')).toBe(false);
     expect(isValidSavePayload(42)).toBe(false);
-    expect(isValidSavePayload({ ...makePayload(), version: 6 })).toBe(false);
+    expect(isValidSavePayload({ ...makePayload(), version: 7 })).toBe(false);
     expect(isValidSavePayload({ version: 1 })).toBe(false); // player missing
   });
 
@@ -883,9 +977,10 @@ describe('collectSavePayload', () => {
       // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 123,
     });
-    expect(payload.version).toBe(5);
+    expect(payload.version).toBe(6);
     // 三個槽位陣列一律 36 格（空的來源也會補滿 null）。
     expect(payload.player.inventory).toHaveLength(INVENTORY_SLOTS);
     expect(payload.stash.survival).toHaveLength(INVENTORY_SLOTS);
@@ -914,6 +1009,7 @@ describe('collectSavePayload', () => {
       // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 0,
     });
     expect(payload.worldgenVersion).toBe(WORLDGEN_VERSION);
@@ -930,6 +1026,7 @@ describe('collectSavePayload', () => {
       advancements: emptyAdvancements(),
       stash: createModeStash(),
       passiveMobs: [cow],
+      blockEntities: [],
       savedAt: 0,
     });
     expect(payload.passiveMobs).toEqual([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 7, yaw: 0.5 }]);
@@ -957,6 +1054,7 @@ describe('collectSavePayload', () => {
       // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 0,
     });
     expect(payload.player.inventory[0]).toEqual({ item: 'diamond_sword', count: 1, dur: 900 });
@@ -981,6 +1079,7 @@ describe('collectSavePayload', () => {
       // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 0,
     });
     // fresh pos array — mutating the source must not touch the payload
@@ -1020,6 +1119,7 @@ describe('collectSavePayload', () => {
       // B4 Task 10：`SaveSources.passiveMobs` 是**必填**欄位（沒有生物也要
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
+      blockEntities: [],
     });
     const after = Date.now();
     expect(payload.player.mode).toBe('creative');
@@ -1047,6 +1147,7 @@ describe('collectSavePayload', () => {
       stash,
       // B4 Task 10：同上——必填的來源欄位。
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 0,
     });
     // fresh arrays, stacks and vitals — never the live objects
@@ -1067,13 +1168,44 @@ describe('collectSavePayload', () => {
     expect(payload.stash.survival[1]).toBeNull();
     expect(payload.stash.survivalVitals.hp).toBe(9);
   });
+
+  it('collectSavePayload carries the block entities deep-copied', () => {
+    const src = [
+      {
+        kind: 'chest' as const,
+        x: 1,
+        y: 2,
+        z: 3,
+        slots: [{ item: 'stone', count: 1 }] as Array<ItemStack | null>,
+        input: null,
+        fuel: null,
+        output: null,
+        progressSec: 0,
+        fuelUnits: 0,
+      },
+    ];
+    const payload = collectSavePayload({
+      world,
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      vitals: null,
+      clockT: 0,
+      advancements: emptyAdvancements(),
+      stash: createModeStash(),
+      passiveMobs: [],
+      blockEntities: src,
+      savedAt: 0,
+    });
+    src[0].slots![0]!.count = 99;
+    expect(payload.blockEntities[0].slots![0]).toEqual({ item: 'stone', count: 1 });
+  });
 });
 
 // ── B6 Task 8：存檔相容性紅線 ────────────────────────────────────────────────
 //
 // 公約 §3／計畫 Global Constraints 的紅線（本 describe 逐條釘住）：
-// - 本機 payload 的版本由寫出端釘住（B6 時是 v4；B7 Task 2 起是 v5——火把這條
-//   紅線本身與版本號無關）。`collectSavePayload` 測試已釘 `version === 5`；
+// - 本機 payload 的版本由寫出端釘住（B6 時是 v4；B7 Task 2 起是 v5、B8 起是
+//   v6——火把這條紅線本身與版本號無關）。`collectSavePayload` 測試已釘
+//   `version === 6`；
 //   下面的往返測試再釘一次，讓「光照不入存檔」與「版本號」在同一處可讀。
 // - 光照是**導出資料**：不入本機 payload、不入雲端 payload → 火把只走既有的
 //   `modified` overlay（數字 block id 32——「同一格式內的新 block id」，
@@ -1097,6 +1229,7 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
     advancements: emptyAdvancements(),
     stash: createModeStash(),
     passiveMobs: [],
+    blockEntities: [],
     savedAt: 0,
   });
 
@@ -1108,7 +1241,7 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
     // 加的是一個 block id（不是為了火把升版；B7 Task 2 的 v5 是為了 `dur`）。
     expect(BLOCK.TORCH).toBe(32);
     expect(payload.modified).toContainEqual(['3,70,4', BLOCK.TORCH]);
-    expect(payload.version).toBe(5);
+    expect(payload.version).toBe(6);
     // 載入路徑：全新世界 applyModified（內部逐筆走 setBlock）→ 火把還在
     const restored = new World();
     restored.applyModified(payload.modified);
@@ -1163,6 +1296,7 @@ describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', 
       advancements: emptyAdvancements(),
       stash: createModeStash(),
       passiveMobs: [],
+      blockEntities: [],
       savedAt: 0,
     });
 

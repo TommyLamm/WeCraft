@@ -177,6 +177,7 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
+import { blockEntityKey, type BlockEntity } from './world/block-entities';
 // Phase 4 Task 4: cloud save — pure data rules (cloud-save.ts) + the visitor-safe
 // platform client (platform/playroom.ts); all state/load/checkpoint wiring below
 // lives here at the composition root.
@@ -661,6 +662,10 @@ function craftingParams(size: 2 | 3): CraftingParams {
 // loadable through its panel, so an unopened furnace is always empty.
 const furnaces = new Map<string, FurnaceState>();
 let openFurnaceKey: string | null = null;
+
+// ---- 塊實體（B8）—— 箱子內容與熔爐狀態，隨存檔走 ----
+// key 與 `furnaces` 同格式（`blockEntityKey` ＝ `${x},${y},${z}`）。
+const blockEntities = new Map<string, BlockEntity>();
 
 const furnaceKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
 
@@ -1889,6 +1894,7 @@ function sessionSavePayload(): SavePayload | null {
     advancements,
     stash: modeStash, // B1.3: the other mode's slots + survival vitals
     passiveMobs, // B4 Task 10: 被動生物（種類／座標／血量／朝向）跨存檔
+    blockEntities: [...blockEntities.values()], // B8 Task 4: 箱子內容＋熔爐狀態
   });
 }
 
@@ -2354,6 +2360,7 @@ function resetWorld(): void {
   pendingLight.length = 0; // B6 Task 3：光照佇列與其他佇列同樣不跨世界沿用
   resetSessionEntities();
   clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
+  blockEntities.clear(); // B8 Task 4：新世界的塊實體歸零（箱子／熔爐都不跨世界）
   hazardState = createHazardState(); // B3 Task 6: 仙人掌的接觸計時不跨世界沿用
   eatProgress.reset(); // B4 Task 9: 進食進度不跨局沿用（重新按住要從零開始）
 }
@@ -2437,6 +2444,13 @@ function continueGame(payload: SavePayload): void {
   // 放不下的餘量隨舊場次丟棄——不得活到還原後的新場次）。
   resetUiOwnedState();
   world.applyModified(payload.modified); // 1. world edits (see doc above)
+  // B8 Task 4：塊實體（箱子內容與熔爐狀態）——清掉本頁先前的 session，再從
+  // 存檔還原。`payload.blockEntities` 已被 `loadGame` 正規化過（27 格、合法
+  // item id、座標合法、座標去重）。
+  blockEntities.clear();
+  for (const e of payload.blockEntities) {
+    blockEntities.set(blockEntityKey(e.x, e.y, e.z), e);
+  }
   // Review #4: entities are never persisted — drop any stale in-page session's
   // mobs/drops/arrows so Continue doesn't inherit them. Chunks + modified are
   // deliberately NOT cleared here: Continue applies onto the existing world.
