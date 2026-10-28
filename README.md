@@ -18,8 +18,8 @@ npm run dev        # 開啟 http://localhost:5173
 
 一個用 TypeScript 撰寫、Three.js 渲染的體素（voxel）遊戲。世界由 16×16 區塊組成，
 方塊經貪婪網格化（greedy meshing）+ texture array 合批繪製；四期開發與後續的穩定化／
-操控手感／世界生成／被動生物／方塊物品背包／逐格光照與火把／工具耐久批次皆已完成
-（目前為 0.10.0，細節見〈專案狀態〉）。
+操控手感／世界生成／被動生物／方塊物品背包／逐格光照與火把／工具耐久批次，以及
+0.10.1 的全域審查修復皆已完成（目前為 0.10.1，細節見〈專案狀態〉）。
 
 ## 遊戲特色
 
@@ -537,7 +537,8 @@ npm run lint       # eslint .
   驗證：**1453 tests / 76 files**、typecheck／lint／build 全綠、pinned 工具
   pack＋validate 通過；相容性提示（0.8.0 讀不到 block id 32）與已知問題見
   `docs/releases/v0.9.0.md`。
-- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1509 tests / 78 files**（0.10.1 修復波後實測 1637 tests / 83 files）、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
+- **B7 工具耐久（0.10.0）**：**工具耐久**（木 59／石 131／鐵 250／金 32／鑽 1561，20 把工具；挖完一格方塊或命中一次攻擊各扣 1，歸零即壞＋損壞音效＋「工具損壞」toast）；**耐久條**（熱鍵欄與背包面板；四段門檻）；**本機 payload v5**（堆疊帶 `dur`，v1／v2／v3／v4 照讀並遷移）；**雲端 format 3**（`readableFormats [1,2,3]`、`writeFormat 3`）。驗證：**1509 tests / 78 files**、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過；本機 v5／雲端 format 3 的回退限制見 `docs/releases/v0.10.0.md`。
+- **0.10.1 審查修復**：2026-10-26 全域審查（A1–A8／B1–B9 與附錄）的修復發布——**雲端存檔狀態機**（回應遺失同 ID 重送、只有 `saved:true` 才算保存、409 玩家三選一、標題先掛背景載入）、**本機存檔失敗可見**、session 邊界清理 UI 狀態、**標題三態即時推導**（存檔後「繼續遊戲」與覆蓋確認不再失效）、被動生物**白天限定**與**群組 2–4**、**一次按壓只吃一份**、仙人掌遮擋、未點光 ≠ 暗、疾跑取消提示、**分幀光照／worker 逾時退路**、**3×3 來源列換行**、生存 HUD 不重疊、「回到標題」二次確認。**存檔形狀不變**（本機 payload v5、雲端 format 3）。驗證：**1637 tests / 83 files**、typecheck／lint／build 全綠、pinned 工具 pack＋validate 通過、真實瀏覽器驗收 33 項全過；已知限制見 `docs/releases/v0.10.1.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 - Phase 4 執行計畫（10 任務）：`docs/superpowers/plans/2026-10-11-wecraft-phase4.md`
