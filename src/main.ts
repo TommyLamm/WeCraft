@@ -618,6 +618,14 @@ function resetUiOwnedState(dropOverflow?: (stack: ItemStack) => void): void {
     if (dropOverflow) dropOverflow(leftover);
     // 沒有 sink → 隨舊場次一起丟棄（不留在 UI 狀態裡）。
   }
+  // 1b. B8（review fix #2）：容器面板同理——關掉（游標交還擁有者＝giveItem）；
+  //     剩下的一疊交出去，**不得**活到下一場次（與 inv 同一組三態語意）。
+  containerUi.close();
+  const containerLeftover = containerUi.returnCursor();
+  if (containerLeftover) {
+    if (dropOverflow) dropOverflow(containerLeftover);
+    // 沒有 sink → 隨舊場次一起丟棄（不留在 UI 狀態裡）。
+  }
   // 3. 舞台材料交還背包；放不下的部分不重新停放（否則會洩漏進下一場次）。
   resetCraftGrid(craftUi.isOpen() ? 3 : 2, dropOverflow ?? (() => {}));
   craftExcess.length = 0; // 邊界上不留任何「停放中」的東西
@@ -727,7 +735,14 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
 /** B8 Task 7: right-click on a placed chest → 27-slot container panel. */
 function openChestAt(x: number, y: number, z: number): void {
   const key = blockEntityKey(x, y, z);
-  if (!blockEntities.has(key)) blockEntities.set(key, emptyChestEntity(x, y, z));
+  const existing = blockEntities.get(key);
+  // kind 一致性（review fix #1）：同座標若是另一 kind 的孤兒實體（雲端還原造成），
+  // 直接覆蓋成空箱子——與 `openFurnaceAt` 同款。否則 `state` 進了 'container'
+  // 但 'container' 分支開不出面板（kind 不符）→ 畫面凍結、鎖已釋放、又沒有面板
+  // 的 Esc handler → 軟鎖死，只能重載頁面。
+  if (!existing || existing.kind !== 'chest') {
+    blockEntities.set(key, emptyChestEntity(x, y, z));
+  }
   openChestKey = key;
   setState('container');
   document.exitPointerLock?.();
@@ -1912,6 +1927,10 @@ function sessionSavePayload(): SavePayload | null {
   // 它（`resetCraftGrid` 順便重繪它）。大小跟著開著的面板走：工作台 3×3、
   // 背包內嵌 2×2、沒開面板 2×2。
   resetCraftGrid(craftUi.isOpen() ? 3 : 2);
+  // B8（review fix #2）：容器游標同理——它是 UI 擁有的狀態、**不在 payload 裡**；
+  // 面板關著（餘量停在游標上）或開著時若跳過沖刷就是掉料。沖刷走擁有者的
+  // `onReturnCursor`（＝giveItem）；放不下的餘量原地停留（仍看得到、拿得回）。
+  containerUi.flushCursor();
   if (vitals && vitals.hp <= 0) return null; // dead — see doc above
   // B7 Task 2：存檔前用 live 槽位覆寫「目前模式」的 stash 快照（見 syncModeStash）。
   // **必須在 resetCraftGrid 之後**：那一步才把合成格裡的材料交還 inventory，

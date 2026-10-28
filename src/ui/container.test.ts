@@ -153,6 +153,81 @@ describe('container panel', () => {
     expect(root.querySelectorAll('.ui-cursor-stack')).toHaveLength(1);
   });
 
+  it('returnCursor hands the parked leftover out and clears the cursor (session boundary)', () => {
+    const chest = chestSlots();
+    chest[0] = { item: 'stone', count: 5 };
+    const params = {
+      title: '箱子',
+      container: chest,
+      inventory: playerSlots(),
+      onContainerChange: vi.fn(),
+      onInventoryChange: vi.fn(),
+      onReturnCursor: (st: ItemStack): ItemStack => ({ ...st, count: 2 }), // 只放得下 3 → 餘 2
+    };
+    container.open(params);
+    (root.querySelectorAll('.ui-container-grid .ui-slot')[0] as HTMLElement).click();
+    container.close(); // 餘量停在游標上（記憶體中；DOM 元素隨 close 一起移除）
+    expect(root.querySelectorAll('.ui-cursor-stack')).toHaveLength(0);
+    const leftover = container.returnCursor();
+    expect(leftover).toEqual({ item: 'stone', count: 2 });
+    expect(container.returnCursor()).toBeNull(); // 再取一次 → 沒有了（已清空）
+  });
+
+  it('flushCursor retries the return through the remembered owner callback after close', () => {
+    const chest = chestSlots();
+    chest[0] = { item: 'stone', count: 5 };
+    const returned: ItemStack[] = [];
+    const answers: Array<ItemStack | null> = [{ item: 'stone', count: 2 }, null];
+    const params = {
+      title: '箱子',
+      container: chest,
+      inventory: playerSlots(),
+      onContainerChange: vi.fn(),
+      onInventoryChange: vi.fn(),
+      onReturnCursor: (st: ItemStack): ItemStack | null => {
+        returned.push(st);
+        return answers.shift() ?? null;
+      },
+    };
+    container.open(params);
+    (root.querySelectorAll('.ui-container-grid .ui-slot')[0] as HTMLElement).click();
+    container.close(); // 第一次交還 → 餘 2 停在游標
+    container.flushCursor(); // 關著面板也能再試（用開啟時記住的同一個擁有者回呼）
+    expect(returned).toEqual([{ item: 'stone', count: 5 }, { item: 'stone', count: 2 }]);
+    expect(root.querySelectorAll('.ui-cursor-stack')).toHaveLength(0); // 第二次全數放回 → 清空
+  });
+
+  it('flushCursor repaints the open panel and keeps an unplaceable remainder visible', () => {
+    const chest = chestSlots();
+    chest[0] = { item: 'stone', count: 5 };
+    const params = {
+      title: '箱子',
+      container: chest,
+      inventory: playerSlots(),
+      onContainerChange: vi.fn(),
+      onInventoryChange: vi.fn(),
+      onReturnCursor: (st: ItemStack): ItemStack => ({ ...st, count: 2 }), // 永遠放不下 2
+    };
+    container.open(params);
+    (root.querySelectorAll('.ui-container-grid .ui-slot')[0] as HTMLElement).click();
+    container.flushCursor();
+    expect(root.querySelector('.ui-cursor-stack .count')?.textContent).toBe('2'); // 餘量重畫在游標上
+  });
+
+  it('flushCursor is a no-op with an empty cursor', () => {
+    const cb = vi.fn(() => null);
+    container.open({
+      title: '箱子',
+      container: chestSlots(),
+      inventory: playerSlots(),
+      onContainerChange: vi.fn(),
+      onInventoryChange: vi.fn(),
+      onReturnCursor: cb,
+    });
+    container.flushCursor();
+    expect(cb).not.toHaveBeenCalled();
+  });
+
   it('the panel never changes the total item count', () => {
     const chest = chestSlots();
     chest[0] = { item: 'stone', count: 5 };

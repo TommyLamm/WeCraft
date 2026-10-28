@@ -36,6 +36,13 @@ export interface ContainerParams {
 export interface ContainerUi {
   open(params: ContainerParams): void;
   close(): void;
+  /** B8（review fix #2）：把游標上的堆疊再交一次給擁有者（`onReturnCursor`）——
+   *  **關著面板也適用**（回呼跟著擁有者記住），放不下的餘量**原地**留在游標上。
+   *  `sessionSavePayload` 在快照前**無條件**呼叫：容器游標是 UI 擁有的狀態、
+   *  **不在 payload 裡**，不沖刷就是掉料（與合成格的 A4 沖刷同型）。 */
+  flushCursor(): void;
+  /** 取出剩下的游標堆疊並**清空**（session 邊界：不得活到下一場次）。 */
+  returnCursor(): ItemStack | null;
   isOpen(): boolean;
 }
 
@@ -71,6 +78,9 @@ export function createContainer(uiRoot: HTMLElement): ContainerUi {
   // `opts` 必須存進閉包：`open()` 開頭會先 `close()`，上一次沒放回來的游標
   // 要用「上一次開啟」的 onReturnCursor 交還。
   let opts: ContainerParams | undefined;
+  // B8（review fix #2）：擁有者的歸還回呼**跨 close 保留**——面板關著、餘量還
+  // 停在游標上時，存檔的無條件沖刷仍要找得到同一個擁有者（`flushCursor`）。
+  let lastReturnCb: ContainerParams['onReturnCursor'];
   let params: ContainerParams | undefined;
   let containerEls: HTMLElement[] = [];
   let mainEls: HTMLElement[] = [];
@@ -179,6 +189,8 @@ export function createContainer(uiRoot: HTMLElement): ContainerUi {
     opts = p;
     params = p;
 
+    lastReturnCb = p.onReturnCursor;
+
     el = document.createElement('div');
     el.className = 'ui-overlay ui-container-backdrop interactive';
     el.addEventListener('click', (e) => {
@@ -256,6 +268,22 @@ export function createContainer(uiRoot: HTMLElement): ContainerUi {
   return {
     open,
     close,
+    flushCursor() {
+      if (!cursor) return;
+      // 關著面板時 `opts` 已被清掉 → 用開啟時記住的同一個擁有者回呼。
+      const cb = opts?.onReturnCursor ?? lastReturnCb;
+      if (!cb) return;
+      const r = cb(cursor);
+      cursor = r === undefined ? cursor : r;
+      render(); // 開著的面板：重畫格子與游標；關著 → params undefined → no-op
+    },
+    returnCursor() {
+      const leftover = cursor;
+      cursor = null;
+      cursorEl?.remove();
+      cursorEl = null;
+      return leftover;
+    },
     isOpen: () => el !== null,
   };
 }
