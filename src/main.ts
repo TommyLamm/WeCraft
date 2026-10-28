@@ -1993,6 +1993,13 @@ function applyCloudData(data: CloudData): void {
   terrain = new TerrainWorkerClient(settings.seed);
   terrain.onDegrade = onTerrainDegrade; // B4 Task 15：重建也要接回單次提示
   resetWorld();
+  // B8 Task 5：塊實體——`resetWorld()` 剛清空，這裡從雲端 payload 還原。
+  // **已知限制**：雲端 payload 不帶 voxel 編輯 → 座標可能對應不到世界裡的
+  // 箱子／熔爐（內容不會消失，只是暫時不可達；發布說明會揭露）。
+  blockEntities.clear();
+  for (const e of data.blockEntities ?? []) {
+    blockEntities.set(blockEntityKey(e.x, e.y, e.z), e);
+  }
   resetSessionEntities(); // entities are never persisted — drop stale ones
   // B4 Task 10：被動生物**是**會存檔的（附加欄位 `passiveMobs`）→ 清掉舊的之後
   // 從雲端進度還原。舊的 format-1 payload 沒有這個欄位 → 空陣列（沒有生物）。
@@ -2085,6 +2092,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       settings,
       stash: modeStash,
       passiveMobs, // B4 Task 10: 被動生物隨雲端進度一起旅行
+      blockEntities: [...blockEntities.values()], // B8 Task 5: 箱子內容＋熔爐狀態
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');

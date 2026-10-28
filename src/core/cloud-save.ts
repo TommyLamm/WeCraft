@@ -20,6 +20,15 @@
 // - **回退限制**：0.10.0 寫出的 format 3 資料，0.9.0（只宣告 [1, 2]）讀不到 →
 //   平台會擋不相容回退（`SAVE_FORMAT_INCOMPATIBLE`）。此點寫進發布說明。
 // - `game.json` 的 `cloudSave` 同步宣告（測試釘死兩邊一致）。
+// B8 Task 5：**一次升到 format 4**——payload 新增附加欄位 `blockEntities`
+// （箱子內容＋熔爐狀態）：
+// - `readableFormats` 累積 [1, 2, 3, 4]（只累積、不縮）；format 1–3 的舊
+//   payload 沒有這個欄位 → 接受路徑給**空清單**（不是壞 payload）。
+// - **回退限制**：0.11.0 寫出的 format 4 資料，0.10.0（只宣告 [1, 2, 3]）讀不到
+//   → 平台會擋不相容回退（`SAVE_FORMAT_INCOMPATIBLE`）。此點寫進發布說明。
+// - **已知限制**：雲端 payload 不帶 voxel 編輯（本檔開頭）→ 從雲端還原後，
+//   塊實體的座標可能對應不到世界裡的箱子／熔爐 → 內容暫時不可達（不會消失），
+//   要玩家在同座標放一個箱子／熔爐才看得到。本批不解決，但必須誠實揭露。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { createInventoryModel } from './inventory';
@@ -39,18 +48,25 @@ import {
   type PassiveMobRecord,
 } from '../world/passive-save';
 import type { PassiveMob } from '../world/passive-mobs';
+import {
+  normalizeBlockEntities,
+  serializeBlockEntities,
+  type BlockEntity,
+} from '../world/block-entities';
 
 /** Payload schema version. Must match game.json `writeFormat` (Task 5).
  *  B5 Task 9：36 格背包改變 `inventory` 語義 → 由 1 升到 **2**。
- *  B7 Task 3：堆疊帶 `dur`（工具耐久）→ 由 2 升到 **3**。 */
-export const CLOUD_FORMAT_VERSION = 3 as const;
+ *  B7 Task 3：堆疊帶 `dur`（工具耐久）→ 由 2 升到 **3**。
+ *  B8 Task 5：payload 帶塊實體（箱子內容＋熔爐狀態）→ 由 3 升到 **4**。 */
+export const CLOUD_FORMAT_VERSION = 4 as const;
 
 /** 本版本能讀的格式（**只累積、不縮**）。format 1 = 9 格背包（≤0.7.0）；
- *  format 2 = 36 格背包（B5 起）；format 3 = 堆疊帶 `dur`（B7 起）。main.ts
+ *  format 2 = 36 格背包（B5 起）；format 3 = 堆疊帶 `dur`（B7 起）；
+ *  format 4 = 塊實體（B8 起）。main.ts
  *  的三處讀取檢查用 {@link isReadableCloudFormat}（不再與單一版本號比較）→
- *  讀到 format 1／2 照常套用（接受路徑完成 9→36 遷移與 `dur` materialize），
- *  下一次檢查點即以 format 3 覆寫。 */
-export const CLOUD_READABLE_FORMATS: ReadonlyArray<number> = [1, 2, 3] as const;
+ *  讀到 format 1／2／3 照常套用（接受路徑完成 9→36 遷移、`dur` materialize
+ *  與空塊實體清單），下一次檢查點即以 format 4 覆寫。 */
+export const CLOUD_READABLE_FORMATS: ReadonlyArray<number> = [1, 2, 3, 4] as const;
 
 /** 是否為本版可讀的雲端格式（main.ts 三處讀取檢查的單一真值）。 */
 export function isReadableCloudFormat(v: number): boolean {
@@ -130,6 +146,10 @@ export interface CloudData {
    *  面朝哪裡。舊 payload 沒有這個鍵 → 那是「舊存檔」→ 接受路徑給**空陣列**
    * （＝沒有生物），**不是**壞 payload。 */
   passiveMobs?: PassiveMobRecord[];
+  /** B8 Task 5 附加欄位（format 4 起）：塊實體（箱子內容＋熔爐狀態）。
+   *  format 1–3 的 payload 沒有這個欄位 → 接受路徑給**空清單**（不是壞
+   *  payload）；`CloudData` 保持 optional，`acceptCloudData` 回傳時一律存在。 */
+  blockEntities?: BlockEntity[];
 }
 
 export interface CloudBuildSource {
@@ -146,6 +166,9 @@ export interface CloudBuildSource {
   /** Live passive mobs (B4 Task 10) — copied into the payload as
    *  `{ kind, x, y, z, hp, yaw }` records. **必填**（沒有生物也要明寫空陣列）。 */
   passiveMobs: readonly PassiveMob[];
+  /** Live block entities (B8 Task 5) — chest contents + furnace states,
+   *  deep-copied into the payload. **必填**（沒有塊實體也要明寫空陣列）。 */
+  blockEntities: ReadonlyArray<BlockEntity>;
 }
 
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
@@ -206,6 +229,8 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
     // B4 Task 10：被動生物的持久化記錄（種類／座標／血量／朝向）。`vel`／
     // `kbVel` 是暫態 → 不寫進 payload。
     passiveMobs: serializePassiveMobs(src.passiveMobs),
+    // B8 Task 5：塊實體（箱子內容＋熔爐狀態）——逐筆深拷貝（`dur` 一起帶走）。
+    blockEntities: serializeBlockEntities(src.blockEntities),
   };
 }
 
@@ -261,6 +286,9 @@ export function validateCloudData(x: unknown): x is CloudData {
   // B4 Task 10：附加欄位 `passiveMobs` 若存在，必須是陣列（逐筆的內容交給
   // `normalizePassiveMobs` 處理 → 不在這裡收緊）。不存在則仍然合法（舊 payload）。
   if (r.passiveMobs !== undefined && !Array.isArray(r.passiveMobs)) return false;
+  // B8 Task 5：附加欄位 `blockEntities` 同理——只驗證「是陣列」，逐筆內容交給
+  // `normalizeBlockEntities`（一筆壞箱子不讓整包被拒）。
+  if (r.blockEntities !== undefined && !Array.isArray(r.blockEntities)) return false;
   return true;
 }
 
@@ -317,6 +345,9 @@ export function acceptCloudData(x: unknown): CloudData | null {
     // B4 Task 10：附加欄位 `passiveMobs` **一律回傳**（正規化後的陣列）——舊
     // payload 沒有這個鍵 → 空陣列（沒有生物）；單筆壞掉 → 只丟那一筆。
     passiveMobs: normalizePassiveMobs(x.passiveMobs),
+    // B8 Task 5：附加欄位 `blockEntities` **一律回傳**（正規化後的清單）——舊
+    // payload 沒有這個鍵 → 空清單；單筆壞掉 → 只丟那一筆（絕不整包拒絕）。
+    blockEntities: normalizeBlockEntities(x.blockEntities),
   };
 }
 
@@ -397,6 +428,11 @@ export function mergeCloudData(local: CloudData, remote: CloudData): CloudData {
       ...(local.passiveMobs === undefined
         ? {}
         : { passiveMobs: local.passiveMobs.map((m) => ({ ...m })) }),
+      // B8 Task 5（規則 1 的延伸）：塊實體是本機進度 → 合併時一律用本機，
+      // 與 stash／passiveMobs 同款深拷貝（merge 目前未接線，但語意先釘住）。
+      ...(local.blockEntities === undefined
+        ? {}
+        : { blockEntities: serializeBlockEntities(local.blockEntities) }),
     };
   };
 
