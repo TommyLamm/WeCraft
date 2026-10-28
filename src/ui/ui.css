@@ -438,6 +438,56 @@
   filter: none;
 }
 
+/* Container panel (B8 Task 3): 27 chest slots + the player's 36 slots.
+   The overlay/backdrop and .ui-cursor-stack reuse the inventory rules; the
+   chest grid is a 9-wide grid like .ui-inv-main. */
+.ui-overlay.ui-container-backdrop {
+  background: transparent;
+}
+.ui-container {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #c6c6c6;
+  border: 3px solid #555;
+  border-radius: 4px;
+  pointer-events: auto;
+}
+.ui-container h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #3f3f3f;
+}
+.ui-container-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 44px);
+  gap: 4px;
+}
+.ui-container-grid .ui-slot {
+  width: 44px;
+  height: 44px;
+  background: #8b8b8b;
+  cursor: pointer;
+}
+.ui-container-grid .ui-slot:hover {
+  outline: 2px solid #fff;
+}
+/* 游標堆疊的計數（.ui-cursor-stack 不是 .ui-slot，沿用同一套字樣）。 */
+.ui-cursor-stack .count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.85);
+}
+
 .ui-settings {
   display: flex;
   flex-direction: column;
