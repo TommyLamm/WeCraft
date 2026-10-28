@@ -158,6 +158,7 @@ import { createCrafting, type CraftingParams } from './ui/crafting';
 // cursor) — the rules live in a pure module, main only wires it to the UI.
 import { flushCraftGrid } from './ui/session-boundary';
 import { createFurnace } from './ui/furnace';
+import { createContainer } from './ui/container';
 import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
 // B4 Task 9：進食進度條（可選的視覺回饋；**規則不依賴它**）。
@@ -179,6 +180,7 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
 import {
   blockEntityKey,
+  emptyChestEntity,
   emptyFurnaceEntity,
   entityToFurnaceState,
   furnaceStateToEntity,
@@ -307,7 +309,8 @@ declare global {
 // 'crafting' (Task 11): the 3×3 crafting-table overlay (same frozen-world
 // handling as 'inventory' — the frame loop's final else keeps it static)
 // 'furnace' (Task 6): the furnace panel overlay (same frozen-world handling)
-type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'dead';
+// 'container' (B8 Task 7): the 27-slot chest panel (same frozen-world handling)
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'container' | 'dead';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -360,6 +363,8 @@ const furnaceUi = createFurnace(uiRoot, {
     relockCanvas();
   },
 });
+// B8 Task 7: chest container panel (right-click on a placed chest) — callbacks only.
+const containerUi = createContainer(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
 // Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
@@ -669,6 +674,7 @@ function craftingParams(size: 2 | 3): CraftingParams {
 // 這裡（B8 Task 6 起；先前是 session-only 的 `furnaces` Map，重開遊戲必消失）。
 const blockEntities = new Map<string, BlockEntity>();
 let openFurnaceKey: string | null = null;
+let openChestKey: string | null = null;
 
 /** Take the whole output stack into the inventory (blocked when full). */
 function takeFurnaceOutput(): void {
@@ -716,6 +722,15 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
   blockEntities.set(openFurnaceKey, furnaceStateToEntity(next, entity.x, entity.y, entity.z));
   hud.setHotbar(slots, selected);
   furnaceUi.open(next);
+}
+
+/** B8 Task 7: right-click on a placed chest → 27-slot container panel. */
+function openChestAt(x: number, y: number, z: number): void {
+  const key = blockEntityKey(x, y, z);
+  if (!blockEntities.has(key)) blockEntities.set(key, emptyChestEntity(x, y, z));
+  openChestKey = key;
+  setState('container');
+  document.exitPointerLock?.();
 }
 
 /** Right-click on a placed furnace → standalone panel (both modes). */
@@ -1633,6 +1648,7 @@ function setState(next: GameState): void {
   inv.close();
   craftUi.close(); // every transition clears the crafting overlay too (idempotent)
   furnaceUi.close(); // same for the furnace overlay (idempotent)
+  containerUi.close(); // B8: same for the chest container panel (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   if (next === 'title') {
     // Task 14: Continue renders iff a save exists (savedPayload — boot load
@@ -1798,6 +1814,41 @@ function setState(next: GameState): void {
     if (openFurnaceKey) {
       const entity = blockEntities.get(openFurnaceKey);
       if (entity && entity.kind === 'furnace') furnaceUi.open(entityToFurnaceState(entity));
+    }
+  } else if (next === 'container') {
+    // B8 Task 7: 右鍵箱子 → 容器面板（27 格箱子 ＋ 玩家 36 格背包）。面板不持有
+    // 副本：`entity.slots` 是活陣列，每次變動都經回呼寫回。
+    const key = openChestKey;
+    if (key) {
+      const entity = blockEntities.get(key);
+      if (entity && entity.kind === 'chest' && entity.slots) {
+        containerUi.open({
+          title: '箱子',
+          container: entity.slots,
+          inventory: slots,
+          onContainerChange: (index, stack) => {
+            const e = blockEntities.get(key);
+            if (!e || e.kind !== 'chest' || !e.slots) return;
+            e.slots[index] = stack;
+          },
+          onInventoryChange: (index, stack) => {
+            inventory.setSlot(index, stack);
+            hud.setHotbar(slots, selected);
+          },
+          onReturnCursor: (stack) => {
+            // 回 `null` ＝ 已全數放回（游標清空）；回堆疊 ＝ 只放不下這麼多。
+            // `giveItem` 三參數（B7）→ 箱子裡拿出的受損工具歸還時仍受損。
+            const overflow = giveItem(stack.item, stack.count, stack.dur);
+            hud.setHotbar(slots, selected);
+            return overflow > 0 ? { ...stack, count: overflow } : null;
+          },
+          onClose: () => {
+            openChestKey = null;
+            setState('playing');
+            relockCanvas();
+          },
+        });
+      }
     }
   }
 }
@@ -3491,6 +3542,18 @@ gs.renderer.setAnimationLoop(() => {
             if (drops.length !== before) bus.emit('drops-changed', {});
             blockEntities.delete(key);
           }
+          // B8 Task 7: a mined chest drops itself (既有 spawnBlockDrop) AND
+          // spills every non-empty slot (survival only). 塊實體一併刪除。
+          if (id === BLOCK.CHEST) {
+            const key = blockEntityKey(hit.x, hit.y, hit.z);
+            const entity = blockEntities.get(key) ?? null;
+            const before = drops.length;
+            drops = spillBlockEntity(drops, entity, {
+              x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5,
+            }, currentMode);
+            if (drops.length !== before) bus.emit('drops-changed', {});
+            blockEntities.delete(key);
+          }
           // Task 4: break burst — 12 debris particles in BOTH modes (creative
           // keeps the visual payoff; only the drop is survival-gated).
           particles = spawnBreakBurst(particles, id, {
@@ -3580,6 +3643,10 @@ gs.renderer.setAnimationLoop(() => {
           // Task 6: interacting with a furnace ALWAYS opens its panel (both
           // modes) — never place a block onto the furnace itself.
           openFurnaceAt(hit.x, hit.y, hit.z);
+        } else if (hit && hitBlock === BLOCK.CHEST) {
+          // B8 Task 7: 右鍵箱子 → 開啟容器（手上拿著方塊也先開容器，與熔爐／
+          // 工作台一致，也是原版行為）。
+          openChestAt(hit.x, hit.y, hit.z);
         } else if (currentMode === 'survival' && vitals !== null && heldIsFood()) {
           // B4 Task 9：手上拿食物時右鍵＝**進食**（不放置）。
           // 這裡**不吃** —— 只把進度歸零，等下面的每幀 `eatTick()` 依
