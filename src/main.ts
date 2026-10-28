@@ -19,7 +19,7 @@ import { computeChunkLight, computeChunkLightOnly, computeChunkTopY, markLightDi
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
 import { BLOCK } from './world/blocks';
-import { emptyFurnace, stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
+import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
@@ -177,7 +177,15 @@ import { createGameAudio, footstepInterval, materialGroup } from './audio';
 // Task 14: save/continue — payload assembly is pure (save.ts), all call sites
 // here are thin (composition-root convention).
 import { collectSavePayload, loadGame, saveGame, type SavePayload } from './world/save';
-import { blockEntityKey, type BlockEntity } from './world/block-entities';
+import {
+  blockEntityKey,
+  emptyFurnaceEntity,
+  entityToFurnaceState,
+  furnaceStateToEntity,
+  sameFurnaceState,
+  spillBlockEntity,
+  type BlockEntity,
+} from './world/block-entities';
 // Phase 4 Task 4: cloud save — pure data rules (cloud-save.ts) + the visitor-safe
 // platform client (platform/playroom.ts); all state/load/checkpoint wiring below
 // lives here at the composition root.
@@ -656,29 +664,24 @@ function craftingParams(size: 2 | 3): CraftingParams {
   };
 }
 
-// ---- Furnace state (Task 6) ----
-// Every placed furnace smelts on its own state, keyed by block coords
-// (`x,y,z`). Entries are created lazily on first open — a furnace is only
-// loadable through its panel, so an unopened furnace is always empty.
-const furnaces = new Map<string, FurnaceState>();
-let openFurnaceKey: string | null = null;
-
 // ---- 塊實體（B8）—— 箱子內容與熔爐狀態，隨存檔走 ----
-// key 與 `furnaces` 同格式（`blockEntityKey` ＝ `${x},${y},${z}`）。
+// key ＝ `blockEntityKey(x,y,z)`（`${x},${y},${z}`）。熔爐的 live 狀態住在
+// 這裡（B8 Task 6 起；先前是 session-only 的 `furnaces` Map，重開遊戲必消失）。
 const blockEntities = new Map<string, BlockEntity>();
-
-const furnaceKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
+let openFurnaceKey: string | null = null;
 
 /** Take the whole output stack into the inventory (blocked when full). */
 function takeFurnaceOutput(): void {
   if (!openFurnaceKey) return;
-  const st = furnaces.get(openFurnaceKey);
-  const out = st?.output;
-  if (!st || !out || !Number.isFinite(out.count) || out.count < 1) return;
+  const entity = blockEntities.get(openFurnaceKey);
+  if (!entity || entity.kind !== 'furnace') return;
+  const st = entityToFurnaceState(entity);
+  const out = st.output;
+  if (!out || !Number.isFinite(out.count) || out.count < 1) return;
   if (!inventory.fits(out.item, out.count)) return; // full → blocked
-  giveItem(out.item, out.count);
+  giveItem(out.item, out.count, out.dur);
   const next: FurnaceState = { ...st, output: null };
-  furnaces.set(openFurnaceKey, next);
+  blockEntities.set(openFurnaceKey, furnaceStateToEntity(next, entity.x, entity.y, entity.z));
   hud.setHotbar(slots, selected);
   applyAdvancement({ type: 'smelt-take', mode: currentMode });
   furnaceUi.open(next);
@@ -689,8 +692,9 @@ function takeFurnaceOutput(): void {
  *  selected hotbar slot when it holds an accepted item (smeltable/burnable). */
 function clickFurnaceSlot(which: 'input' | 'fuel'): void {
   if (!openFurnaceKey) return;
-  const st = furnaces.get(openFurnaceKey);
-  if (!st) return;
+  const entity = blockEntities.get(openFurnaceKey);
+  if (!entity || entity.kind !== 'furnace') return;
+  const st = entityToFurnaceState(entity);
   const stack = which === 'input' ? st.input : st.fuel;
   let next: FurnaceState | null = null;
   if (stack && Number.isFinite(stack.count) && stack.count >= 1) {
@@ -709,38 +713,23 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
     const moved = { item: src.item, count: 1 };
     next = which === 'input' ? { ...st, input: moved } : { ...st, fuel: moved };
   }
-  furnaces.set(openFurnaceKey, next);
+  blockEntities.set(openFurnaceKey, furnaceStateToEntity(next, entity.x, entity.y, entity.z));
   hud.setHotbar(slots, selected);
   furnaceUi.open(next);
 }
 
 /** Right-click on a placed furnace → standalone panel (both modes). */
 function openFurnaceAt(x: number, y: number, z: number): void {
-  openFurnaceKey = furnaceKey(x, y, z);
-  if (!furnaces.has(openFurnaceKey)) furnaces.set(openFurnaceKey, emptyFurnace());
+  const key = blockEntityKey(x, y, z);
+  const existing = blockEntities.get(key);
+  // kind 一致性：同座標若是另一 kind 的實體（雲端還原造成），直接覆蓋成空
+  // 熔爐 —— 否則「內容物卡住」，玩家打開看到的是別 kind 的欄位。
+  if (!existing || existing.kind !== 'furnace') {
+    blockEntities.set(key, emptyFurnaceEntity(x, y, z));
+  }
+  openFurnaceKey = key;
   setState('furnace');
   document.exitPointerLock?.();
-}
-
-/** Wipe in-progress smelting on load/continue/respawn/new-game (Task 6):
- *  furnace states are session-only and never persisted. Toasts 熔爐進度已重置
- *  only when a cleared furnace actually held items. */
-function clearFurnaces(): void {
-  let held = false;
-  for (const st of furnaces.values()) {
-    if (st.input || st.fuel || st.output) {
-      held = true;
-      break;
-    }
-  }
-  furnaces.clear();
-  if (held) {
-    try {
-      toasts.push({ title: '熔爐進度已重置', description: '', icon: 'furnace' });
-    } catch {
-      /* passive UI only */
-    }
-  }
 }
 
 // ---- Combat / vitals tuning (Task 9) ----
@@ -1807,12 +1796,8 @@ function setState(next: GameState): void {
     // Task 6: right-click on a placed furnace → standalone panel over the
     // block's live state (both modes; the entry is created on open).
     if (openFurnaceKey) {
-      let st = furnaces.get(openFurnaceKey);
-      if (!st) {
-        st = emptyFurnace();
-        furnaces.set(openFurnaceKey, st);
-      }
-      furnaceUi.open(st);
+      const entity = blockEntities.get(openFurnaceKey);
+      if (entity && entity.kind === 'furnace') furnaceUi.open(entityToFurnaceState(entity));
     }
   }
 }
@@ -2367,8 +2352,9 @@ function resetWorld(): void {
   pendingMesh.length = 0;
   pendingLight.length = 0; // B6 Task 3：光照佇列與其他佇列同樣不跨世界沿用
   resetSessionEntities();
-  clearFurnaces(); // Task 6: in-progress smelting never survives a world reset
-  blockEntities.clear(); // B8 Task 4：新世界的塊實體歸零（箱子／熔爐都不跨世界）
+  // B8 Task 6：新世界的塊實體歸零（箱子／熔爐都不跨世界；不再有「熔爐進度已
+  // 重置」的 toast——熔爐進度現在會存檔，只有真的開新局才清）。
+  blockEntities.clear();
   hazardState = createHazardState(); // B3 Task 6: 仙人掌的接觸計時不跨世界沿用
   eatProgress.reset(); // B4 Task 9: 進食進度不跨局沿用（重新按住要從零開始）
 }
@@ -2472,7 +2458,6 @@ function continueGame(payload: SavePayload): void {
   passiveMobs = restorePassiveMobs(
     passiveMobsForLoad(payload.passiveMobs, needsWorldgenNotice(payload.worldgenVersion)),
   );
-  clearFurnaces(); // Task 6: furnace states are session-only (conditional toast inside)
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);
@@ -2676,7 +2661,7 @@ function handleContinue(): void {
 function handleRespawn(): void {
   setVitals(createVitals()); // hp 0 → 20 / hunger refilled — emits vitals-changed via the integer gate
   resetPlayerToSpawn(); // pos/vel/fallState/attackCd → spawn; inventory untouched
-  clearFurnaces(); // Task 6: in-progress smelting resets on respawn (conditional toast inside)
+  // B8 Task 6：重生不清熔爐 —— 死亡不該讓熔爐的內容消失（原版行為）。
   setState('playing'); // resumes the world (playing block + render tail) + clears the overlay
   relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
 }
@@ -3113,10 +3098,17 @@ gs.renderer.setAnimationLoop(() => {
     // ---- 粒子（Task 4）：same solidity test as the player (water falls through)
     particles = stepParticles(particles, dt, (x, y, z) => world.isSolid(x, y, z));
 
-    // ---- 熔爐（Task 6）：every placed furnace smelts on its own state ----
-    for (const [key, fst] of furnaces) {
-      const stepped = stepFurnace(fst, dt);
-      if (stepped.state !== fst) furnaces.set(key, stepped.state);
+    // ---- 熔爐（B8 Task 6）：live 狀態住在 blockEntities；只在真的變化時寫回
+    // （`entityToFurnaceState` 每次回傳新物件 → 直接比 `!==` 恆真，必須用
+    // `sameFurnaceState` 的內容比較，否則每幀為每個塊實體配置並寫回 map）。 ----
+    for (const [key, e] of blockEntities) {
+      if (e.kind !== 'furnace') continue;
+      const before = entityToFurnaceState(e);
+      const stepped = stepFurnace(before, dt);
+      const after = stepped.state;
+      if (!sameFurnaceState(before, after)) {
+        blockEntities.set(key, furnaceStateToEntity(after, e.x, e.y, e.z));
+      }
     }
 
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
@@ -3486,25 +3478,18 @@ gs.renderer.setAnimationLoop(() => {
           // 時掉落物照樣出現在地上。創造模式由 `damageHeldTool` 內守門（耐無限）。
           damageHeldTool(1);
           hud.setHotbar(slots, selected);
-          // Task 6: a mined furnace spills its whole contents and loses its state.
+          // Task 6／B8 Task 6: a mined furnace spills its whole contents and
+          // loses its state. 溢出改走共用的 `spillBlockEntity`（B7 的 `dur`
+          // 傳遞由該函式統一處理，行為不變）；創造模式不灑內容物。
           if (id === BLOCK.FURNACE) {
-            const key = furnaceKey(hit.x, hit.y, hit.z);
-            const fst = furnaces.get(key);
-            if (fst) {
-              furnaces.delete(key);
-              let spilled = false;
-              for (const held of [fst.input, fst.fuel, fst.output]) {
-                if (!held || !Number.isFinite(held.count) || held.count < 1) continue;
-                drops = spawnDrop(drops, held.item, held.count, {
-                  x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5,
-                }, {
-                  // B7：掉落物帶著 `dur`，撿回來不會洗成滿耐久（見 drops.ts）
-                  dur: held.dur,
-                });
-                spilled = true;
-              }
-              if (spilled) bus.emit('drops-changed', {});
-            }
+            const key = blockEntityKey(hit.x, hit.y, hit.z);
+            const entity = blockEntities.get(key) ?? null;
+            const before = drops.length;
+            drops = spillBlockEntity(drops, entity, {
+              x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5,
+            }, currentMode);
+            if (drops.length !== before) bus.emit('drops-changed', {});
+            blockEntities.delete(key);
           }
           // Task 4: break burst — 12 debris particles in BOTH modes (creative
           // keeps the visual payoff; only the drop is survival-gated).
