@@ -43,6 +43,8 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.PLANKS]: 'wood',
   [BLOCK.CRAFTING_TABLE]: 'wood',
   [BLOCK.FURNACE]: 'stone',
+  // B8 Task 2：箱子是木頭聲
+  [BLOCK.CHEST]: 'wood',
   [BLOCK.LEAVES]: 'leaves',
   [BLOCK.GLASS]: 'glass',
   [BLOCK.WATER]: 'water',

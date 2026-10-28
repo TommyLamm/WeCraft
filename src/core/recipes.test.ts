@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 32). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 33). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 32 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(32);
+  it('holds exactly the 33 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(33);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -50,6 +50,8 @@ describe('recipe table', () => {
         'furnace',
         // B6 Task 5：煤＋木棍 → 4 火把
         'torch',
+        // B8 Task 2：8 塊同種板材 → 1 箱子
+        'chest',
       ].sort(),
     );
   });
@@ -380,6 +382,37 @@ describe('torch recipe (B6 Task 5)', () => {
     grid[0] = s('stick');
     grid[2] = s('coal');
     expect(matchRecipe(grid, 2)).toBeNull();
+  });
+});
+
+describe('chest recipe (B8 Task 2)', () => {
+  it('a chest is crafted from eight planks of one kind', () => {
+    const grid = emptyGrid(3);
+    for (const i of [0, 1, 2, 3, 5, 6, 7, 8]) grid[i] = { item: 'oak_planks', count: 1 };
+    expect(matchRecipe(grid, 3)).toEqual({ item: 'chest', count: 1 });
+  });
+
+  it('eight planks of mixed kinds do not craft a chest', () => {
+    const grid = emptyGrid(3);
+    grid[0] = { item: 'oak_planks', count: 1 };
+    grid[1] = { item: 'spruce_planks', count: 1 };
+    grid[2] = { item: 'birch_planks', count: 1 };
+    grid[3] = { item: 'oak_planks', count: 1 };
+    grid[5] = { item: 'oak_planks', count: 1 };
+    grid[6] = { item: 'oak_planks', count: 1 };
+    grid[7] = { item: 'oak_planks', count: 1 };
+    grid[8] = { item: 'oak_planks', count: 1 };
+    expect(matchRecipe(grid, 3)).toBeNull();
+  });
+
+  it('seven planks do not craft a chest', () => {
+    const grid = emptyGrid(3);
+    for (const i of [0, 1, 2, 3, 5, 6, 7]) grid[i] = { item: 'oak_planks', count: 1 };
+    expect(matchRecipe(grid, 3)).toBeNull();
+  });
+
+  it('the chest recipe cannot be made in a 2x2 grid', () => {
+    expect(matchRecipe(emptyGrid(2), 2)).toBeNull();
   });
 });
 

@@ -111,6 +111,12 @@ describe('canHarvest (Task 5 pickaxe tier gate — Task 6 drop gate)', () => {
     expect(canHarvest(BLOCK.IRON_ORE, { item: 'wooden_pickaxe', count: 1 })).toBe(false);
     expect(canHarvest(BLOCK.STONE, { item: 'wooden_pickaxe', count: 1 })).toBe(true);
   });
+
+  it('the chest is harvestable bare-handed and the axe speeds it up', () => {
+    expect(canHarvest(BLOCK.CHEST, null)).toBe(true);
+    expect(getBreakTime(BLOCK.CHEST, null)).toBeCloseTo(3.75, 5);
+    expect(getBreakTime(BLOCK.CHEST, { item: 'wooden_axe', count: 1 })).toBeCloseTo(1.875, 5);
+  });
 });
 
 describe('DigProgress (per-frame: dt ÷ breakTimeSec — real seconds into a 0..1 bar)', () => {

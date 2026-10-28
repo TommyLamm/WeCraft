@@ -345,6 +345,18 @@ export function drawAtlas(): AtlasImage {
     return [0, 0, 0, 0]; // 其餘透明（alphaTest 0.1 裁掉）
   }); // torch
 
+  // ---- B8 Task 2：箱子（tile 40）----
+  // 木箱底色 ＋ 蓋子接縫（y === 5 的深色橫線）＋ 中央鎖扣 ＋ 外框暗邊。
+  // 六面共用同一張貼圖（原版正面的鎖扣細節簡化）。
+  put(T.CHEST, (x, y, r) => {
+    const seam = y === 5 ? -38 : 0;
+    const latch = x >= 6 && x <= 9 && y >= 6 && y <= 9 ? 26 : 0;
+    const edge = x === 0 || y === 0 || x === 15 || y === 15 ? -22 : 0;
+    const c = vary([162, 122, 66, 255], r, 14);
+    const d = seam + latch + edge;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // chest
+
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
 }

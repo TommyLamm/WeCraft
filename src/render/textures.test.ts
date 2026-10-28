@@ -11,7 +11,7 @@ import {
   tileIndexAt,
   type AtlasImage,
 } from './textures';
-import { T, TILE_COUNT } from '../world/blocks';
+import { BLOCK, getBlockDef, T, TILE_COUNT } from '../world/blocks';
 
 const GRASS_SIDE = 1;
 const STONE = 3;
@@ -534,6 +534,15 @@ describe('buildTextureArray', () => {
       expect(magenta, `tile ${t} magenta`).toBeLessThan(TILE_PX * TILE_PX);
       expect(painted, `tile ${t} painted`).toBeGreaterThan(0);
     }
+  });
+
+  it('the chest tile is painted (not the magenta debug fill)', () => {
+    const MAGENTA = [255, 0, 255, 255];
+    const atlas = drawAtlas();
+    const chestTile = getBlockDef(BLOCK.CHEST).side;
+    expect(tilePixel(atlas, chestTile, 8, 8)).not.toEqual(MAGENTA);
+    // 未畫的 atlas 區域是透明，不會是洋紅——補一條 alpha 斷言才驗得到「有畫」。
+    expect(tilePixel(atlas, chestTile, 8, 8)[3]).toBe(255);
   });
 });
 

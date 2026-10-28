@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch: exactly 32) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest: exactly 33) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -16,7 +16,13 @@ import type { ItemId, ItemStack } from './items';
 // makes spruce planks only — wood species never substitute for each other.
 // Shaped recipes accept any listed id per cell; today only the plank slots do.
 
-export type PatternCell = ItemId | ReadonlyArray<ItemId> | null;
+/** B8：一組「必須同種」的配方格（箱子的 8 塊板材：任一種板材皆可，
+ *  但 8 格必須是同一種）。 */
+export interface SameItemCell {
+  same: ReadonlyArray<ItemId>;
+}
+
+export type PatternCell = ItemId | ReadonlyArray<ItemId> | SameItemCell | null;
 
 export interface ShapedRecipe {
   id: string;
@@ -49,8 +55,10 @@ const COAL: PatternCell = 'coal';
 const I: PatternCell = 'iron_ingot';
 const G: PatternCell = 'gold_ingot';
 const D: PatternCell = 'diamond';
+// B8 Task 2：箱子的 8 格板材——任一種板材皆可，但 8 格必須同種。
+const PL: SameItemCell = { same: ['oak_planks', 'spruce_planks', 'birch_planks'] };
 
-/** The settled recipe table — exactly 32 entries, checked by tests. */
+/** The settled recipe table — exactly 33 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -314,6 +322,18 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     pattern: [[COAL], [S]],
     result: { item: 'torch', count: 4 },
   },
+  // B8 Task 2：8 塊同種板材排成 3×3 環（中間空）→ 1 箱子。
+  // 原版是 Any Planks，但 8 格必須是「同一種」板材（不是任意混合）。
+  {
+    id: 'chest',
+    kind: 'shaped',
+    pattern: [
+      [PL, PL, PL],
+      [PL, null, PL],
+      [PL, PL, PL],
+    ],
+    result: { item: 'chest', count: 1 },
+  },
 ];
 
 /** Fresh empty crafting grid (length `size²`, row-major like the hotbar slots). */
@@ -327,12 +347,19 @@ function usable(stack: ItemStack | null | undefined): stack is ItemStack {
   return !!stack && Number.isFinite(stack.count) && stack.count >= 1;
 }
 
+/** B8：辨識「必須同種」的配方格（給 matchShaped 收集實際 item id）。 */
+function isSameItemCell(x: unknown): x is SameItemCell {
+  return typeof x === 'object' && x !== null && !Array.isArray(x) && 'same' in x;
+}
+
 /** Does a pattern cell accept `have`? `null` wants an empty cell; a list
- *  accepts any listed id (and is never empty-cell). */
+ *  accepts any listed id (and is never empty-cell); a `SameItemCell` accepts
+ *  any listed id per cell — the all-same rule is enforced by `matchShaped`. */
 function cellMatches(want: PatternCell, have: ItemId | null): boolean {
   if (want === null) return have === null;
   if (have === null) return false;
   if (typeof want === 'string') return want === have;
+  if (isSameItemCell(want)) return want.same.includes(have);
   return want.includes(have);
 }
 
@@ -401,6 +428,7 @@ function matchShaped(
   // pattern items must sit in matching cells, pattern nulls must be grid-empty.
   // Cells outside the (equal-sized) bbox are empty by construction — a stray
   // item would have grown the grid bbox and failed the size check above.
+  const sameIds: ItemId[] = [];
   for (let r = pBox[0]; r <= pBox[2]; r++) {
     for (let c = pBox[1]; c <= pBox[3]; c++) {
       const want = pat(r, c);
@@ -409,8 +437,11 @@ function matchShaped(
       const cell = grid[idx(size, gr, gc)];
       const have = usable(cell) ? cell.item : null;
       if (!cellMatches(want, have)) return false;
+      if (isSameItemCell(want) && have !== null) sameIds.push(have);
     }
   }
+  // 8 格都標了 SameItemCell 時，實際板材必須是同一種（box 配方）。
+  if (new Set(sameIds).size > 1) return false;
   return true;
 }
 

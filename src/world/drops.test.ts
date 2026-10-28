@@ -509,6 +509,11 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
   it('a broken torch drops itself', () => {
     expect(dropItemFor(BLOCK.TORCH)).toBe('torch');
   });
+
+  // B8 Task 2：箱子掉自身（原版「Chests always drop themselves when mined.」）
+  it('a broken chest drops itself', () => {
+    expect(dropItemFor(BLOCK.CHEST)).toBe('chest');
+  });
 });
 
 // ---- B4 Task 4：機率掉落（樹葉 0.5% 蘋果） ------------------------------

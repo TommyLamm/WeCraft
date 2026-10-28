@@ -255,17 +255,6 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       line(ctx, 5, 21, 11, 27, '#e8e8e8', 2);
       break;
     }
-    case 'chest': {
-      ctx.fillStyle = '#a5713d';
-      ctx.fillRect(4, 8, 24, 18);
-      ctx.strokeStyle = '#6b4a1f';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(5, 9, 22, 16);
-      line(ctx, 5, 15, 27, 15, '#6b4a1f', 2);
-      ctx.fillStyle = '#d8d8d8';
-      ctx.fillRect(14, 13, 4, 6);
-      break;
-    }
     case 'wooden_pickaxe':
     case 'stone_pickaxe':
     case 'iron_pickaxe':

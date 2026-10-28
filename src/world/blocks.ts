@@ -46,6 +46,8 @@ export const BLOCK = {
   // 同樣只能往後追加——舊存檔的 `modified` 記的是數字 id，重編號會讓舊存檔變形；
   // 舊版遇到未知 id 32 時 `getBlockDef(32)` fallback 空氣，不崩（存檔格式不動）。
   TORCH: 32,
+  // B8 Task 2：箱子（跨批編號表：本批 = 33；只能往後追加）。
+  CHEST: 33,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -111,12 +113,14 @@ export const T = {
   // **不得撞號**——箱子被渲染成火把）。同樣只能往後追加——tile 索引是
   // 「哪一格貼圖」的唯一鑰匙。
   TORCH: 39,
+  // B8 Task 2：箱子（跨批編號：本批 = 40 → TILE_COUNT = 41）。
+  CHEST: 40,
 } as const;
 
 /** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
- *  (currently `T.TORCH`), so appending a tile and pointing `TILE_COUNT` at it
+ *  (currently `T.CHEST`), so appending a tile and pointing `TILE_COUNT` at it
  *  is the only change needed to grow the atlas. */
-export const TILE_COUNT = T.TORCH + 1;
+export const TILE_COUNT = T.CHEST + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -188,6 +192,10 @@ const DEFS: Record<number, BlockDef> = {
   // `shape: 'torch'`＝小型無碰撞模型（mesher pass 屬 Task 6；在此之前走 cube
   // 路徑以整張 tile 暫渲染）。三個面共用火把 tile（T.TORCH = 39）。
   32: { id: 32, name: 'torch', hardness: 0, solid: false, transparent: true, shape: 'torch', top: T.TORCH, side: T.TORCH, bottom: T.TORCH, requiredTool: null, fastTool: null, emission: 14 },
+  // B8 Task 2：箱子。原版硬度 2.5、徒手可挖（`requiredTool: null`）、斧頭加速
+  // （wiki：Tool: Axe Required，但任何工具都能挖；箱子永遠掉自身）。
+  // 六面共用同一張 tile（原版正面的鎖扣細節本批簡化）。
+  33: { id: 33, name: 'chest', hardness: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CHEST, side: T.CHEST, bottom: T.CHEST, requiredTool: null, fastTool: 'axe' },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -221,6 +229,8 @@ export const PLACEABLE: BlockId[] = [
   // B6 Task 5：火把（物品形式隨方塊一起補上 → 創造清單自動出現；
   // HOTBAR_DEFAULT 不加——火把是做出來的（煤＋木棍），不是初始物品）
   BLOCK.TORCH,
+  // B8 Task 2：箱子（物品形式隨方塊一起補上 → 創造清單自動出現）
+  BLOCK.CHEST,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

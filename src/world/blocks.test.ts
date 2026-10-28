@@ -70,6 +70,8 @@ describe('blocks', () => {
       [BLOCK.BIRCH_PLANKS, 2.0],
       // B6 Task 5 新增：火把硬度 0（原版「Torches can be broken instantly using anything」）
       [BLOCK.TORCH, 0],
+      // B8 Task 2 新增：箱子硬度 2.5（原版）
+      [BLOCK.CHEST, 2.5],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -118,6 +120,8 @@ describe('blocks', () => {
       [BLOCK.BIRCH_PLANKS, null, 'axe'],
       // B6 Task 5 新增：火把徒手瞬破（不用工具、無加速工具）
       [BLOCK.TORCH, null, null],
+      // B8 Task 2 新增：箱子徒手可挖、斧頭加速
+      [BLOCK.CHEST, null, 'axe'],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -126,6 +130,18 @@ describe('blocks', () => {
     // exhaustive: every registered block id appears above (no silent gaps)
     const byId = (a: number, b: number) => a - b;
     expect(expected.map(([id]) => id).sort(byId)).toEqual([...Object.values(BLOCK)].sort(byId));
+  });
+
+  it('the chest block matches the vanilla hardness and tool rules', () => {
+    const def = getBlockDef(BLOCK.CHEST);
+    expect(def.hardness).toBe(2.5);
+    expect(def.requiredTool).toBeNull();   // 徒手也能挖掉並掉落
+    expect(def.fastTool).toBe('axe');
+    expect(def.solid).toBe(true);
+    expect(def.transparent).toBe(false);
+    expect(def.top).toBe(def.side);
+    expect(def.bottom).toBe(def.top);
+    expect(PLACEABLE).toContain(BLOCK.CHEST);
   });
 
   it('glass is transparent and solid', () => {
@@ -392,11 +408,9 @@ describe('blocks', () => {
     expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
     expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
     expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
-    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B5 落地時最高 tile 是 BIRCH_PLANKS（38）
-    // → 絕對值 39；B6 的火把 tile 接在後面成為新的最高 → 絕對值由 B6 火把自己的
-    // 「the torch tile is the last declared tile」把關，這裡釘住不變式與本批範圍
-    // （與羊毛測試的相對寫法同一套，之後批次成長不會誤紅）。
-    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.TORCH).top + 1);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B8 的箱子 tile 接在火把後面成為
+    // 新的最高 → 絕對值 41；由「the chest tile is the last declared tile」把關。
+    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.CHEST).top + 1);
     expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.BIRCH_PLANKS).top);
   });
 
@@ -471,10 +485,10 @@ describe('blocks', () => {
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
   });
 
-  it('the torch tile is the last declared tile', () => {
-    // 不綁死數字：上游 tile 表變動不會誤報；T.TORCH 的絕對值（39）由上面的
-    // 方塊測試（def.top === T.TORCH）與這條的相對關係一起把關。
-    expect(T.TORCH).toBe(TILE_COUNT - 1);
+  it('the chest tile is the last declared tile', () => {
+    // 不綁死數字：上游 tile 表變動不會誤報；T.CHEST 的絕對值（40）由跨批編號表
+    // 與下面的撞號檢查一起把關。
+    expect(T.CHEST).toBe(TILE_COUNT - 1);
     expect(TILE_COUNT).toBeLessThanOrEqual(64); // 紋理陣列 64 層
   });
 

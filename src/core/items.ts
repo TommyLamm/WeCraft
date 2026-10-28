@@ -116,6 +116,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['bedrock', BLOCK.BEDROCK],
   ['crafting_table', BLOCK.CRAFTING_TABLE],
   ['furnace', BLOCK.FURNACE],
+  // B8 Task 2：箱子的方塊物品形式（方塊 id 33；挖掉掉自身 → 要能放回世界）
+  ['chest', BLOCK.CHEST],
   ['spruce_log', BLOCK.SPRUCE_LOG],
   ['spruce_leaves', BLOCK.SPRUCE_LEAVES],
   ['birch_log', BLOCK.BIRCH_LOG],

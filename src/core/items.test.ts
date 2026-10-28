@@ -138,6 +138,14 @@ describe('items', () => {
     expect(maxStack('torch')).toBe(64);
   });
 
+  // ---- B8 Task 2：箱子的物品形式（隨 BLOCK.CHEST = 33 一起落地）----
+
+  it('the chest has a block form and stacks to 64', () => {
+    expect(blockFromItem('chest')).toBe(BLOCK.CHEST);
+    expect(itemFromBlock(BLOCK.CHEST)).toBe('chest');
+    expect(maxStack('chest')).toBe(64);
+  });
+
   // ---- B5 Task 1：本批 5 個新方塊的物品形式（礫石／金礦／鑽石礦／雲杉板材／白樺板材）----
   // 為什麼與方塊同一個 commit：上面兩條守門（`every obtainable block item` 與
   // `every placeable … maps to an item`）會在方塊落地後**立刻**紅 → 方塊與它的
@@ -240,7 +248,7 @@ describe('items', () => {
     expect(blockFromItem('stick')).toBeNull();
     expect(blockFromItem('crafting_table')).toBe(BLOCK.CRAFTING_TABLE); // Task 11 block
     expect(blockFromItem('furnace')).toBe(BLOCK.FURNACE); // Task 6 block pair
-    expect(blockFromItem('chest')).toBeNull(); // no chest block yet
+    expect(blockFromItem('chest')).toBe(BLOCK.CHEST); // B8 Task 2：箱子方塊已落地
     expect(blockFromItem('iron_pickaxe')).toBeNull(); // tools are not blocks
   });
 

@@ -50,6 +50,8 @@ describe('materialGroup', () => {
       [BLOCK.BIRCH_PLANKS]: 'wood',
       // B6 Task 5：火把是木頭 → 挖掘／腳步／放置音效走 wood 材質
       [BLOCK.TORCH]: 'wood',
+      // B8 Task 2：箱子是木頭
+      [BLOCK.CHEST]: 'wood',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {
