@@ -487,8 +487,8 @@ function resetSprintAndFov(): void {
 // The grid is owned here (not by the UI) so items staged in it survive between
 // opens of the same size. `craftExcess` parks leftovers that didn't fit a full
 // inventory — retried on the next reset, so items are never destroyed.
-let craftGrid: Array<ItemStack | null> = [];
-let craftExcess: ItemStack[] = [];
+const craftGrid: Array<ItemStack | null> = [];
+const craftExcess: ItemStack[] = [];
 
 // ---- Progress state (Task 11–12) ----
 // Advancement progress: fresh on New Game, restored on Continue, snapshotted
