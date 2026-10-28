@@ -461,6 +461,13 @@ describe('matchRecipe — matching rules', () => {
     ];
     expect(matchRecipe(g, 3)).toEqual({ item: 'wooden_pickaxe', count: 1 });
   });
+
+  it('the B9 materials have no recipe yet', () => {
+    // spec §B9：火藥／線／蜘蛛眼「暫無用途」→ 它們不進任何配方（含熔爐食譜）。
+    expect(
+      RECIPES.some((r) => ['gunpowder', 'string', 'spider_eye'].includes(r.result.item)),
+    ).toBe(false);
+  });
 });
 
 describe('consumeGrid', () => {

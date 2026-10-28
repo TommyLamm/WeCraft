@@ -46,7 +46,11 @@ export type ItemId =
   // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上 → 挖掉的火把能
   // 放回世界）。與方塊同一個 commit：`itemFromBlock` 的兩條守門（每個 block 都
   // 要有物品形式、每個 PLACEABLE 都要有物品形式）會在方塊落地後立刻紅。
-  | 'torch';
+  | 'torch'
+  // B9 Task 1：三個生物掉落材料（苦力怕掉火藥、蜘蛛掉線與蜘蛛眼）。spec §B9 明示
+  // 「暫無用途」→ 不進 RECIPES、不進熔爐食譜、不掛 OBTAIN_UNLOCKS（不觸發進度）。
+  // `stackName` 自動得到 Gunpowder／String／Spider Eye（與原版名稱一致）。
+  | 'gunpowder' | 'string' | 'spider_eye';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -81,11 +85,14 @@ const ITEM_IDS: Record<ItemId, true> = {
   diamond_pickaxe: true, diamond_axe: true, diamond_sword: true, diamond_shovel: true,
   // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上）
   torch: true,
+  // B9 Task 1：三個生物掉落材料（火藥／線／蜘蛛眼）
+  gunpowder: true, string: true, spider_eye: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 73 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 76 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
- *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式）。 */
+ *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
+ *  ＋ B9 Task 1 補的 3 個生物掉落材料）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {

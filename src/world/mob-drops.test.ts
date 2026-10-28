@@ -5,6 +5,12 @@ import { rollMobDrops, dropsForDeaths, type MobDropKind } from './mob-drops';
 /** 固定的 rng：永遠回同一個值 → 掉落數量可重現。 */
 const fixed = (v: number): (() => number) => () => v;
 
+/** 依序回傳陣列值的 rng；用完後重複最後一個值（抽樣順序固定時可精確控制每一抽）。 */
+const seq = (values: number[]): (() => number) => {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)];
+};
+
 describe('rollMobDrops (B4 Task 4：擊殺掉落表)', () => {
   it('zombie drops 0-2 rotten flesh', () => {
     // 0 → 掉 0 顆 → 整張表是空的（count 0 的項目不輸出）
@@ -62,6 +68,51 @@ describe('rollMobDrops (B4 Task 4：擊殺掉落表)', () => {
     ]);
     expect(rollMobDrops('cow', fixed(0))).toEqual([
       { item: 'raw_beef', count: 1 },
+    ]);
+  });
+
+  // ---- B9 Task 1：苦力怕與蜘蛛的掉落（火藥／線／蜘蛛眼）----
+
+  it('a creeper drops 0-2 gunpowder', () => {
+    expect(rollMobDrops('creeper', fixed(0))).toEqual([]);
+    expect(rollMobDrops('creeper', fixed(0.999))).toEqual([
+      { item: 'gunpowder', count: 2 },
+    ]);
+  });
+
+  it('a spider drops 0-2 string', () => {
+    // rng 恆 0.999 → string 抽到上限 2；蜘蛛眼的機率抽樣（**同一個 rng 的下一次
+    // 呼叫**）也是 0.999 > 1/3 → 不掉蜘蛛眼。
+    expect(rollMobDrops('spider', fixed(0.999))).toEqual([
+      { item: 'string', count: 2 },
+    ]);
+  });
+
+  it('a spider drops a spider eye only when killed by the player', () => {
+    // rng 恆 0.1：第一次抽樣給 string 的數量（0.1 → 0 顆）、第二次給蜘蛛眼的
+    // 機率（0.1 < 1/3 → 掉 1 顆）。
+    expect(rollMobDrops('spider', fixed(0.1), { killedByPlayer: true })).toEqual([
+      { item: 'spider_eye', count: 1 },
+    ]);
+    // 非玩家死因（被爆炸炸死、燒死…）→ 蜘蛛眼不掉（string 剛好也抽到 0）。
+    expect(rollMobDrops('spider', fixed(0.1), { killedByPlayer: false })).toEqual([]);
+  });
+
+  it('the string count and the spider eye are drawn separately', () => {
+    // 抽樣順序固定：先 string 的數量、再蜘蛛眼的機率（1/3）。
+    expect(rollMobDrops('spider', seq([0.9, 0.9]))).toEqual([
+      { item: 'string', count: 2 },
+    ]);
+    expect(rollMobDrops('spider', seq([0.0, 0.0]))).toEqual([
+      { item: 'spider_eye', count: 1 },
+    ]);
+  });
+
+  it('the existing mob drop rows are unchanged', () => {
+    // 新參數不影響既有生物：即使 killedByPlayer: false，殭屍仍掉同一份表
+    //（原本的殭屍／骷髏／雞／豬／羊／牛斷言都留在上面，一字不改）。
+    expect(rollMobDrops('zombie', fixed(0.999), { killedByPlayer: false })).toEqual([
+      { item: 'rotten_flesh', count: 2 },
     ]);
   });
 

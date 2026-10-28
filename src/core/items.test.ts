@@ -47,7 +47,11 @@ const TOOL_ITEMS: ItemId[] = [
   'wooden_sword', 'stone_sword', 'iron_sword',
   ...B5_TOOL_ITEMS,
 ];
-const DROP_ITEMS: ItemId[] = ['stick', 'coal', 'iron_ingot', 'raw_iron', 'arrow', 'apple'];
+// B9 Task 1：三個新材料（火藥／線／蜘蛛眼）——它們是生物掉落物，不是方塊、不是工具。
+const DROP_ITEMS: ItemId[] = [
+  'stick', 'coal', 'iron_ingot', 'raw_iron', 'arrow', 'apple',
+  'gunpowder', 'string', 'spider_eye',
+];
 /** B4 Task 1：生／熟肉與腐肉（食物值表在 Task 2；熟牛肉的 id 是 'steak'）。 */
 const FOOD_ITEMS: ItemId[] = [
   'raw_chicken', 'cooked_chicken',
@@ -74,9 +78,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B5 Task 1 再補 4 個（本批 5 個新方塊的物品形式；礫石 'gravel' 是 B1 留下的 dead id，
  *  **不新增** id，只是接上方塊）→ 58。
  *  B5 Task 2 再補 14 個（3 個原料 ＋ 11 把工具）→ 72。
- *  B6 Task 5 再補 1 個（火把的物品形式，隨 BLOCK.TORCH = 32 一起落地）→ **73**。
+ *  B6 Task 5 再補 1 個（火把的物品形式，隨 BLOCK.TORCH = 32 一起落地）→ 73。
+ *  B9 Task 1 再補 3 個（火藥／線／蜘蛛眼：生物掉落的新材料，不是方塊、不進配方）→ **76**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 73;
+const TOTAL_ITEM_COUNT = 76;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -144,6 +149,21 @@ describe('items', () => {
     expect(blockFromItem('chest')).toBe(BLOCK.CHEST);
     expect(itemFromBlock(BLOCK.CHEST)).toBe('chest');
     expect(maxStack('chest')).toBe(64);
+  });
+
+  // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----
+
+  it('every B9 item id is a known, sanitizable, stackable item', () => {
+    const NEW = ['gunpowder', 'string', 'spider_eye'] as const;
+    for (const id of NEW) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(sanitizeStack({ item: id, count: 2 })).toEqual({ item: id, count: 2 });
+      expect(maxStack(id)).toBe(64);
+      expect(blockFromItem(id)).toBeNull();
+      expect(stackName(id)).toBe(
+        id === 'gunpowder' ? 'Gunpowder' : id === 'string' ? 'String' : 'Spider Eye',
+      );
+    }
   });
 
   // ---- B5 Task 1：本批 5 個新方塊的物品形式（礫石／金礦／鑽石礦／雲杉板材／白樺板材）----

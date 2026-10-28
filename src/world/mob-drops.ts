@@ -9,6 +9,10 @@ import type { MobKind } from './mobs';
  * `canHarvest`），生物掉落不該被那套語意污染 → 分開放，各自的規則各自純函式化。
  *
  * 數值出處：Java 版 1.20+ 的原版掉落表（2026-10-20 查證）。
+ *
+ * B9 Task 1：蜘蛛眼**只有玩家（或原版的寵物狼）擊殺才掉**——本作沒有寵物狼 →
+ * 只有玩家擊殺。條件以 `opts.killedByPlayer` 表達（預設 `true` → 既有呼叫端
+ * 的行為完全不變）；被爆炸炸死等非玩家死因的呼叫端要顯式傳 `false`。
  */
 
 /** 一筆掉落：物品 id ＋ 數量。 */
@@ -26,7 +30,10 @@ export interface MobDrop {
  *   兩者**結構相容**（後者是前者的子聯集）→ `rollMobDrops(m.kind)` 可直接傳入，
  *   不需要轉型。
  */
-export type MobDropKind = MobKind | 'chicken' | 'pig' | 'sheep' | 'cow';
+export type MobDropKind = MobKind | 'chicken' | 'pig' | 'sheep' | 'cow'
+  // B9 Task 1：苦力怕（火藥）與蜘蛛（線＋蜘蛛眼）。兩者的實體在 creeper.ts／
+  // spider.ts（不是 mobs.ts 的 `Mob`）→ 這裡用字面量擴充，不動既有分支。
+  | 'creeper' | 'spider';
 
 /**
  * 依生物種類擲出它的掉落清單（純函式，rng 可注入 → 測試可重現）。
@@ -38,6 +45,8 @@ export type MobDropKind = MobKind | 'chicken' | 'pig' | 'sheep' | 'cow';
  * - 豬：生豬肉 1–3
  * - 羊：生羊肉 1–2、羊毛 1
  * - 牛：生牛肉 1–3、皮革 0–2
+ * - 苦力怕（B9）：火藥 0–2
+ * - 蜘蛛（B9）：線 0–2、蜘蛛眼 0–1（**僅玩家擊殺**）
  *
  * **數量為 0 的項目不輸出**（原版「可能掉 0 顆」＝ 那一格是空的，不是掉 0 顆的
  *  物品堆）。
@@ -49,7 +58,11 @@ export type MobDropKind = MobKind | 'chicken' | 'pig' | 'sheep' | 'cow';
 export function rollMobDrops(
   kind: MobDropKind,
   rng: () => number = Math.random,
+  opts: { killedByPlayer?: boolean } = {},
 ): MobDrop[] {
+  // B9 Task 1：預設 `true` → 既有呼叫端（`rollMobDrops(kind)`／`(kind, rng)`）
+  // 的行為完全不變；只有「非玩家死因」的呼叫端要顯式傳 `false`（爆炸等）。
+  const byPlayer = opts.killedByPlayer !== false;
   /** 閉區間 [min, max] 的整數擲骰（rng 注入 → 測試可重現）。 */
   const range = (min: number, max: number): number =>
     min + Math.floor(rng() * (max - min + 1));
@@ -80,6 +93,14 @@ export function rollMobDrops(
     case 'cow':
       push('raw_beef', range(1, 3));
       push('leather', range(0, 2));
+      break;
+    // B9 Task 1：抽樣順序**固定**——先線的數量、再蜘蛛眼的機率（1/3）。
+    case 'creeper':
+      push('gunpowder', range(0, 2));
+      break;
+    case 'spider':
+      push('string', range(0, 2));
+      if (byPlayer && rng() < 1 / 3) push('spider_eye', 1);
       break;
   }
   return out;

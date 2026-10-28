@@ -428,6 +428,50 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       line(ctx, 9, 21, 23, 11, '#efe9d8', 5);
       break;
     }
+    // ---- B9 Task 1：火藥／線／蜘蛛眼 ----
+    case 'gunpowder': {
+      // 灰色火藥堆：三團深淺灰的圓疊在中央
+      ctx.fillStyle = '#8f8f8f';
+      ctx.beginPath();
+      ctx.arc(13, 18, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#6b6b6b';
+      ctx.beginPath();
+      ctx.arc(20, 15, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#a8a8a8';
+      ctx.beginPath();
+      ctx.arc(18, 22, 4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'string': {
+      // 白色線團：米白圓 ＋ 兩三條交叉的細線
+      ctx.fillStyle = '#f2efe2';
+      ctx.beginPath();
+      ctx.arc(16, 17, 8, 0, Math.PI * 2);
+      ctx.fill();
+      line(ctx, 9, 13, 23, 20, '#d8d3c2', 1.5);
+      line(ctx, 10, 21, 22, 12, '#d8d3c2', 1.5);
+      line(ctx, 16, 9, 14, 25, '#d8d3c2', 1.5);
+      break;
+    }
+    case 'spider_eye': {
+      // 深紅眼球：深色瞳孔 ＋ 一點高光
+      ctx.fillStyle = '#7a1420';
+      ctx.beginPath();
+      ctx.arc(16, 16, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1a0a0c';
+      ctx.beginPath();
+      ctx.arc(16, 16, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#e08a8a';
+      ctx.beginPath();
+      ctx.arc(13, 13, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
     default: {
       // unknown/future item — neutral placeholder until it gets real art
       ctx.fillStyle = '#7a7a7a';
