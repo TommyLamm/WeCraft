@@ -12,9 +12,13 @@
 // 模型，於是 1.5 的燃料會覆蓋 **2 次** 冶煉（多出的 0.5 直接捨去）；
 // 同理一根木棍（0.5）在原版不足以熔完任何一件，在本作卻能熔 1 件。
 import type { ItemId, ItemStack } from '../core/items';
+import { sanitizeStackClamped } from '../core/items';
 
 /** Seconds to smelt one item. */
 export const SMELT_TIME_SEC = 10 as const;
+
+/** 熔爐燃料剩餘「可熔煉次數」的上限：64 個煤 × `FUEL_VALUES.coal` 8 ＝ 512。 */
+export const MAX_FUEL_UNITS = 512;
 
 /** Smeltable input item → output item. Both iron inputs smelt to iron_ingot:
  *  `raw_iron` is what iron_ore blocks drop now (MC 1.17+ parity); legacy
@@ -61,6 +65,32 @@ export interface FurnaceState {
 
 export function emptyFurnace(): FurnaceState {
   return { input: null, fuel: null, output: null, progressSec: 0, fuelUnits: 0 };
+}
+
+/** 把不可信的熔爐狀態正規化（載入端）：三個堆疊過 `sanitizeStackClamped`，
+ *  `progressSec` 夾到 `0..SMELT_TIME_SEC`，`fuelUnits` 夾到
+ *  `0..MAX_FUEL_UNITS`。非物件 → `emptyFurnace()`。
+ *
+ *  `fuelUnits` 保留小數（本模組的既有契約：原木／板材 1.5、木棍 0.5），
+ *  不取整——取整會在每次讀檔時丟掉不足一次的燃料進度。 */
+export function normalizeFurnaceState(raw: unknown): FurnaceState {
+  if (typeof raw !== 'object' || raw === null) return emptyFurnace();
+  const r = raw as Partial<FurnaceState>;
+  const progressSec =
+    typeof r.progressSec === 'number' && Number.isFinite(r.progressSec)
+      ? Math.min(Math.max(0, r.progressSec), SMELT_TIME_SEC)
+      : 0;
+  const fuelUnits =
+    typeof r.fuelUnits === 'number' && Number.isFinite(r.fuelUnits)
+      ? Math.min(Math.max(0, r.fuelUnits), MAX_FUEL_UNITS)
+      : 0;
+  return {
+    input: sanitizeStackClamped(r.input),
+    fuel: sanitizeStackClamped(r.fuel),
+    output: sanitizeStackClamped(r.output),
+    progressSec,
+    fuelUnits,
+  };
 }
 
 const validStack = (s: ItemStack | null): s is ItemStack =>

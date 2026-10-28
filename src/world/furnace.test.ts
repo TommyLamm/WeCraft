@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   emptyFurnace,
   stepFurnace,
+  normalizeFurnaceState,
   SMELT_TIME_SEC,
   SMELT_RECIPES,
   FUEL_VALUES,
@@ -198,5 +199,27 @@ describe('stepFurnace', () => {
     );
     expect(r.completed).toBe(1);
     expect(r.state.output).toEqual({ item: 'cooked_chicken', count: 1 });
+  });
+});
+
+describe('normalizeFurnaceState', () => {
+  it('normalizeFurnaceState sanitizes the stacks and clamps the progress', () => {
+    expect(normalizeFurnaceState({ input: { item: 'raw_iron', count: 2 }, fuel: null, output: null, progressSec: 999, fuelUnits: -1 }))
+      .toEqual({ input: { item: 'raw_iron', count: 2 }, fuel: null, output: null, progressSec: SMELT_TIME_SEC, fuelUnits: 0 });
+  });
+
+  it('normalizeFurnaceState turns junk into an empty furnace', () => {
+    expect(normalizeFurnaceState('garbage')).toEqual(emptyFurnace());
+  });
+
+  it('normalizeFurnaceState drops an unknown item id and bounds the count', () => {
+    const st = normalizeFurnaceState({ input: { item: 'mystery', count: 1 }, fuel: { item: 'coal', count: 999 } });
+    expect(st.input).toBeNull();
+    expect(st.fuel!.count).toBe(64);
+  });
+
+  it('normalizeFurnaceState keeps the durability of a damaged tool', () => {
+    expect(normalizeFurnaceState({ input: { item: 'iron_pickaxe', count: 1, dur: 100 } }).input)
+      .toEqual({ item: 'iron_pickaxe', count: 1, dur: 100 });
   });
 });

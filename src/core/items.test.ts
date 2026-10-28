@@ -8,6 +8,8 @@ import {
   starterSlots,
   sanitizeStack,
   sanitizeSlots,
+  sanitizeStackClamped,
+  sanitizeSlotsClamped,
   ALL_ITEM_IDS,
   HOTBAR_SLOTS,
   MAIN_SLOTS,
@@ -427,5 +429,27 @@ describe('items', () => {
       { item: 'stone', count: 1 },
       { item: 'dirt', count: 2 },
     ]);
+  });
+
+  // ---- B8: block-entity slot arrays have no InventoryModel to do the
+  // clamping, so the load path needs a model-less variant.
+  it('sanitizeStackClamped bounds the count to the max stack size', () => {
+    expect(sanitizeStackClamped({ item: 'stone', count: 9999 })).toEqual({ item: 'stone', count: 64 });
+    expect(sanitizeStackClamped({ item: 'iron_pickaxe', count: 4 })!.count).toBe(1);
+    expect(sanitizeStackClamped({ item: 'stone', count: 0 })).toBeNull();
+    expect(sanitizeStackClamped({ item: 'mystery', count: 1 })).toBeNull();
+    expect(sanitizeStackClamped({ item: 'stone', count: 64.9 })!.count).toBe(64);
+  });
+
+  it('sanitizeStackClamped keeps the durability of a damaged tool', () => {
+    expect(sanitizeStackClamped({ item: 'wooden_pickaxe', count: 1, dur: 30 })).toEqual({ item: 'wooden_pickaxe', count: 1, dur: 30 });
+  });
+
+  it('sanitizeSlotsClamped bounds every slot count to the max stack size', () => {
+    const slots = sanitizeSlotsClamped([{ item: 'stone', count: 9999 }, { item: 'iron_pickaxe', count: 3 }], 3);
+    expect(slots[0]).toEqual({ item: 'stone', count: 64 });
+    // B7 的 sanitizeStack 會替耐久物品 materialize 合法的 dur，因此只斷言 count。
+    expect(slots[1]!.count).toBe(1);
+    expect(slots[2]).toBeNull();
   });
 });

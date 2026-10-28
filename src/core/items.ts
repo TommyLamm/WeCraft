@@ -240,3 +240,30 @@ export function sanitizeSlots(x: unknown, count: number): Array<ItemStack | null
   for (let i = 0; i < size; i++) slots.push(sanitizeStack(source[i]));
   return slots;
 }
+
+/** Sanitize an untrusted stack AND bound its count to `maxStack`.
+ *  `sanitizeStack` deliberately passes the count through (the `InventoryModel`
+ *  does the clamping); this one is for call sites with no model — B8's
+ *  block-entity container slots. Null for junk.
+ *
+ *  KEEPS `dur` (B7's invariant): `sanitizeStack` already materializes a legal
+ *  `dur` for durable items, so rebuilding `{ item, count }` here would
+ *  silently repair every damaged tool inside a chest. */
+export function sanitizeStackClamped(x: unknown): ItemStack | null {
+  const s = sanitizeStack(x);
+  if (!s) return null;
+  const count = Math.min(Math.floor(s.count), maxStack(s.item));
+  if (count < 1) return null;
+  return { ...s, count };
+}
+
+/** Sanitize a slot array to EXACTLY `count` slots AND bound every kept
+ *  stack's count to `maxStack` — the model-less counterpart of `sanitizeSlots`
+ *  (which passes counts through). */
+export function sanitizeSlotsClamped(x: unknown, count: number): Array<ItemStack | null> {
+  const size = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const source: ReadonlyArray<unknown> = Array.isArray(x) ? x : [];
+  const slots: Array<ItemStack | null> = [];
+  for (let i = 0; i < size; i++) slots.push(sanitizeStackClamped(source[i]));
+  return slots;
+}
