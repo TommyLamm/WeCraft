@@ -153,7 +153,6 @@ import {
   attackCreeper,
   hitCreeperId,
   damageCreeper,
-  CREEPER_FUSE_SEC,
   CREEPER_HEIGHT,
   type Creeper,
 } from './world/creeper';
@@ -1023,6 +1022,11 @@ let mobs: Mob[] = [];
 let creepers: Creeper[] = [];
 /** B9：蜘蛛（HP16／暗處敵對／攀牆）。同樣**不跨存檔**。 */
 let spiders: Spider[] = [];
+/** B9 Task 11（修正）：引信聲的「已經播過」書籤——用狀態轉移而不是
+ *  `fuse === CREEPER_FUSE_SEC` 等值判斷。等值判斷在 `dt === 0` 的幀（分頁凍結、
+ *  幀率保護）不會倒數 → 同一隻會**每幀重播**嘶嘶聲。id 在牠離開 fuse 狀態
+ *  （爆炸、取消、死亡、despawn）時被清掉 → 重新點燃會再播一次（正確）。 */
+const hissedFuseIds = new Set<number>();
 let arrows: Arrow[] = [];
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 /**
@@ -1475,9 +1479,8 @@ function spawnTick(): void {
   if (spawn.mob) mobs = [...mobs, spawn.mob];
   if (spawn.creeper) creepers = [...creepers, spawn.creeper];
   if (spawn.spider) spiders = [...spiders, spawn.spider];
-  // HUD 的生物計數維持既有語意（只算殭屍＋骷髏）→ 不把新生物算進去，但事件照發
-  // （HUD 會重繪一次；新生物一樣要觸發同樣的「有生物了」路徑）。
-  bus.emit('mobs-changed', { count: mobs.length });
+  // `mobs-changed` 由**呼叫端**在 `mobs.length` 真的變化時發（唯一消費者的語意
+  // 是「殭屍＋骷髏的數量變了」）→ 這裡不再無條件 emit（先前會與呼叫端重複兩發）。
 }
 
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
@@ -1624,8 +1627,24 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   });
 
   // ---- 破壞方塊（走 world.setBlock → modified overlay 保留戰痕）＋粒子 ----
+  // `spilled` 統整這一場爆炸造成的**所有**掉落（方塊／容器內容物／生物），
+  // 函式結尾只發一次 `drops-changed`。
+  let spilled = false;
   for (const b of result.destroyed) {
     world.setBlock(b.x, b.y, b.z, BLOCK.AIR);
+    // **B8 的塊實體**：炸掉箱子／熔爐時比照挖除路徑——內容物逐格溢出（生存）、
+    // 塊實體刪除。少了這一步：內容物無聲消失，而且存檔會留下一個孤兒實體——
+    // 玩家之後在**同一格**放新箱子時 `openChestAt` 會把舊內容接回去（幽靈物品）。
+    if (b.blockId === BLOCK.CHEST || b.blockId === BLOCK.FURNACE) {
+      const key = blockEntityKey(b.x, b.y, b.z);
+      const entity = blockEntities.get(key) ?? null;
+      const before = drops.length;
+      drops = spillBlockEntity(drops, entity, {
+        x: b.x + 0.5, y: b.y + 0.5, z: b.z + 0.5,
+      }, currentMode);
+      if (drops.length !== before) spilled = true;
+      blockEntities.delete(key);
+    }
     particles = spawnBreakBurst(particles, b.blockId, {
       x: b.x + 0.5,
       y: b.y + 0.5,
@@ -1636,7 +1655,7 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   // ---- 方塊掉落（1/power 機率已在 explodeAt 擲完）----
   if (result.drops.length > 0) {
     for (const d of result.drops) drops = spawnDrop(drops, d.item, d.count, d.at);
-    bus.emit('drops-changed', {});
+    spilled = true;
   }
 
   // ---- 玩家：傷害＋擊退（繞過無敵幀；死亡原因＝苦力怕）----
@@ -1652,7 +1671,9 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   );
   const playerExposure = explosionExposure(hasLineOfSight(at, playerEye, solid));
   const playerDmg = explosionDamage(power, playerDist, playerExposure);
-  if (playerDmg > 0 && vitals) {
+  // `!isPlayerDead(vitals)`：同一幀稍早（例如摔落）已經致命時，爆炸不該對屍體
+  // 再套傷害／擊退、也不該把死因從「摔落」改寫成「苦力怕」。
+  if (playerDmg > 0 && vitals && !isPlayerDead(vitals)) {
     deathCause = 'creeper';
     setVitals(exhaust(damage(vitals, playerDmg), EXHAUST_HURT));
     hurtFlash.flash();
@@ -1683,12 +1704,14 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
     x: pos.x - at.x,
     z: pos.z - at.z,
   });
+  // 被炸死的**生物**掉落只在生存模式灑（與玩家擊殺、白天燃燒、其他死因同一條
+  // 規則）；創造模式的爆炸不該白送線／皮革／肉。
   const spill = (list: ReturnType<typeof dropsForDeaths>): boolean => {
+    if (currentMode !== 'survival') return false;
     for (const d of list) drops = spawnDrop(drops, d.item, d.count, d.pos);
     return list.length > 0;
   };
   let hostileDied = false;
-  let spilled = false;
 
   // 殭屍／骷髏（被炸死 → 既有掉落表；爆炸不是玩家擊殺）
   const deadMobs: Mob[] = [];
@@ -1740,7 +1763,8 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   const nextSpiders: Spider[] = [];
   for (const s of spiders) {
     const dmg = dmgAt(s.pos, SPIDER_HEIGHT * 0.5);
-    const hurt = dmg > 0 ? damageSpider(s, dmg, knockDir(s.pos)) : s;
+    // `{ angry: false }`：爆炸不是玩家攻擊 → 不會讓蜘蛛永久敵對（原版語意）。
+    const hurt = dmg > 0 ? damageSpider(s, dmg, knockDir(s.pos), { angry: false }) : s;
     if (isSpiderDead(hurt)) deadSpiders.push(hurt);
     else nextSpiders.push(hurt);
   }
@@ -3571,15 +3595,23 @@ gs.renderer.setAnimationLoop(() => {
     spiders = spiderStep.spiders;
     for (const ev of spiderStep.events) applySpiderDamage(ev);
     for (const ev of creeperStep.events) {
+      // 同一批事件是**一起**算出來的：前一個爆炸可能已經把這一隻炸死了
+      // （`runExplosion` 會把牠移出清單）→ 不在清單裡就不該再爆一次
+      // （否則同一幀多一次爆破、多一批方塊被炸掉）。
+      if (!creepers.some((c) => c.id === ev.creeperId)) continue;
       creepers = creepers.filter((c) => c.id !== ev.creeperId);
       runExplosion(ev.at);
     }
-    // B9 Task 11：引信**剛開始**的那一幀播一次「嘶——」（fuse 從 1.5 開始、下一幀
-    // 才倒數 → 等值判斷只會成立一次；引信取消後重新點燃會再播一次，正確）。
+    // B9 Task 11：引信**剛開始**的那一幀播一次「嘶——」（狀態轉移；
+    // 見 `hissedFuseIds` 的說明——等值判斷在 dt = 0 的幀會重播）。
     for (const c of creepers) {
-      if (c.state === 'fuse' && c.fuse === CREEPER_FUSE_SEC) {
+      if (c.state === 'fuse' && !hissedFuseIds.has(c.id)) {
+        hissedFuseIds.add(c.id);
         audio.playCreeperHiss({ pos: c.pos, listener: player.position });
       }
+    }
+    for (const id of [...hissedFuseIds]) {
+      if (!creepers.some((c) => c.id === id && c.state === 'fuse')) hissedFuseIds.delete(id);
     }
     // 死亡過濾＋despawn：與殭屍／骷髏同一條規則（B4：DESPAWN_DISTANCE = 128）。
     // **不在此灑掉落**——掉落只走玩家近戰擊殺（避免與 Task 9 的爆炸掉落重複）；
@@ -3839,7 +3871,8 @@ gs.renderer.setAnimationLoop(() => {
               // 移走了 → 死亡移除支看不到牠）。
               if (spawnMobDeathDrops(dead)) bus.emit('drops-changed', {});
             }
-            // ---- B9：苦力怕（沒打到殭屍／骷髏 → 試苦力怕）----
+          } else {
+            // ---- B9：苦力怕（**沒打到殭屍／骷髏才**試——同一次揮擊只命中一隻）----
             const catk = attackCreeper(creepers, rayOrigin, dir, meleeReach, dmg, dir);
             if (catk.hitId !== null) {
               attacking = true;

@@ -1089,3 +1089,63 @@ describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
     expect(countOf('damageHeldTool(1)')).toBe(5);
   });
 });
+
+// ---- B9 最終審查修復：組裝根的行為釘子 ---------------------------------------
+// `src/main.ts` 是組裝根（沒有單元測試）→ 最終審查抓到的四個迴歸全部住在這裡。
+// 每一條都對應一個**修復前會紅**的實際缺陷（不是為了釘而釘）：
+describe('main.ts 接線（B9 審查修復：爆炸與近戰鏈）', () => {
+  it('the exploding creeper is removed BEFORE runExplosion, and stale explode events are skipped', () => {
+    const playing = playingBranchBody();
+    const at = playing.indexOf('runExplosion(');
+    expect(at).toBeGreaterThan(-1);
+    // ① 引爆者先被移出清單（原版 discard → 不掉火藥、也不再有自己的屍體）。
+    expect(playing.slice(0, at)).toContain('creepers.filter((c) => c.id !== ev.creeperId)');
+    // ② 同一幀稍早的爆炸可能已經炸死牠（批次事件是一起算的）→ 不在清單就跳過，
+    //    否則同一幀會多爆一次、多炸一批方塊（審查發現）。
+    expect(playing.slice(0, at)).toContain('if (!creepers.some((c) => c.id === ev.creeperId)) continue;');
+  });
+
+  it('explosion kills never claim a player kill (spider eyes must not drop)', () => {
+    // 四條被炸死的路徑（殭屍／骷髏、苦力怕、蜘蛛、被動生物）都傳 false；
+    // 只有玩家近戰擊殺傳 true。註解已被剔除 → 這個數字是**呼叫點**數。
+    const body = functionBody('runExplosion');
+    expect(countOf('killedByPlayer: false')).toBe(4);
+    expect(body).toContain('killedByPlayer: false');
+  });
+
+  it('explosion mob loot is survival-only (creative gets nothing, like every other death)', () => {
+    const body = functionBody('runExplosion');
+    expect(body).toContain("if (currentMode !== 'survival') return false;");
+  });
+
+  it('explosion destroys chest/furnace block entities through the shared spill path', () => {
+    // 審查 Critical：爆炸只 setBlock(AIR) → 箱子內容無聲消失＋存檔留下孤兒實體
+    // （之後放新箱子會把舊內容接回去）。修復後走與挖除同一條 spill。
+    const body = functionBody('runExplosion');
+    expect(body).toContain('spillBlockEntity(');
+    expect(body).toContain('blockEntities.delete(key)');
+  });
+
+  it('one swing hits at most one mob: the B9 chain is the else of the zombie/skeleton branch', () => {
+    const playing = playingBranchBody();
+    // 殭屍／骷髏分支之後必須是 `} else {` 才輪到苦力怕（修復前：苦力怕那一段
+    // 直接接在分支後面 → 命中殭屍時**同一揮擊也打苦力怕**，且沒命中殭屍時
+    // 苦力怕／蜘蛛／被動生物全都打不到）。
+    expect(playing).toMatch(
+      /if \(atk\.hitId !== null\) \{[\s\S]*?\} else \{[\s\S]*?attackCreeper\(/,
+    );
+    // 四條攻擊查詢各自只有一個呼叫點（import 那幾行沒有括號 → 不會被算到）。
+    expect(countOf('attackMob(')).toBe(1);
+    expect(countOf('attackCreeper(')).toBe(1);
+    expect(countOf('attackSpider(')).toBe(1);
+    expect(countOf('attackPassiveMob(')).toBe(1);
+  });
+
+  it('the spawn tick uses the unified hostile allocator only', () => {
+    const body = functionBody('spawnTick');
+    expect(body).toContain('trySpawnHostile(');
+    // B4 的舊分配器已被移除（B9 Task 7）；留著會變成兩條抽權重的路徑。
+    expect(countOf('trySpawnMob(')).toBe(0);
+    expect(countOf('chooseSpawnKind(')).toBe(0);
+  });
+});

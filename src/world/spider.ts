@@ -139,8 +139,14 @@ export function createSpider(
   };
 }
 
-/** 中立判準：`max(內部天空光, 方塊光) <= 11` → 敵對。 */
+/** 中立判準：`max(內部天空光, 方塊光) <= 11` → 敵對。
+ *
+ *  **未知不是暗**（B6／B3 公約）：`spawnLightAt` 對還沒點光的區塊回
+ *  `{sky:0, internalSky:0, block:0, lit:false}`——照數值讀會是「全黑 → 敵對」，
+ *  白天的蜘蛛也會撲人。`lit:false` 一律回中立（與 `canSpawnHostile` 的第一道
+ *  閘門同一個理由）。 */
 export function spiderAggression(light: SpawnLight): 'hostile' | 'neutral' {
+  if (!light.lit) return 'neutral';
   return Math.max(light.internalSky, light.block) <= SPIDER_HOSTILE_LIGHT_MAX
     ? 'hostile'
     : 'neutral';
@@ -379,6 +385,7 @@ export function damageSpider(
   s: Spider,
   dmg: number,
   from?: { x: number; z: number },
+  opts: { angry?: boolean } = {},
 ): Spider {
   const valid = Number.isFinite(dmg) && dmg > 0;
   const hp = valid ? Math.max(0, s.hp - dmg) : s.hp;
@@ -391,7 +398,10 @@ export function damageSpider(
     }
   }
   // 即使傷害無效（<= 0／NaN），被「攻擊」仍然會激怒（與原版一致）。
-  return { ...s, hp, angry: true, kbVel };
+  // B9 修正：`opts.angry === false` 給**爆炸**用——原版只有玩家（或寵物狼）傷害
+  // 才會激怒蜘蛛，苦力怕爆炸不是玩家攻擊；否則被炸到的蜘蛛會永久敵對、連白天
+  // 都追人，與 README 的「亮處／白天中立（被攻擊後才不論亮度）」矛盾。
+  return { ...s, hp, angry: opts.angry ?? true, kbVel };
 }
 
 export function isSpiderDead(s: Spider): boolean {

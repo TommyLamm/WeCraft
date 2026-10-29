@@ -96,6 +96,9 @@ describe('spider (B9 Task 6)', () => {
     expect(spiderAggression({ sky: 0, internalSky: 0, block: 0, lit: true })).toBe('hostile'); // 洞穴
     expect(spiderAggression({ sky: 0, internalSky: 11, block: 0, lit: true })).toBe('hostile');
     expect(spiderAggression({ sky: 0, internalSky: 12, block: 0, lit: true })).toBe('neutral');
+    // B6／B3 公約：**未知不是暗**——區塊還沒點光（lit:false）時三個數值都是 0，
+    // 若照數值讀會是「全黑 → 敵對」＝白天的蜘蛛也會撲人 → 一律當中立。
+    expect(spiderAggression({ sky: 0, internalSky: 0, block: 0, lit: false })).toBe('neutral');
   });
 
   it('a spider in daylight does not chase the player', () => {
@@ -122,6 +125,9 @@ describe('spider (B9 Task 6)', () => {
     const hit = damageSpider(s, 1);
     expect(hit.angry).toBe(true);
     expect(hit.hp).toBe(SPIDER_HP - 1);
+    // B9 修正：**只有玩家（近戰）會激怒蜘蛛**——爆炸不是玩家攻擊。
+    // `damageSpider` 的第四個參數 `{ angry: false }` 給爆炸路徑用（預設 true＝既有行為）。
+    expect(damageSpider(s, 1, undefined, { angry: false }).angry).toBe(false);
     const r = stepSpider(hit, ctxFor({ x: 5, y: 6, z: 0.5 }, { light: DAY }));
     expect(r.spider.state).toBe('chase');
   });
