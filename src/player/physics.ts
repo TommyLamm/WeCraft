@@ -12,6 +12,11 @@
  *  §Effects：「Players are prevented from walking off edges … as long as they are
  *  up to 0.6 blocks above the ground」，以及 spec §B2.3。
  *
+ *  **外部擊退通道（B9）**：`PlayerState.kbVel` 是爆炸衝擊的專用通道。原因：
+ *  `stepOnce` 每幀都會用輸入**覆寫** `velocity.x/z`，外部衝擊若只寫 `velocity`
+ *  會在下一幀被抹掉。此通道由 `applyKnockback` 疊加、逐幀以 `0.1^dt` 衰減，
+ *  撞牆時該軸歸零（`moveAxis`）——與 `mobs.ts` 的 `kbVel` 同一套慣例。
+ *
  *  本批**四處刻意簡化／已知後果**（與原版的差異，勿誤讀為原版行為）：
  *  ① 支撐判定只看「腳下正下方（玩家中心點）一格」（`supportedAt`）；原版以
  *     **整個 hitbox 是否仍被支撐**判定 → 本批中心點不越過方塊邊界，原版可讓身體
@@ -46,9 +51,19 @@ const TERMINAL_VELOCITY = 50;
 const IN_WATER_DRAG = 0.5;
 const MAX_SUBSTEP = 0.05;
 
+/** 外部擊退（爆炸衝擊）的每秒衰減率：`0.1^dt`（1 秒後只剩 10%）——與
+ *  `mobs.ts` 的 `KNOCKBACK_DECAY_PER_SEC` 同一個慣例／同一個值。 */
+export const KNOCKBACK_DECAY_PER_SEC = 0.1;
+/** 擊退速度低於此值就歸零，避免無限小的尾速（同 `mobs.ts` 的 `KNOCKBACK_MIN`）。 */
+export const KNOCKBACK_MIN = 0.1;
+
 export interface PlayerState {
   position: { x: number; y: number; z: number }; // 腳底中心
   velocity: { x: number; y: number; z: number };
+  /** 外部衝擊通道（B9 爆炸擊退）：`stepOnce` 每幀都會用輸入**覆寫**
+   *  `velocity.x/z`，所以爆炸擊退不能只寫 `velocity`（下一幀就被抹掉）。
+   *  這條通道只由 `applyKnockback` 疊加、由 `stepOnce` 衰減；撞牆時該軸歸零。 */
+  kbVel: { x: number; y: number; z: number };
   yaw: number;
   pitch: number;
   onGround: boolean;
@@ -98,12 +113,26 @@ export function createPlayer(x: number, y: number, z: number): PlayerState {
   return {
     position: { x, y, z },
     velocity: { x: 0, y: 0, z: 0 },
+    kbVel: { x: 0, y: 0, z: 0 },
     yaw: 0,
     pitch: 0,
     onGround: false,
     flying: false,
     inWater: false,
   };
+}
+
+/** 施加一次外部衝擊（B9：苦力怕爆炸）——**疊加**到 `p.kbVel`。
+ *
+ *  非有限的分量直接忽略（NaN／Infinity 不得滲進位置）；其餘分量照加，
+ *  由 `stepOnce` 逐幀套用與衰減。`main.ts` 的 `runExplosion` 是唯一呼叫端。 */
+export function applyKnockback(
+  p: PlayerState,
+  v: { x: number; y: number; z: number },
+): void {
+  if (Number.isFinite(v.x)) p.kbVel.x += v.x;
+  if (Number.isFinite(v.y)) p.kbVel.y += v.y;
+  if (Number.isFinite(v.z)) p.kbVel.z += v.z;
 }
 
 /** 「腳下正下方」是否為實心方塊（純查詢，不改任何狀態）。
@@ -222,14 +251,25 @@ function stepOnce(
   // 潛行防摔邊（B2.3）：只有「潛行 ＋ 著地 ＋ 非飛行 ＋ 非水中」才啟用保護。
   // 起跳時上面的 jump 分支已把 onGround 清成 false → 保護解除 → 可跳離邊緣。
   const guardSneakEdge = input.sneak && p.onGround && !p.flying && !p.inWater;
-  const blockedX = moveAxis(p, world, 'x', p.velocity.x * dt, guardSneakEdge);
-  const blockedZ = moveAxis(p, world, 'z', p.velocity.z * dt, guardSneakEdge);
-  moveAxis(p, world, 'y', p.velocity.y * dt);
+  // 位移＝輸入速度 ＋ 外部擊退（B9）。撞牆時 moveAxis 會把該軸的兩個速度都歸零。
+  const blockedX = moveAxis(p, world, 'x', (p.velocity.x + p.kbVel.x) * dt, guardSneakEdge);
+  const blockedZ = moveAxis(p, world, 'z', (p.velocity.z + p.kbVel.z) * dt, guardSneakEdge);
+  moveAxis(p, world, 'y', (p.velocity.y + p.kbVel.y) * dt);
+
+  // 擊退衰減（與 mobs.ts 同慣例）：0.1^dt；分量小於 KNOCKBACK_MIN 就歸零。
+  const decay = Math.pow(KNOCKBACK_DECAY_PER_SEC, dt);
+  p.kbVel.x *= decay;
+  p.kbVel.y *= decay;
+  p.kbVel.z *= decay;
+  if (Math.abs(p.kbVel.x) < KNOCKBACK_MIN) p.kbVel.x = 0;
+  if (Math.abs(p.kbVel.y) < KNOCKBACK_MIN) p.kbVel.y = 0;
+  if (Math.abs(p.kbVel.z) < KNOCKBACK_MIN) p.kbVel.z = 0;
 
   // 撞牆夾角：只算水平兩軸（y 軸被擋＝站在地上／撞到天花板，不是牆）。
   // 兩軸都被擋＝撞到角落 → 取較大的那一個角度。
-  // dirX/dirZ 是移動方向 → 夾角語意與「單位長度」前提見 `wallContactAngleDeg`
-  // 的 JSDoc（此處不重複）；角度與速度無關。
+  // dirX/dirZ 是**輸入**方向 → 夾角語意與「單位長度」前提見 `wallContactAngleDeg`
+  // 的 JSDoc（此處不重複）；角度與速度無關。純擊退（無輸入）撞牆時 dir 為 0 →
+  // 夾角 0°，不會誤觸疾跑取消（擊退本來也不該影響疾跑狀態）。
   let wallAngleDeg: number | null = null;
   if (blockedX) wallAngleDeg = wallContactAngleDeg({ x: dirX, z: dirZ }, 'x');
   if (blockedZ) {
@@ -249,7 +289,11 @@ function stepOnce(
  *  `guardSneakEdge`（潛行防摔邊，B2.3）只作用於水平軸：位移前先算候選位置，若
  *  候選位置「腳下正下方」沒有支撐（`supportedAt`）就**取消該軸位移**——位置與
  *  速度都不變（仍可繼續輸入，會反覆被擋）。回傳 false：潛行取消位移**不是**撞牆，
- *  不能走撞牆夾角回報路徑（否則會誤觸疾跑取消）。 */
+ *  不能走撞牆夾角回報路徑（否則會誤觸疾跑取消）。
+ *
+ *  **B9 擊退**：撞到方塊時除了該軸的 `velocity` 歸零，也把 `kbVel` 同軸歸零
+ *  （撞牆即停，不會一直往牆裡頂）；潛行取消位移**不**清 `kbVel`（那不是碰撞，
+ *  只是防摔保護，擊退會照常衰減）。 */
 function moveAxis(
   p: PlayerState,
   world: World,
@@ -285,6 +329,7 @@ function moveAxis(
 
   if (axis === 'y') {
     p.velocity.y = 0;
+    p.kbVel.y = 0;
     if (delta < 0) {
       p.onGround = true;
       // 對齊到腳下方塊頂面（退回終點 ∈ [S, S+0.01)，S 為整數面）
@@ -296,6 +341,7 @@ function moveAxis(
     }
   } else {
     p.velocity[axis] = 0;
+    p.kbVel[axis] = 0;
   }
   return true; // 這一步位移後與方塊重疊（走過推回路徑）
 }

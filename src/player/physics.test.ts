@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stepPlayer, createPlayer, wallContactAngleDeg, supportedAt, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
+import { stepPlayer, createPlayer, wallContactAngleDeg, supportedAt, applyKnockback, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
 import { BLOCK } from '../world/blocks';
@@ -387,5 +387,74 @@ describe('sneak edge protection — 潛行防摔邊 (B2.3)', () => {
     expect(p.position.x).toBe(0.5);
     expect(p.position.z).toBe(0.5);
     expect(p.position.y).toBe(65);
+  });
+});
+
+// ---- B9 Task 5：外部擊退通道（爆炸擊退用）----
+//
+// `stepOnce` 每一幀都會用輸入覆寫 `p.velocity.x/z`，所以外部擊退若只寫
+// `velocity` 會在下一幀被抹掉 → 另外一條 `kbVel` 通道（與 `mobs.ts` 同慣例）。
+describe('player knockback (B9 Task 5)', () => {
+  it('a new player has no knockback velocity', () => {
+    expect(createPlayer(0, 10, 0).kbVel).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('an external impulse moves the player and decays', () => {
+    const w = flatWorld();
+    const p = createPlayer(0.5, 65, 0.5);
+    applyKnockback(p, { x: 6, y: 0, z: 0 });
+    stepPlayer(p, groundInput, w, 0.1);
+    expect(p.position.x).toBeGreaterThan(1.0); // 被推開（> 0.5 格）
+    const before = p.kbVel.x;
+    expect(before).toBeGreaterThan(0);
+    stepPlayer(p, groundInput, w, 0.5);
+    expect(p.kbVel.x).toBeLessThan(before); // 會衰減
+  });
+
+  it('the knockback stops at a wall', () => {
+    const w = flatWorld();
+    // x = 1 那一列全是石頭（高 4 格）→ 玩家往 +x 頂到牆面
+    for (let z = -4; z <= 4; z++)
+      for (let y = 65; y <= 68; y++) w.setBlock(1, y, z, BLOCK.STONE);
+    const p = createPlayer(0.5, 65, 0.5);
+    applyKnockback(p, { x: 20, y: 0, z: 0 });
+    // 一個子步就足以撞牆（20 格/秒 × 0.05 秒 ＝ 1 格）
+    stepPlayer(p, groundInput, w, 0.1);
+    expect(p.position.x).toBeLessThan(1); // 沒有穿進牆裡
+    expect(p.kbVel.x).toBe(0); // 撞牆即停（不會一直往牆裡頂）
+  });
+
+  it('the knockback does not NaN the position', () => {
+    const w = flatWorld();
+    const p = createPlayer(0.5, 65, 0.5);
+    applyKnockback(p, { x: NaN, y: Infinity, z: -Infinity });
+    stepPlayer(p, groundInput, w, 0.1);
+    expect(Number.isFinite(p.position.x)).toBe(true);
+    expect(Number.isFinite(p.position.y)).toBe(true);
+    expect(Number.isFinite(p.position.z)).toBe(true);
+    expect(p.kbVel).toEqual({ x: 0, y: 0, z: 0 });
+  });
+
+  it('an upward impulse lifts the player off the ground', () => {
+    const w = flatWorld();
+    const p = createPlayer(0.5, 65, 0.5);
+    for (let i = 0; i < 10; i++) stepPlayer(p, groundInput, w, 1 / 60); // 先著地
+    expect(p.onGround).toBe(true);
+    applyKnockback(p, { x: 0, y: 6, z: 0 });
+    stepPlayer(p, groundInput, w, 1 / 60);
+    expect(p.position.y).toBeGreaterThan(65);
+    expect(p.onGround).toBe(false);
+  });
+
+  it('holding a direction does not erase an impulse', () => {
+    // stepOnce 每幀重寫 velocity → 擊退必須走獨立通道才不會被抹掉
+    const w = flatWorld();
+    const p = createPlayer(0.5, 65, 0.5);
+    applyKnockback(p, { x: 0, y: 0, z: 6 });
+    for (let i = 0; i < 12; i++) stepPlayer(p, { ...groundInput, fwd: 1 }, w, 1 / 60);
+    // fwd=1 往 -z 走，擊退往 +z → 淨位移必須仍大於「純走路」的距離
+    const walked = createPlayer(0.5, 65, 0.5);
+    for (let i = 0; i < 12; i++) stepPlayer(walked, { ...groundInput, fwd: 1 }, w, 1 / 60);
+    expect(p.position.z).toBeGreaterThan(walked.position.z);
   });
 });
