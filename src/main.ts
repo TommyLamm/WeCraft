@@ -120,6 +120,7 @@ import {
   stepSunBurn,
   spawnArrow,
   isDead,
+  hasLineOfSight,
   xzDistance,
   SPAWN_INTERVAL_SEC,
   DESPAWN_DISTANCE,
@@ -132,6 +133,22 @@ import {
 import { isDaylight } from './world/spawn-rules';
 // B9 Task 7：敵對生怪統一到 b9-spawn（四種生物共用權重表與光照閘門）。
 import { trySpawnHostile } from './world/b9-spawn';
+// B9 Task 4／6：苦力怕與蜘蛛（純邏輯層；渲染在 render/b9-mobs.ts）。
+import {
+  stepCreepers,
+  isCreeperDead,
+  attackCreeper,
+  hitCreeperId,
+  type Creeper,
+} from './world/creeper';
+import {
+  stepSpiders,
+  isSpiderDead,
+  attackSpider,
+  hitSpiderId,
+  type Spider,
+  type SpiderEvent,
+} from './world/spider';
 // B4 Task 6：被動生物（雞／豬／羊／牛）的模型與 AI（純邏輯層，渲染是後續任務）。
 // **被動生物與敵對生物是兩套東西**：不會主動攻擊、不會 despawn、不進
 // `mobs-changed`（那是敵對生物的計數事件）。
@@ -950,6 +967,11 @@ function damageHeldTool(amount: number): boolean {
 // Pure mob AI (world/mobs.ts) stepped each frame while playing; night spawns
 // them on the surface, distance despawns them, death removes them (no loot).
 let mobs: Mob[] = [];
+/** B9：苦力怕（HP20／引信 1.5 秒／爆炸）。與 `mobs` 分開存——引信狀態機與
+ *  「爆炸後消失且不掉落」不是 `Mob` 的語意。**不跨存檔**（與既有敵對生物一致）。 */
+let creepers: Creeper[] = [];
+/** B9：蜘蛛（HP16／暗處敵對／攀牆）。同樣**不跨存檔**。 */
+let spiders: Spider[] = [];
 let arrows: Arrow[] = [];
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 /**
@@ -1387,9 +1409,10 @@ function spawnPoint(): { x: number; y: number; z: number } {
  *  **B3**：未點光的區塊回 `lit:false` → `canSpawnHostile` 不生成（未知不是暗；
  *  這裡不必另外判斷——同一個 `SpawnLight` 流進純判準層）。 */
 function spawnTick(): void {
-  // B9 Task 7：介面先接到新的分配器（苦力怕／蜘蛛清單由 Task 8 接線）。
+  // B9 Task 7／8：四種敵對共用一份權重表（各 25%）與同一道光照／距離閘門；
+  // 總上限＝三條清單的長度相加（MAX_MOBS = 12，苦力怕另有子上限 4）。
   const spawn = trySpawnHostile(
-    { mobs: mobs.length, creepers: 0, spiders: 0 },
+    { mobs: mobs.length, creepers: creepers.length, spiders: spiders.length },
     player.position,
     {
       lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
@@ -1397,7 +1420,13 @@ function spawnTick(): void {
       blockIdAt: (x, y, z) => world.getBlock(x, y, z),
     },
   );
-  if (spawn?.mob) mobs = [...mobs, spawn.mob];
+  if (!spawn) return;
+  if (spawn.mob) mobs = [...mobs, spawn.mob];
+  if (spawn.creeper) creepers = [...creepers, spawn.creeper];
+  if (spawn.spider) spiders = [...spiders, spawn.spider];
+  // HUD 的生物計數維持既有語意（只算殭屍＋骷髏）→ 不把新生物算進去，但事件照發
+  // （HUD 會重繪一次；新生物一樣要觸發同樣的「有生物了」路徑）。
+  bus.emit('mobs-changed', { count: mobs.length });
 }
 
 /** Apply one mob event at the vitals/arrow layer: damage goes through the
@@ -1431,6 +1460,21 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
     const kind = mobs.find((m) => m.id === ev.mobId)?.kind;
     deathCause = kind ?? 'unknown';
   }
+  setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
+  hurtFlash.flash();
+}
+
+/**
+ * **蜘蛛咬傷**（B9 Task 8）：走既有的受傷路徑——0.5 秒受擊無敵幀、`hurtFlash`
+ * 紅色回饋、`EXHAUST_HURT` 疲勞 → 與殭屍近戰／骷髏箭完全一致。只有**爆炸傷害**
+ * （Task 9）才刻意繞過無敵幀。
+ */
+function applySpiderDamage(ev: SpiderEvent): void {
+  if (!vitals) return; // 創造模式（或已死）→ 不扣血
+  const nowSec = performance.now() / 1000;
+  if (!canBeHurt(invuln, nowSec)) return; // 0.5 秒無敵幀內是完整的 no-op
+  invuln = markHurt(invuln, nowSec);
+  deathCause = 'spider';
   setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
   hurtFlash.flash();
 }
@@ -1475,6 +1519,26 @@ function spawnPassiveDeathDrops(dead: readonly PassiveMob[]): boolean {
   let spilled = false;
   const table = dead.map((m) => ({ kind: m.kind, pos: m.pos }));
   for (const d of dropsForDeaths(table)) {
+    drops = spawnDrop(drops, d.item, d.count, d.pos);
+    spilled = true;
+  }
+  return spilled;
+}
+
+/**
+ * **B9 苦力怕／蜘蛛死亡 → 掉落**（Task 8）：走同一份 `rollMobDrops` 表。
+ * `killedByPlayer` 由呼叫端決定：玩家近戰擊殺傳 `true`（蜘蛛眼才會掉）；
+ * 被爆炸炸死（Task 9）傳 `false`（原版：蜘蛛眼只在玩家擊殺時掉）。
+ * 創造模式不掉落（與殭屍／骷髏／被動生物同一條規則）。
+ */
+function spawnB9DeathDrops(
+  dead: readonly { kind: 'creeper' | 'spider'; pos: { x: number; y: number; z: number } }[],
+  killedByPlayer: boolean,
+): boolean {
+  if (currentMode !== 'survival') return false;
+  let spilled = false;
+  // 掉落表仍只有 `dropsForDeaths` 這個入口（main.ts 不直接呼叫 rollMobDrops）。
+  for (const d of dropsForDeaths(dead, undefined, { killedByPlayer })) {
     drops = spawnDrop(drops, d.item, d.count, d.pos);
     spilled = true;
   }
@@ -2394,6 +2458,9 @@ function quitToTitle(): void {
  * `resetWorld` → 這裡）則是真的清空（沒有存檔可還原）。 */
 function resetSessionEntities(): void {
   mobs = [];
+  // B9：苦力怕／蜘蛛不跨存檔（與既有敵對生物一致）→ 新遊戲／讀檔一律清空。
+  creepers = [];
+  spiders = [];
   passiveMobs = []; // B4 Task 10：清空後由 continueGame／applyCloudData 從存檔還原
   drops = [];
   arrows = [];
@@ -3220,6 +3287,37 @@ gs.renderer.setAnimationLoop(() => {
     // 生物只會被其中一支看到（這一支先跑、近戰支後跑）→ 不會掉兩次。
     if (spilled) bus.emit('drops-changed', {});
 
+    // ---- B9：苦力怕與蜘蛛（Task 8 只做嘶嘶與咬擊；爆炸在 Task 9 接）----
+    // `hasLineOfSight` 的既有簽名是 (from, to, isSolidAt)，本批的 ctx 需要
+    // (from, to) → 這裡包一層（視線規則本體仍在 mobs.ts）。
+    const creeperStep = stepCreepers(creepers, {
+      playerPos: player.position,
+      isSolidAt,
+      hasLineOfSight: (from, to) => hasLineOfSight(from, to, isSolidAt),
+      dt,
+    });
+    creepers = creeperStep.creepers;
+    // `creeperStep.events`（explode）刻意先不處理：Task 9 的 runExplosion 才接
+    // 上爆炸（讓 Task 8／9 各自可獨立審查）。Task 8 的苦力怕只會嘶嘶、不會爆。
+    const spiderStep = stepSpiders(spiders, {
+      playerPos: player.position,
+      isSolidAt,
+      hasLineOfSight: (from, to) => hasLineOfSight(from, to, isSolidAt),
+      lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
+      dt,
+    });
+    spiders = spiderStep.spiders;
+    for (const ev of spiderStep.events) applySpiderDamage(ev);
+    // 死亡過濾＋despawn：與殭屍／骷髏同一條規則（B4：DESPAWN_DISTANCE = 128）。
+    // **不在此灑掉落**——掉落只走玩家近戰擊殺（避免與 Task 9 的爆炸掉落重複）；
+    // 被距離過濾掉的不是死亡 → 不爆炸也不掉落。
+    creepers = creepers.filter(
+      (c) => !isCreeperDead(c) && xzDistance(c.pos, player.position) <= DESPAWN_DISTANCE,
+    );
+    spiders = spiders.filter(
+      (s) => !isSpiderDead(s) && xzDistance(s.pos, player.position) <= DESPAWN_DISTANCE,
+    );
+
     // ---- 被動生物（B4 Task 6）：AI 步進 → 死亡移除（**不 despawn**）----
     // 與敵對生物同一套物理慣例（重力 32、跳上 1 格台階），但規則不同：漫遊／panic／
     // 水中漂浮、**不主動攻擊**、**不會自然消失**（沒有距離過濾）。
@@ -3415,9 +3513,11 @@ gs.renderer.setAnimationLoop(() => {
       let attacking = false;
       if (input.state.dig) {
         if (attackCd > 0) {
-          // 查詢而已（不造成傷害）：**先敵對、再被動** → 兩者都擋住挖掘。
+          // 查詢而已（不造成傷害）：**先敵對、再被動** → 全部擋住挖掘。
           attacking =
             hitMobId(mobs, rayOrigin, dir, meleeReach) !== null ||
+            hitCreeperId(creepers, rayOrigin, dir, meleeReach) !== null ||
+            hitSpiderId(spiders, rayOrigin, dir, meleeReach) !== null ||
             hitPassiveMobId(passiveMobs, rayOrigin, dir, meleeReach) !== null;
         } else {
           const heldStack = slots[selected];
@@ -3466,35 +3566,77 @@ gs.renderer.setAnimationLoop(() => {
               // 移走了 → 死亡移除支看不到牠）。
               if (spawnMobDeathDrops(dead)) bus.emit('drops-changed', {});
             }
-          } else {
-            // ---- 被動生物（B4 Task 6）：沒打到敵對 → 試試被動生物 ----
-            // **順序：先敵對、再被動**（同一個瞄準只能打中一隻 → 敵對優先）。
-            const patk = attackPassiveMob(
-              passiveMobs,
-              rayOrigin,
-              dir,
-              meleeReach,
-              dmg,
-              dir, // 擊退沿著水平視線方向（attackPassiveMob 只看 XZ）
-            );
-            if (patk.hitId !== null) {
+            // ---- B9：苦力怕（沒打到殭屍／骷髏 → 試苦力怕）----
+            const catk = attackCreeper(creepers, rayOrigin, dir, meleeReach, dmg, dir);
+            if (catk.hitId !== null) {
               attacking = true;
-              passiveMobs = patk.mobs;
+              creepers = catk.creepers;
               attackCd = ATTACK_COOLDOWN_SEC;
-              // B4 Task 8：受擊閃白 0.1 秒（與敵對生物同一個做法）。
-              passiveRenderer.flashPassiveMob(patk.hitId);
               attackedThisFrame = true;
               if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
-              // B7 Task 5：命中**被動**生物同樣是一次攻擊命中（wiki 的 −2／本作
-              // −1 規則涵蓋「hostile, neutral or passive」）→ 與敵對分支同一條扣損。
               damageHeldTool(1);
               hud.setHotbar(slots, selected);
-              // 死亡 → 掉落（生存模式）→ 移除屍體。
-              // **被動生物不進 `mobs-changed`**（那是敵對生物的計數事件）。
-              const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
-              if (deadPassive.length > 0) {
-                passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
-                if (spawnPassiveDeathDrops(deadPassive)) bus.emit('drops-changed', {});
+              // 死亡 → 掉落（生存模式）→ 移除實體。擊殺掉落用 `killedByPlayer: true`
+              // （蜘蛛眼只有玩家擊殺才掉；爆炸死因在 Task 9 傳 false）。
+              const deadCreepers = creepers.filter((c) => isCreeperDead(c));
+              creepers = creepers.filter((c) => !isCreeperDead(c));
+              if (deadCreepers.length > 0) {
+                // HUD 的生物計數維持既有語意（只算殭屍＋骷髏）→ count 用 mobs.length。
+                bus.emit('mobs-changed', { count: mobs.length });
+                applyAdvancement({ type: 'mob-killed', mode: currentMode });
+                const table = deadCreepers.map((c) => ({ kind: 'creeper' as const, pos: c.pos }));
+                if (spawnB9DeathDrops(table, true)) bus.emit('drops-changed', {});
+              }
+            } else {
+              // ---- B9：蜘蛛 ----
+              const satk = attackSpider(spiders, rayOrigin, dir, meleeReach, dmg, dir);
+              if (satk.hitId !== null) {
+                attacking = true;
+                spiders = satk.spiders;
+                attackCd = ATTACK_COOLDOWN_SEC;
+                attackedThisFrame = true;
+                if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+                damageHeldTool(1);
+                hud.setHotbar(slots, selected);
+                const deadSpiders = spiders.filter((s) => isSpiderDead(s));
+                spiders = spiders.filter((s) => !isSpiderDead(s));
+                if (deadSpiders.length > 0) {
+                  bus.emit('mobs-changed', { count: mobs.length });
+                  applyAdvancement({ type: 'mob-killed', mode: currentMode });
+                  const table = deadSpiders.map((s) => ({ kind: 'spider' as const, pos: s.pos }));
+                  if (spawnB9DeathDrops(table, true)) bus.emit('drops-changed', {});
+                }
+              } else {
+                // ---- 被動生物（B4 Task 6）：沒打到敵對 → 試試被動生物 ----
+                // **順序：先敵對、再被動**（同一個瞄準只能打中一隻 → 敵對優先）。
+                const patk = attackPassiveMob(
+                  passiveMobs,
+                  rayOrigin,
+                  dir,
+                  meleeReach,
+                  dmg,
+                  dir, // 擊退沿著水平視線方向（attackPassiveMob 只看 XZ）
+                );
+                if (patk.hitId !== null) {
+                  attacking = true;
+                  passiveMobs = patk.mobs;
+                  attackCd = ATTACK_COOLDOWN_SEC;
+                  // B4 Task 8：受擊閃白 0.1 秒（與敵對生物同一個做法）。
+                  passiveRenderer.flashPassiveMob(patk.hitId);
+                  attackedThisFrame = true;
+                  if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+                  // B7 Task 5：命中**被動**生物同樣是一次攻擊命中（wiki 的 −2／本作
+                  // −1 規則涵蓋「hostile, neutral or passive」）→ 與敵對分支同一條扣損。
+                  damageHeldTool(1);
+                  hud.setHotbar(slots, selected);
+                  // 死亡 → 掉落（生存模式）→ 移除屍體。
+                  // **被動生物不進 `mobs-changed`**（那是敵對生物的計數事件）。
+                  const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
+                  if (deadPassive.length > 0) {
+                    passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
+                    if (spawnPassiveDeathDrops(deadPassive)) bus.emit('drops-changed', {});
+                  }
+                }
               }
             }
           }

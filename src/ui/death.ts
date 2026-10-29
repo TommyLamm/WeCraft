@@ -15,6 +15,8 @@ export type DamageSource =
   | 'fall'
   | 'zombie'
   | 'skeleton'
+  | 'creeper'
+  | 'spider'
   | 'starve'
   | 'cactus'
   | 'unknown';
@@ -28,6 +30,10 @@ export function deathMessageFor(source: DamageSource | null): string {
       return '你被殭屍殺死了';
     case 'skeleton':
       return '你被骷髏射死了';
+    case 'creeper':
+      return '你被苦力怕炸死了'; // B9：苦力怕爆炸（Task 9 的 runExplosion 記這個死因）
+    case 'spider':
+      return '你被蜘蛛殺死了'; // B9：蜘蛛咬擊（Task 8 的 applySpiderDamage）
     case 'starve':
       return '你餓死了';
     case 'cactus':

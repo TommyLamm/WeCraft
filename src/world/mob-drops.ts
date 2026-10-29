@@ -129,14 +129,20 @@ export interface DeadMob {
  * 呼叫端只管「誰死了」，掉落表在哪裡只有一份。
  *
  * 純函式：rng 可注入（測試可重現）；輸入的生物不會被修改。
+ *
+ * **B9 Task 8**：新增第三個可選參數 `opts.killedByPlayer`（預設 `true`）。它不是
+ * 「死因」——掉落表仍與死因無關；它只表達原版的一條**擊殺條件**：蜘蛛眼只有在
+ * 玩家（或寵物狼）擊殺時才掉。爆炸等非玩家死因的呼叫端要顯式傳 `false`。
+ * 既有呼叫端（`dropsForDeaths(dead)`／`(dead, rng)`）行為完全不變。
  */
 export function dropsForDeaths(
   dead: readonly DeadMob[],
   rng: () => number = Math.random,
+  opts: { killedByPlayer?: boolean } = {},
 ): MobDeathDrop[] {
   const out: MobDeathDrop[] = [];
   for (const m of dead) {
-    for (const drop of rollMobDrops(m.kind, rng)) {
+    for (const drop of rollMobDrops(m.kind, rng, opts)) {
       out.push({
         item: drop.item,
         count: drop.count,

@@ -1082,9 +1082,10 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
 // 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
 // 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
 describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
-  it('all three damageHeldTool(1) call sites stay wired (dig-complete / hostile hit / passive hit)', () => {
-    // 實測：敵對生物命中（main.ts:3145）、被動生物命中（:3186）、挖完方塊
-    // （:3239）各一處；`function damageHeldTool(` 的定義不是呼叫點。
-    expect(countOf('damageHeldTool(1)')).toBe(3);
+  it('all five damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive)', () => {
+    // 實測：敵對生物命中、苦力怕命中（B9）、蜘蛛命中（B9）、被動生物命中、
+    // 挖完方塊各一處；`function damageHeldTool(` 的定義不是呼叫點。
+    // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 依實測同步為 5。
+    expect(countOf('damageHeldTool(1)')).toBe(5);
   });
 });

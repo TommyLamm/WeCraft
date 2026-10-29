@@ -86,6 +86,9 @@ describe('death screen', () => {
     expect(deathMessageFor('starve')).toBe('你餓死了');
     // B3 Task 6: the cactus hazard records its own cause (union + 文字對照表)
     expect(deathMessageFor('cactus')).toBe('你被仙人掌刺死了');
+    // B9 Task 8: 苦力怕（爆炸）與蜘蛛（咬擊）各自一句
+    expect(deathMessageFor('creeper')).toBe('你被苦力怕炸死了');
+    expect(deathMessageFor('spider')).toBe('你被蜘蛛殺死了');
     expect(deathMessageFor('unknown')).toBe('你死了');
     expect(deathMessageFor(null)).toBe('');
   });

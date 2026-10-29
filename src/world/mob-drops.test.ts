@@ -173,4 +173,25 @@ describe('dropsForDeaths (生物死亡 → 掉落：死因無關)', () => {
   it('no dead mobs means no drops', () => {
     expect(dropsForDeaths([], () => 0.999)).toEqual([]);
   });
+
+  // ---- B9 Task 8：死因旗標（蜘蛛眼只在玩家擊殺時掉）----
+  it('a spider killed by an explosion drops string but never a spider eye', () => {
+    const rng = () => 0.1; // string 0 顆、蜘蛛眼機率抽樣 0.1 < 1/3
+    const byPlayer = dropsForDeaths([{ kind: 'spider', pos: { x: 0, y: 6, z: 0 } }], rng, {
+      killedByPlayer: true,
+    });
+    expect(byPlayer.map((d) => d.item)).toEqual(['spider_eye']);
+    const byExplosion = dropsForDeaths([{ kind: 'spider', pos: { x: 0, y: 6, z: 0 } }], rng, {
+      killedByPlayer: false,
+    });
+    expect(byExplosion).toEqual([]);
+  });
+
+  it('a creeper drops gunpowder whatever the cause', () => {
+    expect(
+      dropsForDeaths([{ kind: 'creeper', pos: { x: 0, y: 6, z: 0 } }], () => 0.999, {
+        killedByPlayer: false,
+      }),
+    ).toEqual([{ item: 'gunpowder', count: 2, pos: { x: 0, y: 6.9, z: 0 } }]);
+  });
 });
