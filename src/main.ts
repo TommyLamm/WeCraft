@@ -5,6 +5,8 @@ import { createCrackOverlay } from './render/crack';
 import { createParticleRenderer } from './render/particles';
 // B4 Task 8：被動生物（雞／豬／羊／牛）的方塊模型渲染（方塊身 ＋ 頭 ＋ 兩條腿）
 import { createPassiveMobRenderer } from './render/passive-mobs';
+// B9 Task 10：苦力怕與蜘蛛的方塊模型（引信閃白／蜘蛛八足）。
+import { createB9MobRenderer } from './render/b9-mobs';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
@@ -358,6 +360,8 @@ const dropRenderer = createDropRenderer(gs.scene, itemIcon);
 const mobRenderer = createMobRenderer(gs.scene);
 // B4 Task 8：被動生物渲染（方塊化的雞／豬／羊／牛；與敵對生物的模型分開）
 const passiveRenderer = createPassiveMobRenderer(gs.scene);
+// B9 Task 10：苦力怕與蜘蛛（獨立 renderer；模型骨架與人形／四足都不同）
+const b9Renderer = createB9MobRenderer(gs.scene);
 // Task 4: break/dig debris — billboard quads over the shared block texture array
 const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
@@ -3782,6 +3786,7 @@ gs.renderer.setAnimationLoop(() => {
               attackCd = ATTACK_COOLDOWN_SEC;
               attackedThisFrame = true;
               if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+              b9Renderer.flashCreeper(catk.hitId); // 0.1 秒受擊閃白
               damageHeldTool(1);
               hud.setHotbar(slots, selected);
               // 死亡 → 掉落（生存模式）→ 移除實體。擊殺掉落用 `killedByPlayer: true`
@@ -3804,6 +3809,7 @@ gs.renderer.setAnimationLoop(() => {
                 attackCd = ATTACK_COOLDOWN_SEC;
                 attackedThisFrame = true;
                 if (vitals) setVitals(exhaust(vitals, EXHAUST_ATTACK));
+                b9Renderer.flashSpider(satk.hitId); // 0.1 秒受擊閃白
                 damageHeldTool(1);
                 hud.setHotbar(slots, selected);
                 const deadSpiders = spiders.filter((s) => isSpiderDead(s));
@@ -4235,6 +4241,9 @@ gs.renderer.setAnimationLoop(() => {
   // B4 Task 8：被動生物（雞／豬／羊／牛）的方塊模型 —— 非 playing 時 dt = 0
   // → 走路擺動凍結（與敵對生物同一個處理）。
   passiveRenderer.syncPassiveMobs(passiveMobs, state === 'playing' ? dt : 0);
+  // B9 Task 10：苦力怕／蜘蛛（非 playing 時 dt = 0 → 走路與引信動畫凍結）。
+  b9Renderer.syncCreepers(creepers, state === 'playing' ? dt : 0);
+  b9Renderer.syncSpiders(spiders, state === 'playing' ? dt : 0);
   // Task 3: cracks belong to the dig loop only — the playing branch above
   // drives set(digTarget, dig.progress); every other state (title/paused/
   // inventory/crafting/dead) clears any quad left hanging on the frozen view.
