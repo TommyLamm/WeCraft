@@ -318,6 +318,36 @@ interface WecraftDebug {
     /** 白天日照下的燃燒剩餘秒數（> 0 = 正在燃燒）。 */
     burn: number;
   }>;
+  /** **B9**：苦力怕的逐隻狀態（id／座標／血量／狀態機／引信剩餘秒數）。
+   *
+   *  **用途**：B9 批末的真實瀏覽器驗收。苦力怕的追擊距離只有 16 格、生成距離
+   *  卻是 24–128 格 → **站著等不會被追上**；沒有這份座標，探針無法導航到牠身邊
+   *  驗「引信 → 爆炸 → 方塊被炸掉」。與 `mobStates()` 同一條理由與同一個形狀。
+   *
+   *  **純唯讀**：只把當下的 `creepers` 映射成新陣列（不修改任何狀態）。 */
+  creeperStates: () => Array<{
+    id: number;
+    x: number;
+    y: number;
+    z: number;
+    hp: number;
+    state: Creeper['state'];
+    fuse: number;
+  }>;
+  /** **B9**：蜘蛛的逐隻狀態（id／座標／血量／狀態機）——用途同 `creeperStates()`。 */
+  spiderStates: () => Array<{
+    id: number;
+    x: number;
+    y: number;
+    z: number;
+    hp: number;
+    state: Spider['state'];
+  }>;
+  /** 地面掉落物的**逐筆**（物品 id／數量）快照。
+   *
+   *  **用途**：B9 批末驗收要分辨「爆炸掉的是方塊」與「爆炸的苦力怕自己掉火藥」
+   *  ——只有數量分不出來（`drops()` 只給總數）。**純唯讀**（映射出新陣列）。 */
+  dropItems: () => Array<{ item: ItemId; count: number }>;
   /** 玩家的生命／飢餓／飽食度現況（創造模式 → `null`，沒有飢餓條）。
    *
    *  **用途**：B4 Task 12 的**批末真實瀏覽器驗收**（repo 外的 Playwright 探針）
@@ -3121,6 +3151,8 @@ window.__wecraft = {
       s ? { item: s.item, count: s.count, ...(s.dur !== undefined ? { dur: s.dur } : {}) } : null,
     ),
   drops: () => drops.length,
+  // B9：掉落物的逐筆（物品 id／數量）→ 供驗收探針分辨「方塊掉落」與「火藥掉落」。
+  dropItems: () => drops.map((d) => ({ item: d.item, count: d.count })),
   modified: () => world.modified.size,
   viewMode: () => viewMode,
   mobs: () => mobs.length,
@@ -3148,6 +3180,27 @@ window.__wecraft = {
       z: m.pos.z,
       hp: m.hp,
       burn: m.burn,
+    })),
+  // B9：苦力怕／蜘蛛逐隻狀態 → 供 repo 外的批末探針導航到牠們身邊驗爆炸。
+  // **純唯讀**（只映射出新陣列，不修改任何遊戲狀態）。
+  creeperStates: () =>
+    creepers.map((c) => ({
+      id: c.id,
+      x: c.pos.x,
+      y: c.pos.y,
+      z: c.pos.z,
+      hp: c.hp,
+      state: c.state,
+      fuse: c.fuse,
+    })),
+  spiderStates: () =>
+    spiders.map((s) => ({
+      id: s.id,
+      x: s.pos.x,
+      y: s.pos.y,
+      z: s.pos.z,
+      hp: s.hp,
+      state: s.state,
     })),
   // 玩家的生命／飢餓／飽食度（創造模式 → null）→ 供驗收探針讀「進食後的飽食度」。
   // **純唯讀**（只複製出一份新物件）。
