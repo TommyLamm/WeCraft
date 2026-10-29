@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BLOCK,
+  blastResistanceOf,
   getBlockDef,
   isSolid,
   isTransparent,
@@ -497,5 +498,60 @@ describe('blocks', () => {
     // （撞號 = 箱子被渲染成火把，且「the torch tile is the last declared tile」
     // 這條相對斷言抓不到跨批撞號，所以要另外釘）。
     expect(T.TORCH).not.toBe(40);
+  });
+
+  // ---- B9 Task 2：爆炸抗性（原版值；數值越大越難被炸掉）----
+  // 出處：minecraft.wiki/Explosion「Blast resistance」段 ＋ wiki 的
+  // `Module:Blast resistance values`（2026-10-20 抓取）。**每一個方塊都要有
+  // 原版值、不得用 Infinity 佔位**——否則羊毛／冰／仙人掌／金鑽礦永遠炸不壞。
+
+  it('the blast resistance table matches the vanilla values', () => {
+    expect(blastResistanceOf(BLOCK.BEDROCK)).toBe(3600000);
+    expect(blastResistanceOf(BLOCK.WATER)).toBe(100);
+    expect(blastResistanceOf(BLOCK.STONE)).toBe(6);
+    expect(blastResistanceOf(BLOCK.COBBLE)).toBe(6);
+    expect(blastResistanceOf(BLOCK.COAL_ORE)).toBe(3);
+    expect(blastResistanceOf(BLOCK.IRON_ORE)).toBe(3);
+    expect(blastResistanceOf(BLOCK.PLANKS)).toBe(3);
+    expect(blastResistanceOf(BLOCK.LOG)).toBe(2);
+    expect(blastResistanceOf(BLOCK.CRAFTING_TABLE)).toBe(2.5);
+    expect(blastResistanceOf(BLOCK.FURNACE)).toBe(3.5);
+    expect(blastResistanceOf(BLOCK.GRASS)).toBe(0.6);
+    expect(blastResistanceOf(BLOCK.DIRT)).toBe(0.5);
+    expect(blastResistanceOf(BLOCK.SAND)).toBe(0.5);
+    expect(blastResistanceOf(BLOCK.GRAVEL)).toBe(0.6); // B5 的礫石
+    expect(blastResistanceOf(BLOCK.GLASS)).toBe(0.3);
+    expect(blastResistanceOf(BLOCK.LEAVES)).toBe(0.2);
+    expect(blastResistanceOf(BLOCK.SNOW)).toBe(0.2); // snow_block
+    // B3–B8 新增的方塊（原計畫漏了這一段 → 會讓 17 種方塊永遠炸不壞）
+    expect(blastResistanceOf(BLOCK.SPRUCE_LOG)).toBe(2);
+    expect(blastResistanceOf(BLOCK.BIRCH_LOG)).toBe(2);
+    expect(blastResistanceOf(BLOCK.SPRUCE_LEAVES)).toBe(0.2);
+    expect(blastResistanceOf(BLOCK.BIRCH_LEAVES)).toBe(0.2);
+    expect(blastResistanceOf(BLOCK.SPRUCE_PLANKS)).toBe(3);
+    expect(blastResistanceOf(BLOCK.BIRCH_PLANKS)).toBe(3);
+    expect(blastResistanceOf(BLOCK.DANDELION)).toBe(0);
+    expect(blastResistanceOf(BLOCK.POPPY)).toBe(0);
+    expect(blastResistanceOf(BLOCK.SHORT_GRASS)).toBe(0);
+    expect(blastResistanceOf(BLOCK.CACTUS)).toBe(0.4);
+    expect(blastResistanceOf(BLOCK.ICE)).toBe(0.5); // wiki：['ice'] = '0.5'
+    expect(blastResistanceOf(BLOCK.WOOL)).toBe(0.8);
+    expect(blastResistanceOf(BLOCK.GOLD_ORE)).toBe(3);
+    expect(blastResistanceOf(BLOCK.DIAMOND_ORE)).toBe(3);
+    expect(blastResistanceOf(BLOCK.TORCH)).toBe(0);
+    expect(blastResistanceOf(BLOCK.CHEST)).toBe(2.5);
+    expect(blastResistanceOf(BLOCK.AIR)).toBe(0); // 空氣不是目標，但 fallback 也要有值
+  });
+
+  it('every block declares a finite blast resistance', () => {
+    // 與「不得用 Infinity 佔位」是同一個約束的兩面：有 Infinity 就會紅。
+    for (const id of Object.values(BLOCK)) {
+      const def = getBlockDef(id);
+      expect(
+        Number.isFinite(def.blastResistance),
+        `block ${id} has a non-finite blast resistance`,
+      ).toBe(true);
+      expect(def.blastResistance).toBeGreaterThanOrEqual(0);
+    }
   });
 });

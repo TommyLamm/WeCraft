@@ -83,6 +83,11 @@ export interface BlockDef {
   /** 光照發射等級（B6 光照引擎）：0..15，未列＝0。引擎一律經
    *  `getBlockDef(id).emission ?? 0` 讀取（原版火把 = 14，Task 5 落地）。 */
   emission?: number;
+  /** 原版爆炸抗性（B9 Task 2；minecraft.wiki/Explosion「Blast resistance」表）：
+   *  數值越大越難被爆炸破壞。**每一位方塊都必須是有限值**——不得用 `Infinity`
+   *  佔位（否則羊毛／冰／仙人掌／金鑽礦會永遠炸不壞）；水 100、基岩 3,600,000
+   *  是原版值，靠「強度遠小於抗性」自然免疫，不是特例判斷。 */
+  blastResistance: number;
 }
 
 /** Atlas tile indices. **Exported** (B6 Task 5): `textures.ts` 用 `T.TORCH`
@@ -127,35 +132,35 @@ export const TILE_COUNT = T.CHEST + 1;
  *  `interact.ts`'s break-time formula. The derived seconds live only in
  *  `interact.ts` — hardness here is the raw vanilla number, not a duration. */
 const DEFS: Record<number, BlockDef> = {
-  0: { id: 0, name: 'air', hardness: 0, solid: false, transparent: true, shape: 'cube', top: 0, side: 0, bottom: 0, requiredTool: null, fastTool: null },
-  1: { id: 1, name: 'stone', hardness: 1.5, solid: true, transparent: false, shape: 'cube', top: T.STONE, side: T.STONE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
-  2: { id: 2, name: 'dirt', hardness: 0.5, solid: true, transparent: false, shape: 'cube', top: T.DIRT, side: T.DIRT, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
-  3: { id: 3, name: 'grass_block', hardness: 0.6, solid: true, transparent: false, shape: 'cube', top: T.GRASS_TOP, side: T.GRASS_SIDE, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
-  4: { id: 4, name: 'sand', hardness: 0.5, solid: true, transparent: false, shape: 'cube', top: T.SAND, side: T.SAND, bottom: T.SAND, requiredTool: null, fastTool: 'shovel' },
-  5: { id: 5, name: 'oak_log', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.LOG_TOP, side: T.LOG_SIDE, bottom: T.LOG_TOP, requiredTool: null, fastTool: 'axe' },
-  6: { id: 6, name: 'oak_leaves', hardness: 0.2, solid: true, transparent: true, shape: 'cube', top: T.LEAVES, side: T.LEAVES, bottom: T.LEAVES, requiredTool: null, fastTool: null },
-  7: { id: 7, name: 'oak_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.PLANKS, side: T.PLANKS, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
-  8: { id: 8, name: 'cobblestone', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.COBBLE, side: T.COBBLE, bottom: T.COBBLE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
-  9: { id: 9, name: 'water', hardness: Infinity, solid: false, transparent: true, shape: 'cube', top: T.WATER, side: T.WATER, bottom: T.WATER, requiredTool: null, fastTool: null },
-  10: { id: 10, name: 'bedrock', hardness: Infinity, solid: true, transparent: false, shape: 'cube', top: T.BEDROCK, side: T.BEDROCK, bottom: T.BEDROCK, requiredTool: null, fastTool: null },
-  11: { id: 11, name: 'snow_block', hardness: 0.2, solid: true, transparent: false, shape: 'cube', top: T.SNOW_TOP, side: T.SNOW_SIDE, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
-  12: { id: 12, name: 'glass', hardness: 0.3, solid: true, transparent: true, shape: 'cube', top: T.GLASS, side: T.GLASS, bottom: T.GLASS, requiredTool: null, fastTool: null },
-  13: { id: 13, name: 'coal_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.COAL, side: T.COAL, bottom: T.COAL, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
-  14: { id: 14, name: 'iron_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.IRON, side: T.IRON, bottom: T.IRON, requiredTool: { kind: 'pickaxe', level: 1 }, fastTool: 'pickaxe' },
-  15: { id: 15, name: 'crafting_table', hardness: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
-  16: { id: 16, name: 'furnace', hardness: 3.5, solid: true, transparent: false, shape: 'cube', top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
+  0: { id: 0, name: 'air', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cube', top: 0, side: 0, bottom: 0, requiredTool: null, fastTool: null },
+  1: { id: 1, name: 'stone', hardness: 1.5, blastResistance: 6, solid: true, transparent: false, shape: 'cube', top: T.STONE, side: T.STONE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
+  2: { id: 2, name: 'dirt', hardness: 0.5, blastResistance: 0.5, solid: true, transparent: false, shape: 'cube', top: T.DIRT, side: T.DIRT, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
+  3: { id: 3, name: 'grass_block', hardness: 0.6, blastResistance: 0.6, solid: true, transparent: false, shape: 'cube', top: T.GRASS_TOP, side: T.GRASS_SIDE, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
+  4: { id: 4, name: 'sand', hardness: 0.5, blastResistance: 0.5, solid: true, transparent: false, shape: 'cube', top: T.SAND, side: T.SAND, bottom: T.SAND, requiredTool: null, fastTool: 'shovel' },
+  5: { id: 5, name: 'oak_log', hardness: 2.0, blastResistance: 2, solid: true, transparent: false, shape: 'cube', top: T.LOG_TOP, side: T.LOG_SIDE, bottom: T.LOG_TOP, requiredTool: null, fastTool: 'axe' },
+  6: { id: 6, name: 'oak_leaves', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: true, shape: 'cube', top: T.LEAVES, side: T.LEAVES, bottom: T.LEAVES, requiredTool: null, fastTool: null },
+  7: { id: 7, name: 'oak_planks', hardness: 2.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.PLANKS, side: T.PLANKS, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
+  8: { id: 8, name: 'cobblestone', hardness: 2.0, blastResistance: 6, solid: true, transparent: false, shape: 'cube', top: T.COBBLE, side: T.COBBLE, bottom: T.COBBLE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
+  9: { id: 9, name: 'water', hardness: Infinity, blastResistance: 100, solid: false, transparent: true, shape: 'cube', top: T.WATER, side: T.WATER, bottom: T.WATER, requiredTool: null, fastTool: null },
+  10: { id: 10, name: 'bedrock', hardness: Infinity, blastResistance: 3600000, solid: true, transparent: false, shape: 'cube', top: T.BEDROCK, side: T.BEDROCK, bottom: T.BEDROCK, requiredTool: null, fastTool: null },
+  11: { id: 11, name: 'snow_block', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: false, shape: 'cube', top: T.SNOW_TOP, side: T.SNOW_SIDE, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
+  12: { id: 12, name: 'glass', hardness: 0.3, blastResistance: 0.3, solid: true, transparent: true, shape: 'cube', top: T.GLASS, side: T.GLASS, bottom: T.GLASS, requiredTool: null, fastTool: null },
+  13: { id: 13, name: 'coal_ore', hardness: 3.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.COAL, side: T.COAL, bottom: T.COAL, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
+  14: { id: 14, name: 'iron_ore', hardness: 3.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.IRON, side: T.IRON, bottom: T.IRON, requiredTool: { kind: 'pickaxe', level: 1 }, fastTool: 'pickaxe' },
+  15: { id: 15, name: 'crafting_table', hardness: 2.5, blastResistance: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CRAFTING_TOP, side: T.CRAFTING_SIDE, bottom: T.PLANKS, requiredTool: null, fastTool: 'axe' },
+  16: { id: 16, name: 'furnace', hardness: 3.5, blastResistance: 3.5, solid: true, transparent: false, shape: 'cube', top: T.FURNACE_TOP, side: T.FURNACE_SIDE, bottom: T.STONE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
   // B3 Task 3：雲杉／白樺。硬度沿用原版數值（與既有橡木一致）。
-  17: { id: 17, name: 'spruce_log', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_LOG_TOP, side: T.SPRUCE_LOG_SIDE, bottom: T.SPRUCE_LOG_TOP, requiredTool: null, fastTool: 'axe' },
-  18: { id: 18, name: 'spruce_leaves', hardness: 0.2, solid: true, transparent: true, shape: 'cube', top: T.SPRUCE_LEAVES, side: T.SPRUCE_LEAVES, bottom: T.SPRUCE_LEAVES, requiredTool: null, fastTool: null },
-  19: { id: 19, name: 'birch_log', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_LOG_TOP, side: T.BIRCH_LOG_SIDE, bottom: T.BIRCH_LOG_TOP, requiredTool: null, fastTool: 'axe' },
-  20: { id: 20, name: 'birch_leaves', hardness: 0.2, solid: true, transparent: true, shape: 'cube', top: T.BIRCH_LEAVES, side: T.BIRCH_LEAVES, bottom: T.BIRCH_LEAVES, requiredTool: null, fastTool: null },
+  17: { id: 17, name: 'spruce_log', hardness: 2.0, blastResistance: 2, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_LOG_TOP, side: T.SPRUCE_LOG_SIDE, bottom: T.SPRUCE_LOG_TOP, requiredTool: null, fastTool: 'axe' },
+  18: { id: 18, name: 'spruce_leaves', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: true, shape: 'cube', top: T.SPRUCE_LEAVES, side: T.SPRUCE_LEAVES, bottom: T.SPRUCE_LEAVES, requiredTool: null, fastTool: null },
+  19: { id: 19, name: 'birch_log', hardness: 2.0, blastResistance: 2, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_LOG_TOP, side: T.BIRCH_LOG_SIDE, bottom: T.BIRCH_LOG_TOP, requiredTool: null, fastTool: 'axe' },
+  20: { id: 20, name: 'birch_leaves', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: true, shape: 'cube', top: T.BIRCH_LEAVES, side: T.BIRCH_LEAVES, bottom: T.BIRCH_LEAVES, requiredTool: null, fastTool: null },
   // B3 Task 4：花／草是 cross 型（不碰撞、不遮擋、硬度 0 → 徒手瞬破）；
   // 仙人掌與冰是滿格立方體（硬度 0.4／0.5 為原版數值）。
   // 冰的 `transparent: true` 副作用（與玻璃同一級）寫在下方 **ICE 條目**旁邊。
-  21: { id: 21, name: 'dandelion', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
-  22: { id: 22, name: 'poppy', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
-  23: { id: 23, name: 'short_grass', hardness: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },
-  24: { id: 24, name: 'cactus', hardness: 0.4, solid: true, transparent: false, shape: 'cube', top: T.CACTUS_TOP, side: T.CACTUS_SIDE, bottom: T.CACTUS_TOP, requiredTool: null, fastTool: null },
+  21: { id: 21, name: 'dandelion', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.DANDELION, side: T.DANDELION, bottom: T.DANDELION, requiredTool: null, fastTool: null },
+  22: { id: 22, name: 'poppy', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.POPPY, side: T.POPPY, bottom: T.POPPY, requiredTool: null, fastTool: null },
+  23: { id: 23, name: 'short_grass', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.SHORT_GRASS, side: T.SHORT_GRASS, bottom: T.SHORT_GRASS, requiredTool: null, fastTool: null },
+  24: { id: 24, name: 'cactus', hardness: 0.4, blastResistance: 0.4, solid: true, transparent: false, shape: 'cube', top: T.CACTUS_TOP, side: T.CACTUS_SIDE, bottom: T.CACTUS_TOP, requiredTool: null, fastTool: null },
   // 冰（B3 Task 4）的 `transparent: true` 副作用（與玻璃同一級）：冰走**不透明
   // pass**，材質沒有 `transparent`／`opacity` → **看不穿冰面**（冰面是不透明的淡藍
   // 白），而且冰**不遮擋 AO**（鄰面不會因冰而變暗）。冰面**會**被相鄰的**不透明**
@@ -171,35 +176,41 @@ const DEFS: Record<number, BlockDef> = {
   // → 比較可能呈現「水色疊加」而不是閃爍，但**水下視角的外觀尚未驗收**
   // → 列入批次末瀏覽器驗收的待驗項；要根治需要獨立的透明 pass（渲染層改動，
   // 不在本批範圍）。
-  25: { id: 25, name: 'ice', hardness: 0.5, solid: true, transparent: true, shape: 'cube', top: T.ICE, side: T.ICE, bottom: T.ICE, requiredTool: null, fastTool: 'pickaxe' },
+  25: { id: 25, name: 'ice', hardness: 0.5, blastResistance: 0.5, solid: true, transparent: true, shape: 'cube', top: T.ICE, side: T.ICE, bottom: T.ICE, requiredTool: null, fastTool: 'pickaxe' },
   // B4 Task 1：羊毛（硬度 0.8 = 原版羊毛硬度；徒手可挖 → 不需要工具）。
   // 羊毛**不進世界生成**（原版羊毛也不自然生成，只來自羊與剪毛）。
-  26: { id: 26, name: 'wool', hardness: 0.8, solid: true, transparent: false, shape: 'cube', top: T.WOOL, side: T.WOOL, bottom: T.WOOL, requiredTool: null, fastTool: null },
+  26: { id: 26, name: 'wool', hardness: 0.8, blastResistance: 0.8, solid: true, transparent: false, shape: 'cube', top: T.WOOL, side: T.WOOL, bottom: T.WOOL, requiredTool: null, fastTool: null },
   // B5 Task 1：礫石／金礦／鑽石礦／雲杉板材／白樺板材。
   // 硬度與工具的採掘門檻／加速都用原版數值（Java 1.20+）：
   //  - 礫石 0.6、徒手可挖，鏟加速；
   //  - 金礦／鑽石礦 3.0，**鐵鎬以上（level 2）才收穫**（石鎬挖得到但不會掉東西），鎬加速；
   //  - 兩種板材 2.0、徒手可挖，斧加速（與橡木板材同一級）。
-  27: { id: 27, name: 'gravel', hardness: 0.6, solid: true, transparent: false, shape: 'cube', top: T.GRAVEL, side: T.GRAVEL, bottom: T.GRAVEL, requiredTool: null, fastTool: 'shovel' },
-  28: { id: 28, name: 'gold_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.GOLD_ORE, side: T.GOLD_ORE, bottom: T.GOLD_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
-  29: { id: 29, name: 'diamond_ore', hardness: 3.0, solid: true, transparent: false, shape: 'cube', top: T.DIAMOND_ORE, side: T.DIAMOND_ORE, bottom: T.DIAMOND_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
-  30: { id: 30, name: 'spruce_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_PLANKS, side: T.SPRUCE_PLANKS, bottom: T.SPRUCE_PLANKS, requiredTool: null, fastTool: 'axe' },
-  31: { id: 31, name: 'birch_planks', hardness: 2.0, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_PLANKS, side: T.BIRCH_PLANKS, bottom: T.BIRCH_PLANKS, requiredTool: null, fastTool: 'axe' },
+  27: { id: 27, name: 'gravel', hardness: 0.6, blastResistance: 0.6, solid: true, transparent: false, shape: 'cube', top: T.GRAVEL, side: T.GRAVEL, bottom: T.GRAVEL, requiredTool: null, fastTool: 'shovel' },
+  28: { id: 28, name: 'gold_ore', hardness: 3.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.GOLD_ORE, side: T.GOLD_ORE, bottom: T.GOLD_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
+  29: { id: 29, name: 'diamond_ore', hardness: 3.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.DIAMOND_ORE, side: T.DIAMOND_ORE, bottom: T.DIAMOND_ORE, requiredTool: { kind: 'pickaxe', level: 2 }, fastTool: 'pickaxe' },
+  30: { id: 30, name: 'spruce_planks', hardness: 2.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.SPRUCE_PLANKS, side: T.SPRUCE_PLANKS, bottom: T.SPRUCE_PLANKS, requiredTool: null, fastTool: 'axe' },
+  31: { id: 31, name: 'birch_planks', hardness: 2.0, blastResistance: 3, solid: true, transparent: false, shape: 'cube', top: T.BIRCH_PLANKS, side: T.BIRCH_PLANKS, bottom: T.BIRCH_PLANKS, requiredTool: null, fastTool: 'axe' },
   // B6 Task 5：火把。原版數值（minecraft.wiki/Torch，2026-10-20 抓 raw 全文）：
   // 「Torches are non-solid blocks that emit light.」＋infobox `Hardness: 0`、
   // `Luminous: Yes (14)`、`Transparent: Yes` → 硬度 0（任何東西瞬破）、非實心
   // （不碰撞）、透明（不遮光、不擋鄰面）、emission 14（光照引擎的播種來源）。
   // `shape: 'torch'`＝小型無碰撞模型（mesher pass 屬 Task 6；在此之前走 cube
   // 路徑以整張 tile 暫渲染）。三個面共用火把 tile（T.TORCH = 39）。
-  32: { id: 32, name: 'torch', hardness: 0, solid: false, transparent: true, shape: 'torch', top: T.TORCH, side: T.TORCH, bottom: T.TORCH, requiredTool: null, fastTool: null, emission: 14 },
+  32: { id: 32, name: 'torch', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'torch', top: T.TORCH, side: T.TORCH, bottom: T.TORCH, requiredTool: null, fastTool: null, emission: 14 },
   // B8 Task 2：箱子。原版硬度 2.5、徒手可挖（`requiredTool: null`）、斧頭加速
   // （wiki：Tool: Axe Required，但任何工具都能挖；箱子永遠掉自身）。
   // 六面共用同一張 tile（原版正面的鎖扣細節本批簡化）。
-  33: { id: 33, name: 'chest', hardness: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CHEST, side: T.CHEST, bottom: T.CHEST, requiredTool: null, fastTool: 'axe' },
+  33: { id: 33, name: 'chest', hardness: 2.5, blastResistance: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CHEST, side: T.CHEST, bottom: T.CHEST, requiredTool: null, fastTool: 'axe' },
 };
 
 export function getBlockDef(id: number): BlockDef {
   return DEFS[id] ?? DEFS[0];
+}
+
+/** 方塊的爆炸抗性（B9 Task 2）。未知 id → 0（可被炸掉），與 `getBlockDef`
+ *  的 fallback（空氣）一致。 */
+export function blastResistanceOf(blockId: number): number {
+  return getBlockDef(blockId).blastResistance;
 }
 
 export const isSolid = (id: number): boolean => getBlockDef(id).solid;
