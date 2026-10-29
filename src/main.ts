@@ -31,7 +31,7 @@ import { titleEntry, titleTriState } from './core/boot-entry';
 import { createInventoryModel, type GameMode } from './core/inventory';
 import { createModeStash, normalizeModeStash, saveModeState, loadModeSlots } from './core/mode-stash';
 import { createBus, type GameEvents } from './core/bus';
-import { createPlayer, stepPlayer, EYE_HEIGHT, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, type MoveInput, type PlayerState } from './player/physics';
+import { createPlayer, stepPlayer, applyKnockback, EYE_HEIGHT, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, type MoveInput, type PlayerState } from './player/physics';
 import { createInput } from './player/input';
 // B2.1 疾跑狀態機：規則本體（取消條件／飢餓門檻／鎖存）在 player/sprint.ts，
 // main 只餵每幀上下文並取用 `sprintState.active`。
@@ -121,6 +121,8 @@ import {
   spawnArrow,
   isDead,
   hasLineOfSight,
+  damageMob,
+  EYE_OFFSET,
   xzDistance,
   SPAWN_INTERVAL_SEC,
   DESPAWN_DISTANCE,
@@ -131,6 +133,15 @@ import {
 } from './world/mobs';
 // B4 Task 5：生怪光照判準（判準集中在 spawn-rules；B6 起餵真的 per-block 光照）。
 import { isDaylight } from './world/spawn-rules';
+// B9 Task 9：爆炸的純邏輯（破壞判定／傷害／擊退公式）＋執行層的入口。
+import {
+  CREEPER_EXPLOSION_POWER,
+  EXPLOSION_KNOCKBACK_MAX_Y,
+  explodeAt,
+  explosionDamage,
+  explosionExposure,
+  explosionKnockback,
+} from './world/explosion';
 // B9 Task 7：敵對生怪統一到 b9-spawn（四種生物共用權重表與光照閘門）。
 import { trySpawnHostile } from './world/b9-spawn';
 // B9 Task 4／6：苦力怕與蜘蛛（純邏輯層；渲染在 render/b9-mobs.ts）。
@@ -139,6 +150,8 @@ import {
   isCreeperDead,
   attackCreeper,
   hitCreeperId,
+  damageCreeper,
+  CREEPER_HEIGHT,
   type Creeper,
 } from './world/creeper';
 import {
@@ -146,6 +159,8 @@ import {
   isSpiderDead,
   attackSpider,
   hitSpiderId,
+  damageSpider,
+  SPIDER_HEIGHT,
   type Spider,
   type SpiderEvent,
 } from './world/spider';
@@ -158,6 +173,7 @@ import {
   hitPassiveMobId,
   attackPassiveMob,
   trySpawnPassiveGroup,
+  damagePassiveMob,
   PASSIVE_SPAWN_INTERVAL_SEC,
   type PassiveMob,
   type PassiveKind,
@@ -1543,6 +1559,193 @@ function spawnB9DeathDrops(
     spilled = true;
   }
   return spilled;
+}
+
+/**
+ * **爆炸執行**（B9 Task 9）：`explodeAt` 算出「壞哪些方塊／掉什麼」之後，這裡把
+ * 結果套到世界、玩家與生物上。純邏輯全在 `world/explosion.ts`（可單元測試），
+ * 這個函式是**未測的組裝根**（以批末的真瀏覽器驗收把關）。
+ *
+ * 規則：
+ * - **中心＝苦力怕的腳底位置**（原版 TNT 的中心在實體上方 0.06125 格；差異 < 1 格）。
+ * - **玩家傷害繞過 0.5 秒受擊無敵幀**：原版爆炸沒有無敵幀，且這是單次大傷害；
+ *   紅色回饋與疲勞照舊。擊退方向取「中心 → 眼睛」、垂直分量壓到
+ *   `EXPLOSION_KNOCKBACK_MAX_Y`。
+ * - **生物傷害**：殭屍／骷髏、苦力怕、蜘蛛、被動生物都用同一條公式；距離量到
+ *   **腳**、暴露度取樣到**眼睛**；擊退只有水平分量（生物的 `kbVel` 沒有 y）。
+ * - **被炸死的生物不掉「玩家擊殺」限定物品**：掉落走 `dropsForDeaths` 並傳
+ *   `killedByPlayer: false`（蜘蛛眼只在玩家擊殺時掉）。
+ * - **引爆的苦力怕本身不掉落**：牠是被「移除」而不是「死亡」（原版 `discard()`），
+ *   呼叫端在跑 `runExplosion` 前已把牠從清單移除。
+ */
+function runExplosion(at: { x: number; y: number; z: number }): void {
+  const power = CREEPER_EXPLOSION_POWER;
+  const solid = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
+  const result = explodeAt({
+    power,
+    center: at,
+    blockIdAt: (x, y, z) => world.getBlock(x, y, z),
+    isSolidAt: solid,
+  });
+
+  // ---- 破壞方塊（走 world.setBlock → modified overlay 保留戰痕）＋粒子 ----
+  for (const b of result.destroyed) {
+    world.setBlock(b.x, b.y, b.z, BLOCK.AIR);
+    particles = spawnBreakBurst(particles, b.blockId, {
+      x: b.x + 0.5,
+      y: b.y + 0.5,
+      z: b.z + 0.5,
+    });
+  }
+
+  // ---- 方塊掉落（1/power 機率已在 explodeAt 擲完）----
+  if (result.drops.length > 0) {
+    for (const d of result.drops) drops = spawnDrop(drops, d.item, d.count, d.at);
+    bus.emit('drops-changed', {});
+  }
+
+  // ---- 玩家：傷害＋擊退（繞過無敵幀；死亡原因＝苦力怕）----
+  const playerEye = {
+    x: player.position.x,
+    y: player.position.y + EYE_HEIGHT,
+    z: player.position.z,
+  };
+  const playerDist = Math.hypot(
+    player.position.x - at.x,
+    player.position.y - at.y, // 量到腳
+    player.position.z - at.z,
+  );
+  const playerExposure = explosionExposure(hasLineOfSight(at, playerEye, solid));
+  const playerDmg = explosionDamage(power, playerDist, playerExposure);
+  if (playerDmg > 0 && vitals) {
+    deathCause = 'creeper';
+    setVitals(exhaust(damage(vitals, playerDmg), EXHAUST_HURT));
+    hurtFlash.flash();
+    const mag = explosionKnockback(power, playerDist, playerExposure);
+    const dxe = playerEye.x - at.x;
+    const dye = playerEye.y - at.y;
+    const dze = playerEye.z - at.z;
+    const eyeLen = Math.hypot(dxe, dye, dze) || 1;
+    applyKnockback(player, {
+      x: (dxe / eyeLen) * mag,
+      y: Math.max(0, dye / eyeLen) * Math.min(mag, EXPLOSION_KNOCKBACK_MAX_Y),
+      z: (dze / eyeLen) * mag,
+    });
+  }
+
+  // ---- 生物：傷害＋水平擊退；被炸死的走 killedByPlayer: false ----
+  const dmgAt = (
+    pos: { x: number; y: number; z: number },
+    eyeHeight: number,
+  ): number => {
+    const dist = Math.hypot(pos.x - at.x, pos.y - at.y, pos.z - at.z);
+    const exposure = explosionExposure(
+      hasLineOfSight(at, { x: pos.x, y: pos.y + eyeHeight, z: pos.z }, solid),
+    );
+    return explosionDamage(power, dist, exposure);
+  };
+  const knockDir = (pos: { x: number; z: number }): { x: number; z: number } => ({
+    x: pos.x - at.x,
+    z: pos.z - at.z,
+  });
+  const spill = (list: ReturnType<typeof dropsForDeaths>): boolean => {
+    for (const d of list) drops = spawnDrop(drops, d.item, d.count, d.pos);
+    return list.length > 0;
+  };
+  let hostileDied = false;
+  let spilled = false;
+
+  // 殭屍／骷髏（被炸死 → 既有掉落表；爆炸不是玩家擊殺）
+  const deadMobs: Mob[] = [];
+  const nextMobs: Mob[] = [];
+  for (const m of mobs) {
+    const dmg = dmgAt(m.pos, EYE_OFFSET);
+    const hurt = dmg > 0 ? damageMob(m, dmg, knockDir(m.pos)) : m;
+    if (isDead(hurt)) deadMobs.push(hurt);
+    else nextMobs.push(hurt);
+  }
+  mobs = nextMobs;
+  if (deadMobs.length > 0) {
+    hostileDied = true;
+    spilled =
+      spill(
+        dropsForDeaths(
+          deadMobs.map((m) => ({ kind: m.kind, pos: m.pos })),
+          undefined,
+          { killedByPlayer: false },
+        ),
+      ) || spilled;
+  }
+
+  // 苦力怕（眼睛取身體中段）。**自己引爆的那一隻**在呼叫端已被移除 → 不掉落；
+  // 被別人炸死的苦力怕照常掉火藥。
+  const deadCreepers: Creeper[] = [];
+  const nextCreepers: Creeper[] = [];
+  for (const c of creepers) {
+    const dmg = dmgAt(c.pos, CREEPER_HEIGHT * 0.6);
+    const hurt = dmg > 0 ? damageCreeper(c, dmg, knockDir(c.pos)) : c;
+    if (isCreeperDead(hurt)) deadCreepers.push(hurt);
+    else nextCreepers.push(hurt);
+  }
+  creepers = nextCreepers;
+  if (deadCreepers.length > 0) {
+    hostileDied = true;
+    spilled =
+      spill(
+        dropsForDeaths(
+          deadCreepers.map((c) => ({ kind: 'creeper' as const, pos: c.pos })),
+          undefined,
+          { killedByPlayer: false },
+        ),
+      ) || spilled;
+  }
+
+  // 蜘蛛（蜘蛛眼只在玩家擊殺時掉 → 這裡傳 false）
+  const deadSpiders: Spider[] = [];
+  const nextSpiders: Spider[] = [];
+  for (const s of spiders) {
+    const dmg = dmgAt(s.pos, SPIDER_HEIGHT * 0.5);
+    const hurt = dmg > 0 ? damageSpider(s, dmg, knockDir(s.pos)) : s;
+    if (isSpiderDead(hurt)) deadSpiders.push(hurt);
+    else nextSpiders.push(hurt);
+  }
+  spiders = nextSpiders;
+  if (deadSpiders.length > 0) {
+    hostileDied = true;
+    spilled =
+      spill(
+        dropsForDeaths(
+          deadSpiders.map((s) => ({ kind: 'spider' as const, pos: s.pos })),
+          undefined,
+          { killedByPlayer: false },
+        ),
+      ) || spilled;
+  }
+
+  // 被動生物（不進 mobs-changed；被炸死照常掉肉／皮革）
+  const deadPassive: PassiveMob[] = [];
+  const nextPassive: PassiveMob[] = [];
+  for (const m of passiveMobs) {
+    const dmg = dmgAt(m.pos, m.height * 0.6);
+    const hurt = dmg > 0 ? damagePassiveMob(m, dmg, at, knockDir(m.pos)) : m;
+    if (isPassiveDead(hurt)) deadPassive.push(hurt);
+    else nextPassive.push(hurt);
+  }
+  passiveMobs = nextPassive;
+  if (deadPassive.length > 0) {
+    spilled =
+      spill(
+        dropsForDeaths(
+          deadPassive.map((m) => ({ kind: m.kind, pos: m.pos })),
+          undefined,
+          { killedByPlayer: false },
+        ),
+      ) || spilled;
+  }
+
+  // HUD 的生物計數維持「殭屍＋骷髏」語意 → count 用 mobs.length。
+  if (hostileDied) bus.emit('mobs-changed', { count: mobs.length });
+  if (spilled) bus.emit('drops-changed', {});
 }
 
 function refreshQueues(): void {
@@ -3297,8 +3500,9 @@ gs.renderer.setAnimationLoop(() => {
       dt,
     });
     creepers = creeperStep.creepers;
-    // `creeperStep.events`（explode）刻意先不處理：Task 9 的 runExplosion 才接
-    // 上爆炸（讓 Task 8／9 各自可獨立審查）。Task 8 的苦力怕只會嘶嘶、不會爆。
+    // 引信到期 → 爆炸（Task 9）：先移除**引爆的那一隻**（原版 discard → 不掉
+    // 火藥），再套用爆炸。同幀的爆炸可能殺死其他苦力怕 → runExplosion 會把牠們
+    // 從清單移除並掉寶。
     const spiderStep = stepSpiders(spiders, {
       playerPos: player.position,
       isSolidAt,
@@ -3308,6 +3512,10 @@ gs.renderer.setAnimationLoop(() => {
     });
     spiders = spiderStep.spiders;
     for (const ev of spiderStep.events) applySpiderDamage(ev);
+    for (const ev of creeperStep.events) {
+      creepers = creepers.filter((c) => c.id !== ev.creeperId);
+      runExplosion(ev.at);
+    }
     // 死亡過濾＋despawn：與殭屍／骷髏同一條規則（B4：DESPAWN_DISTANCE = 128）。
     // **不在此灑掉落**——掉落只走玩家近戰擊殺（避免與 Task 9 的爆炸掉落重複）；
     // 被距離過濾掉的不是死亡 → 不爆炸也不掉落。

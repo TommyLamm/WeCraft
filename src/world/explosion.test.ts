@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { BLOCK } from './blocks';
 import {
   CREEPER_EXPLOSION_POWER,
+  EXPLOSION_KNOCKBACK_MAX_Y,
   explodeAt,
   explosionDamage,
   explosionExposure,
@@ -116,6 +117,26 @@ describe('explosion pure logic (B9 Task 3)', () => {
     const never = explodeAt({ ...ctx, rng: () => 0.99 });
     expect(never.destroyed.length).toBeGreaterThan(0);
     expect(never.drops).toEqual([]);
+  });
+
+  // ---- B9 Task 9：爆炸執行的純函式面（main.ts 的 runExplosion 用同一組公式）----
+  it('an explosion in the open deals the vanilla maximum to the player', () => {
+    // 玩家站在爆炸中心：走的是與苦力怕相同的公式（43HP = 原版 Normal）。
+    expect(explosionDamage(CREEPER_EXPLOSION_POWER, 0, explosionExposure(true))).toBe(43);
+    // 被牆擋住 → 降到 12（不是 0：貼牆爆炸仍會受傷）
+    expect(explosionDamage(CREEPER_EXPLOSION_POWER, 0, explosionExposure(false))).toBe(12);
+  });
+
+  it('the vertical knockback is capped for the player', () => {
+    // 本作把玩家的垂直擊退壓到 8 格/秒（原版可到 20）——常數與實際夾法一起釘。
+    expect(EXPLOSION_KNOCKBACK_MAX_Y).toBe(8);
+    // 玩家在爆炸正上方 → 水平距離 0 → 方向完全朝上 → 垂直分量應該被夾在 8。
+    const mag = explosionKnockback(CREEPER_EXPLOSION_POWER, 0, 1); // 20
+    const vertical = Math.min(mag, EXPLOSION_KNOCKBACK_MAX_Y); // 8
+    expect(vertical).toBe(8);
+    expect(vertical).toBeLessThan(mag);
+    // 水平擊退不設上限（與原版的水平分量一致）
+    expect(explosionKnockback(CREEPER_EXPLOSION_POWER, 0, 1)).toBe(20);
   });
 
   it('the explosion never removes air', () => {
