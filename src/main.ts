@@ -153,6 +153,7 @@ import {
   attackCreeper,
   hitCreeperId,
   damageCreeper,
+  CREEPER_FUSE_SEC,
   CREEPER_HEIGHT,
   type Creeper,
 } from './world/creeper';
@@ -3519,6 +3520,13 @@ gs.renderer.setAnimationLoop(() => {
     for (const ev of creeperStep.events) {
       creepers = creepers.filter((c) => c.id !== ev.creeperId);
       runExplosion(ev.at);
+    }
+    // B9 Task 11：引信**剛開始**的那一幀播一次「嘶——」（fuse 從 1.5 開始、下一幀
+    // 才倒數 → 等值判斷只會成立一次；引信取消後重新點燃會再播一次，正確）。
+    for (const c of creepers) {
+      if (c.state === 'fuse' && c.fuse === CREEPER_FUSE_SEC) {
+        audio.playCreeperHiss({ pos: c.pos, listener: player.position });
+      }
     }
     // 死亡過濾＋despawn：與殭屍／骷髏同一條規則（B4：DESPAWN_DISTANCE = 128）。
     // **不在此灑掉落**——掉落只走玩家近戰擊殺（避免與 Task 9 的爆炸掉落重複）；

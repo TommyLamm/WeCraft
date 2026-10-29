@@ -64,6 +64,45 @@ describe('createGameAudio', () => {
     expect(fake.gains[3].gain.peak).toBeCloseTo(0.5); // 2 × 0.5 distance × 0.5 base
   });
 
+  // ---- B9 Task 11：苦力怕引信聲（加分項）----
+  it('playCreeperHiss synthesises one band-passed hiss through the master bus', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playCreeperHiss();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    const filter = fake.biquads.find((b) => b.type === 'bandpass');
+    expect(filter).toBeTruthy();
+    expect(filter!.frequency.value).toBeCloseTo(900, 5);
+    expect(filter!.Q.value).toBeCloseTo(1.2, 5);
+    // 音量包絡（最後一個 gain）接到 master，峰値 > 0
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+    // 0.5 秒的嘶聲（source 在同一個時間點停止）
+    expect(fake.bufferSources[0].stopCalls[0].when).toBeCloseTo(0.5, 5);
+  });
+
+  it('the creeper hiss is silent beyond the audible distance', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.playCreeperHiss({
+      pos: { x: 40, y: 0, z: 0 },
+      listener: { x: 0, y: 0, z: 0 },
+    });
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.gain.peak).toBe(0);
+    expect(envelope.outputs).toContain(fake.gains[0]);
+  });
+
+  it('before start: playCreeperHiss stays inert (no nodes)', () => {
+    const { fake, audio } = setup();
+    audio.playCreeperHiss();
+    expect(fake.created).toHaveLength(0);
+  });
+
   it('handleVisibility suspends when hidden and resumes when visible', () => {
     const { fake, audio } = setup();
     audio.ensureStarted(); // initial suspended state → resume

@@ -19,6 +19,11 @@ const PHASE_FROM_HZ = 200;
 const PHASE_TO_HZ = 800;
 const PHASE_SEC = 0.8;
 const PHASE_GAIN = 0.2;
+/** 苦力怕引信聲：帶通中心／Q／長度／包絡峰値（B9 Task 11）。 */
+const HISS_BPF_HZ = 900;
+const HISS_Q = 1.2;
+const HISS_SEC = 0.5;
+const HISS_GAIN = 0.9;
 
 /** One second of white noise, mono, at the context's sample rate. Callers
  *  memoize — a fresh buffer per dig would allocate ~176 KB each time. */
@@ -62,6 +67,42 @@ export function playOneShot(
   gain.connect(dest);
   source.start();
   source.stop(now + params.durationSec + RELEASE_SEC);
+}
+
+/** 苦力怕引信聲（B9 Task 11，加分項）：0.5 秒的**帶通白噪音**（中心 900 Hz、
+ *  Q 1.2）＋緩慢上升的音量包絡（0 → 0.9 → 0）——模擬原版 `entity.creeper.primed`
+ *  的「嘶——」（Volume 1.0、Pitch 0.5，2026-10-20 查證）。
+ *
+ *  `volume`（可選，預設 1）已含距離衰減：`index.ts` 的 `playCreeperHiss` 用既有的
+ *  `gainForDistance` 算好再傳進來 → 包絡峰値＝`volume × HISS_GAIN`。
+ *  與 `playOneShot` 同一條 dest ← gain ← biquad ← bufferSource 慣例。 */
+export function creeperHiss(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * HISS_GAIN;
+
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = HISS_BPF_HZ;
+  filter.Q.value = HISS_Q;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + HISS_SEC * 0.6);
+  gain.gain.linearRampToValueAtTime(0, now + HISS_SEC);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + HISS_SEC);
 }
 
 /** Looping wind bed: noise → lowpass 300 → gain 0.04. `stop()` stops the
