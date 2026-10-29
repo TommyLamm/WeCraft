@@ -119,7 +119,6 @@ import {
   stepArrows,
   stepSunBurn,
   spawnArrow,
-  trySpawnMob,
   isDead,
   xzDistance,
   SPAWN_INTERVAL_SEC,
@@ -131,6 +130,8 @@ import {
 } from './world/mobs';
 // B4 Task 5：生怪光照判準（判準集中在 spawn-rules；B6 起餵真的 per-block 光照）。
 import { isDaylight } from './world/spawn-rules';
+// B9 Task 7：敵對生怪統一到 b9-spawn（四種生物共用權重表與光照閘門）。
+import { trySpawnHostile } from './world/b9-spawn';
 // B4 Task 6：被動生物（雞／豬／羊／牛）的模型與 AI（純邏輯層，渲染是後續任務）。
 // **被動生物與敵對生物是兩套東西**：不會主動攻擊、不會 despawn、不進
 // `mobs-changed`（那是敵對生物的計數事件）。
@@ -1386,12 +1387,17 @@ function spawnPoint(): { x: number; y: number; z: number } {
  *  **B3**：未點光的區塊回 `lit:false` → `canSpawnHostile` 不生成（未知不是暗；
  *  這裡不必另外判斷——同一個 `SpawnLight` 流進純判準層）。 */
 function spawnTick(): void {
-  const mob = trySpawnMob(mobs, player.position, {
-    lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
-    isSolidAt: (x, y, z) => world.isSolid(x, y, z),
-    blockIdAt: (x, y, z) => world.getBlock(x, y, z),
-  });
-  if (mob) mobs = [...mobs, mob];
+  // B9 Task 7：介面先接到新的分配器（苦力怕／蜘蛛清單由 Task 8 接線）。
+  const spawn = trySpawnHostile(
+    { mobs: mobs.length, creepers: 0, spiders: 0 },
+    player.position,
+    {
+      lightAt: (x, y, z) => spawnLightAt(world, x, y, z, clock.t),
+      isSolidAt: (x, y, z) => world.isSolid(x, y, z),
+      blockIdAt: (x, y, z) => world.getBlock(x, y, z),
+    },
+  );
+  if (spawn?.mob) mobs = [...mobs, spawn.mob];
 }
 
 /** Apply one mob event at the vitals/arrow layer: damage goes through the

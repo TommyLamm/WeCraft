@@ -1,11 +1,15 @@
 import { BLOCK } from './blocks';
 import { CHUNK_HEIGHT } from './chunk';
-import { canSpawnHostile, type SpawnLight } from './spawn-rules';
 
 /** Mob entities & AI: zombie (melee chaser) and skeleton (keep-distance
  *  shooter), plus their arrows (pure — no Three/DOM; the renderer lives in
  *  render/scene.ts). Follows the world/drops.ts pattern: plain entities,
  *  injected `isSolidAt` callback (no World import), NaN guards on every step.
+ *
+ *  **敵對生怪已統一到 `src/world/b9-spawn.ts`**（B9）：四種敵對（殭屍／骷髏／
+ *  苦力怕／蜘蛛）共用一份權重表與同一道光照閘門；`trySpawnMob`／
+ *  `chooseSpawnKind` 已移除。本檔只保留 `findSpawnPos`／`surfaceYAt`／
+ *  `createMob` 等被分配器重用的零件。
  *
  *  Distances: STATE DECISIONS ARE XZ-ONLY (chase/retreat/wander bands ignore
  *  height), the zombie MELEE RANGE IS 3D (can swipe a player on a ledge).
@@ -661,40 +665,6 @@ export function surfaceYAt(
   return null;
 }
 
-/** Spawn context: the light gate (`main` passes `(x, y, z) => spawnLightAt(world,
- *  x, y, z, clock.t)` — B6 起判準吃真的 per-block 光照，規則集中在
- *  `world/spawn-rules.ts`）、the injected world reads (same pattern as
- *  `MobCtx.isSolidAt`), and an optional rng so tests can pin the candidate spot
- *  and kind. */
-export interface SpawnCtx {
-  /** 生成點的 per-block 光照查詢（`lighting.spawnLightAt`）——敵對生物要求
-   *  內部天空光 ≤ 7 且無方塊光（在候選格落地**之後**逐格檢查，見 `trySpawnMob`）。 */
-  lightAt: (x: number, y: number, z: number) => SpawnLight;
-  isSolidAt: (x: number, y: number, z: number) => boolean;
-  blockIdAt: (x: number, y: number, z: number) => number;
-  rng?: () => number;
-}
-
-/** One spawn attempt — the whole spawnTick branch extracted for tests: cap →
- *  candidate XZ 24–128 blocks out (pure `findSpawnPos`) → surface Y → per-block
- *  light gate at the spot (B6) → kind. Returns the new mob, or null when any
- *  gate fails (the caller just skips that cycle; count changes are announced by
- *  the caller). */
-export function trySpawnMob(
-  mobs: readonly Mob[],
-  playerPos: { x: number; y: number; z: number },
-  ctx: SpawnCtx,
-): Mob | null {
-  if (mobs.length >= MAX_MOBS) return null;
-  const spot = findSpawnPos(playerPos, ctx.rng);
-  const y = surfaceYAt(spot.x, spot.z, ctx.isSolidAt, ctx.blockIdAt);
-  if (y === null) return null;
-  // 光照判準（B6）：在「真的要站的那一格」查 per-block 光照（內部天空光 ≤ 7
-  // 且無方塊光）——不再是「先看時鐘」的粗判，同一張地表白天擋、深夜放行。
-  if (!canSpawnHostile(ctx.lightAt(Math.floor(spot.x), y, Math.floor(spot.z)))) return null;
-  return createMob(chooseSpawnKind(ctx.rng), { x: spot.x, y, z: spot.z });
-}
-
 /** Candidate spawn XZ: uniform angle and a distance ∈ [24, 128] blocks from the
  *  player (rng injectable for deterministic tests; defaults to Math.random). */
 export function findSpawnPos(
@@ -707,9 +677,4 @@ export function findSpawnPos(
     x: playerPos.x + Math.sin(angle) * dist,
     z: playerPos.z + Math.cos(angle) * dist,
   };
-}
-
-/** 50/50 zombie or skeleton (rng injectable for deterministic tests). */
-export function chooseSpawnKind(rng: () => number = Math.random): MobKind {
-  return rng() < 0.5 ? 'zombie' : 'skeleton';
 }

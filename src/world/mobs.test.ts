@@ -9,8 +9,6 @@ import {
   spawnArrow,
   stepArrows,
   findSpawnPos,
-  chooseSpawnKind,
-  trySpawnMob,
   xzDistance,
   SPAWN_MIN_DIST,
   SPAWN_MAX_DIST,
@@ -28,7 +26,6 @@ import {
   type Arrow,
   type SunBurnCtx,
 } from './mobs';
-import { BLOCK } from './blocks';
 
 // ---- helpers -------------------------------------------------------------
 /** Flat world: everything below y = 0 is solid (ground top face at y = 0). */
@@ -790,76 +787,6 @@ describe('findSpawnPos', () => {
       expect(Number.isFinite(spot.x)).toBe(true);
       expect(Number.isFinite(spot.z)).toBe(true);
     }
-  });
-});
-
-describe('chooseSpawnKind', () => {
-  it('maps the rng onto both kinds (injected rng)', () => {
-    expect(chooseSpawnKind(() => 0)).toBe('zombie');
-    expect(chooseSpawnKind(() => 0.49)).toBe('zombie');
-    expect(chooseSpawnKind(() => 0.5)).toBe('skeleton');
-    expect(chooseSpawnKind(() => 0.99)).toBe('skeleton');
-  });
-});
-
-describe('trySpawnMob', () => {
-  /** Flat column: top solid block at y = 5 for every XZ (surface Y → 6). */
-  const surface = (_x: number, y: number, _z: number): boolean => y <= 5;
-  const ctxOf = (over: Partial<Parameters<typeof trySpawnMob>[2]> = {}) => ({
-    // 午夜地表：內部天空光 4 ≤ 7、無方塊光 → 敵對可生成（B6 Task 7 的 fixture：
-    // 光照是 per-block 查詢，不再是 clockLight 的時鐘近似）
-    lightAt: () => ({ sky: 15, internalSky: 4, block: 0, lit: true }),
-    isSolidAt: surface,
-    blockIdAt: () => BLOCK.DIRT, // any non-bedrock id
-    rng: () => 0.5, // angle π, distance 76 → spot (≈0, −76); kind → skeleton
-    ...over,
-  });
-  const player = { x: 0, y: 0, z: 0 };
-
-  it('spawns at night under the cap on a valid surface', () => {
-    const spawned = trySpawnMob([], player, ctxOf());
-    expect(spawned).not.toBeNull();
-    expect(spawned!.kind).toBe('skeleton');
-    expect(spawned!.pos.y).toBe(6); // top solid (5) + 1
-    expect(spawned!.pos.x).toBeCloseTo(0, 5); // rng 0.5 → angle π → −z axis
-    expect(spawned!.pos.z).toBeCloseTo(-76, 10); // 新距離帶 24–128 的中點
-    const dist = xzDistance(spawned!.pos, player);
-    expect(dist).toBeGreaterThanOrEqual(SPAWN_MIN_DIST);
-    expect(dist).toBeLessThanOrEqual(SPAWN_MAX_DIST);
-  });
-
-  it('never spawns in day', () => {
-    // 正午地表：內部天空光 15 > 7 → 敵對不可生成（B4 的「白天」近似換成真值）
-    expect(
-      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 15, block: 0, lit: true }) })),
-    ).toBeNull();
-  });
-
-  it('a torch beside the spawn point blocks hostile spawns', () => {
-    // 同一個午夜地表位置，但旁邊有火把（方塊光 1）→ 敵對不可生成
-    expect(
-      trySpawnMob([], player, ctxOf({ lightAt: () => ({ sky: 15, internalSky: 4, block: 1, lit: true }) })),
-    ).toBeNull();
-  });
-
-  it('never spawns once the cap is reached', () => {
-    const atCap = Array.from({ length: MAX_MOBS }, (_, i) =>
-      createMob('zombie', { x: i, y: 6, z: 0 }),
-    );
-    expect(trySpawnMob(atCap, player, ctxOf())).toBeNull();
-    // one below the cap spawns again
-    expect(trySpawnMob(atCap.slice(0, MAX_MOBS - 1), player, ctxOf())).not.toBeNull();
-  });
-
-  it('skips bedrock-only and ungenerated columns (no spawn)', () => {
-    const bedrock = trySpawnMob([], player, ctxOf({ blockIdAt: () => BLOCK.BEDROCK }));
-    expect(bedrock).toBeNull();
-    const ungenerated = trySpawnMob(
-      [],
-      player,
-      ctxOf({ isSolidAt: () => false, blockIdAt: () => BLOCK.AIR }),
-    );
-    expect(ungenerated).toBeNull();
   });
 });
 
