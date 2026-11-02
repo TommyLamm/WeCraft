@@ -10,7 +10,7 @@ import { isFullSupport } from '../world/lighting';
 import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
-import { spawnDrop, dropItemFor, chanceDropFor, type DropEntity } from '../world/drops';
+import { spawnDrop, dropItemFor, chanceDropFor, gravelDropFor, type DropEntity } from '../world/drops';
 import { damageMob, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
@@ -38,6 +38,10 @@ export function spawnBlockDrop(
 ): DropEntity[] {
   if (mode === 'creative') return drops; // 創造模式不產生任何掉落（含機率掉落）
   if (!canHarvest(blockId, held)) return drops; // 收穫門檻同樣管住機率掉落
+  // B10 Task 2：礫石 10% 掉燧石、否則掉礫石——**只生成 1 個**（不是礫石＋燧石），
+  // 且在機率掉落之前早退（礫石沒有樹葉那種「本體不掉、只有機率掉落」的情形）。
+  const gravel = gravelDropFor(blockId, rng);
+  if (gravel !== null) return spawnDrop(drops, gravel, 1, pos);
   // **機率掉落先算**：樹葉的 `dropItemFor` 回 null，若把這段排在下面的
   // `if (!item) return …` 之後，樹葉的 0.5% 蘋果**永遠不會發生**（那一格
   // 永遠先被 return 截走）→ 順序是這裡最容易做錯的地方。

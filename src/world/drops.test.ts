@@ -6,6 +6,8 @@ import {
   pickup,
   dropItemFor,
   chanceDropFor,
+  gravelDropFor,
+  GRAVEL_FLINT_CHANCE,
   LEAF_APPLE_CHANCE,
   GRAVITY,
   SPAWN_PICKUP_DELAY,
@@ -584,5 +586,20 @@ describe('B7 drops carry durability', () => {
     const drops = spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 0, z: 0 });
     pickup(drops, 0, inv);
     expect(inv.slots[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 250 }); // 鐵滿耐久
+  });
+});
+
+// ---- B10 Task 2：礫石 10% 掉燧石 -------------------------------------------
+describe('gravelDropFor', () => {
+  it('a gravel break rolls flint at 10% and gravel otherwise', () => {
+    expect(GRAVEL_FLINT_CHANCE).toBe(0.1);
+    expect(gravelDropFor(BLOCK.GRAVEL, () => 0.099)).toBe('flint');
+    expect(gravelDropFor(BLOCK.GRAVEL, () => 0.1)).toBe('gravel');
+    expect(gravelDropFor(BLOCK.GRAVEL, () => 0.999)).toBe('gravel');
+  });
+
+  it('non-gravel blocks are not affected', () => {
+    expect(gravelDropFor(BLOCK.DIRT, () => 0)).toBeNull();
+    expect(gravelDropFor(BLOCK.STONE, () => 0)).toBeNull();
   });
 });

@@ -77,6 +77,18 @@ export interface DropEntity {
  *  - 礫石與雲杉／白樺板材同樣走 fallback → 掉自身。
  *  Null also when the block has no item form at all (air, water) → nothing
  *  spawns. */
+/** B10 Task 2：礫石手動挖掘的 10% 燧石（原版 wiki `Gravel`：10% flint、90% gravel）。
+ *  回傳 `flint`／`gravel`；非礫石 → `null`。**只有手動挖掘**走這條——
+ *  爆炸的方塊掉落仍走 `dropItemFor`（掉礫石），列為簡化。 */
+export const GRAVEL_FLINT_CHANCE = 0.1;
+export function gravelDropFor(
+  blockId: number,
+  rng: () => number = Math.random,
+): 'flint' | 'gravel' | null {
+  if (blockId !== BLOCK.GRAVEL) return null;
+  return rng() < GRAVEL_FLINT_CHANCE ? 'flint' : 'gravel';
+}
+
 export function dropItemFor(blockId: number): ItemId | null {
   if (blockId === BLOCK.COAL_ORE) return 'coal';
   if (blockId === BLOCK.IRON_ORE) return 'raw_iron';

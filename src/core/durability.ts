@@ -9,6 +9,8 @@ export const TOOL_MAX_DURABILITY: Readonly<Partial<Record<ItemId, number>>> = {
   iron_pickaxe: 250, iron_axe: 250, iron_shovel: 250, iron_sword: 250,
   golden_pickaxe: 32, golden_axe: 32, golden_shovel: 32, golden_sword: 32,
   diamond_pickaxe: 1561, diamond_axe: 1561, diamond_shovel: 1561, diamond_sword: 1561,
+  // B10 Task 2：弓的耐久（wiki `Bow`：384；每次射擊扣 1）。
+  bow: 384,
 };
 
 export function maxDurability(item: string): number {

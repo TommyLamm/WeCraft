@@ -78,6 +78,9 @@ export function rollMobDrops(
     case 'skeleton':
       push('bone', range(0, 2));
       push('arrow', range(0, 2));
+      // B10 Task 2：8.5% 掉弓，**只在玩家／馴狼擊殺時**（wiki `Skeleton`「On death」；
+      // 本作沒有馴狼 → 只有玩家）。與蜘蛛眼同一套 `killedByPlayer` 閘門。
+      if (byPlayer && rng() < 0.085) push('bow', 1);
       break;
     case 'chicken':
       push('raw_chicken', 1);

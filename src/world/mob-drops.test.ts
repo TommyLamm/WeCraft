@@ -21,12 +21,15 @@ describe('rollMobDrops (B4 Task 4：擊殺掉落表)', () => {
     ]);
   });
 
-  it('skeleton drops 0-2 bones and 0-2 arrows', () => {
+  it('skeleton drops 0-2 bones, 0-2 arrows, and 8.5% a bow (player kill only)', () => {
     expect(rollMobDrops('skeleton', fixed(0.999))).toEqual([
       { item: 'bone', count: 2 },
       { item: 'arrow', count: 2 },
     ]);
-    expect(rollMobDrops('skeleton', fixed(0))).toEqual([]);
+    // fixed(0)：骨頭 0、箭 0、弓的 0 < 0.085 → 1 把弓
+    expect(rollMobDrops('skeleton', fixed(0))).toEqual([{ item: 'bow', count: 1 }]);
+    // 非玩家擊殺（爆炸等）→ 不掉弓
+    expect(rollMobDrops('skeleton', fixed(0), { killedByPlayer: false })).toEqual([]);
   });
 
   it('chicken drops one raw chicken and 0-2 feathers', () => {

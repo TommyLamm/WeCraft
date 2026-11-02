@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest: exactly 33) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed: exactly 37) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -57,8 +57,14 @@ const G: PatternCell = 'gold_ingot';
 const D: PatternCell = 'diamond';
 // B8 Task 2：箱子的 8 格板材——任一種板材皆可，但 8 格必須同種。
 const PL: SameItemCell = { same: ['oak_planks', 'spruce_planks', 'birch_planks'] };
+// B10 Task 2：弓／箭／羊毛／床的格常量。`S`（木棍）與 `P`（任一板材）已存在，
+// 不重複宣告。
+const STR: PatternCell = 'string';
+const FLI: PatternCell = 'flint';
+const FEA: PatternCell = 'feather';
+const WO: PatternCell = 'wool';
 
-/** The settled recipe table — exactly 33 entries, checked by tests. */
+/** The settled recipe table — exactly 37 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -333,6 +339,41 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [PL, PL, PL],
     ],
     result: { item: 'chest', count: 1 },
+  },
+  // B10 Task 2：弓（3 線＋3 木棍；原版圖形；方向固定）。
+  {
+    id: 'bow',
+    kind: 'shaped',
+    pattern: [
+      [null, STR, S],
+      [STR, null, S],
+      [null, STR, S],
+    ],
+    result: { item: 'bow', count: 1 },
+  },
+  // B10 Task 2：箭（燧石／木棍／羽毛直排）→ 4 支。
+  {
+    id: 'arrow',
+    kind: 'shaped',
+    pattern: [[FLI], [S], [FEA]],
+    result: { item: 'arrow', count: 4 },
+  },
+  // B10 Task 2：4 條線 → 1 羊毛（shapeless；把 B9 的線接進羊毛→床的循環）。
+  {
+    id: 'wool',
+    kind: 'shapeless',
+    inputs: ['string', 'string', 'string', 'string'],
+    result: { item: 'wool', count: 1 },
+  },
+  // B10 Task 2：床（上排 3 羊毛、下排 3 木板；板材可混用）。
+  {
+    id: 'bed',
+    kind: 'shaped',
+    pattern: [
+      [WO, WO, WO],
+      [P, P, P],
+    ],
+    result: { item: 'bed', count: 1 },
   },
 ];
 

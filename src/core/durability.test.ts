@@ -16,6 +16,7 @@ describe('durability', () => {
     expect(maxDurability('iron_shovel')).toBe(250);
     expect(maxDurability('golden_pickaxe')).toBe(32);
     expect(maxDurability('diamond_sword')).toBe(1561);
+    expect(maxDurability('bow')).toBe(384);
     expect(maxDurability('stone')).toBe(0);
     expect(maxDurability('apple')).toBe(0);
     expect(maxDurability('toString')).toBe(0);
@@ -35,6 +36,7 @@ describe('durability', () => {
   it('isDurableItem identifies tools and rejects ordinary items', () => {
     expect(isDurableItem('wooden_pickaxe')).toBe(true);
     expect(isDurableItem('diamond_sword')).toBe(true);
+    expect(isDurableItem('bow')).toBe(true);
     expect(isDurableItem('stone')).toBe(false);
     expect(isDurableItem('apple')).toBe(false);
   });

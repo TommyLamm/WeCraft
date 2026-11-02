@@ -530,6 +530,15 @@ describe('spawnBlockDrop (Task 7 + Task 6 harvest gate)', () => {
     expect(existing).toHaveLength(1);
   });
 
+  it('B10: gravel rolls exactly one drop — flint or gravel, never both', () => {
+    const flint = spawnBlockDrop([], 'survival', BLOCK.GRAVEL, at, null, () => 0.05);
+    expect(flint).toHaveLength(1);
+    expect(flint[0].item).toBe('flint');
+    const gravel = spawnBlockDrop([], 'survival', BLOCK.GRAVEL, at, null, () => 0.5);
+    expect(gravel).toHaveLength(1);
+    expect(gravel[0].item).toBe('gravel');
+  });
+
   it('coal_ore drops coal with the wooden pickaxe (tier 0 gate)', () => {
     expect(spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at, woodenPick)[0].item).toBe('coal');
   });

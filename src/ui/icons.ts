@@ -472,6 +472,36 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fill();
       break;
     }
+    case 'bow': {
+      // B10 Task 2：木弓弧 ＋ 弦。
+      ctx.strokeStyle = '#8a5a2b';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(24, 16, 12, Math.PI * 0.55, Math.PI * 1.45);
+      ctx.stroke();
+      line(ctx, 18, 5, 18, 27, '#e8e8e8', 2);
+      break;
+    }
+    case 'flint': {
+      // B10 Task 2：深灰銳角石片＋上緣高光。
+      ctx.fillStyle = '#4a4a52';
+      ctx.beginPath();
+      ctx.moveTo(10, 8);
+      ctx.lineTo(22, 6);
+      ctx.lineTo(26, 16);
+      ctx.lineTo(16, 26);
+      ctx.lineTo(7, 18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#6f6f7a';
+      ctx.beginPath();
+      ctx.moveTo(10, 8);
+      ctx.lineTo(22, 6);
+      ctx.lineTo(18, 14);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
     default: {
       // unknown/future item — neutral placeholder until it gets real art
       ctx.fillStyle = '#7a7a7a';

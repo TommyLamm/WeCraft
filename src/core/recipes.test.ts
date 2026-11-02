@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 33). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 37). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 33 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(33);
+  it('holds exactly the 37 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(37);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -52,6 +52,11 @@ describe('recipe table', () => {
         'torch',
         // B8 Task 2：8 塊同種板材 → 1 箱子
         'chest',
+        // B10 Task 2：弓／箭／羊毛／床
+        'bow',
+        'arrow',
+        'wool',
+        'bed',
       ].sort(),
     );
   });
@@ -462,11 +467,45 @@ describe('matchRecipe — matching rules', () => {
     expect(matchRecipe(g, 3)).toEqual({ item: 'wooden_pickaxe', count: 1 });
   });
 
-  it('the B9 materials have no recipe yet', () => {
-    // spec §B9：火藥／線／蜘蛛眼「暫無用途」→ 它們不進任何配方（含熔爐食譜）。
+  it('the B9 materials other than string are still not recipe results (string is now an ingredient)', () => {
+    // spec §B9：火藥／線／蜘蛛眼原本「暫無用途」；B10 讓線成為羊毛配方的**材料**，
+    // 但線仍然不是任何配方的**產物**。守門不弱化：三個 id 都不得是 result.item。
     expect(
       RECIPES.some((r) => ['gunpowder', 'string', 'spider_eye'].includes(r.result.item)),
     ).toBe(false);
+  });
+
+  // ---- B10 Task 2：弓／箭／羊毛／床 ----
+
+  it('B10: bow = 3 string + 3 sticks', () => {
+    const g = emptyGrid(3);
+    // 右排三根木棍、左中與中上／中下三條線
+    g[2] = s('stick'); g[5] = s('stick'); g[8] = s('stick');
+    g[1] = s('string'); g[3] = s('string'); g[7] = s('string');
+    expect(findRecipe(g, 3)?.id).toBe('bow');
+    expect(findRecipe(g, 3)?.result).toEqual({ item: 'bow', count: 1 });
+  });
+
+  it('B10: arrows = flint + stick + feather -> 4', () => {
+    const g = emptyGrid(3);
+    g[1] = s('flint'); g[4] = s('stick'); g[7] = s('feather');
+    expect(findRecipe(g, 3)?.result).toEqual({ item: 'arrow', count: 4 });
+  });
+
+  it('B10: 4 string (shapeless) -> 1 wool', () => {
+    const g = emptyGrid(2);
+    for (let i = 0; i < 4; i++) g[i] = s('string');
+    expect(findRecipe(g, 2)?.result).toEqual({ item: 'wool', count: 1 });
+  });
+
+  it('B10: bed = 3 wool + 3 planks (any plank type, mixed allowed)', () => {
+    const g = emptyGrid(3);
+    for (let c = 0; c < 3; c++) g[c] = s('wool');
+    g[3] = s('oak_planks');
+    g[4] = s('spruce_planks');
+    g[5] = s('birch_planks');
+    expect(findRecipe(g, 3)?.id).toBe('bed');
+    expect(findRecipe(g, 3)?.result).toEqual({ item: 'bed', count: 1 });
   });
 });
 

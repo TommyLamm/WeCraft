@@ -53,7 +53,9 @@ export type ItemId =
   | 'gunpowder' | 'string' | 'spider_eye'
   // B10 Task 1：床的物品形式（隨 BLOCK.BED = 34 一起補上 → 挖掉的床能放回世界）。
   // 原版床不可堆疊（wiki `Bed` infobox：stackable = No）→ 進 STACK_ONE。
-  | 'bed';
+  | 'bed'
+  // B10 Task 2：燧石（礫石 10% 掉落）與弓（3 線＋3 木棍；耐久 384）。
+  | 'flint' | 'bow';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -92,6 +94,8 @@ const ITEM_IDS: Record<ItemId, true> = {
   gunpowder: true, string: true, spider_eye: true,
   // B10 Task 1：床的物品形式
   bed: true,
+  // B10 Task 2：燧石與弓
+  flint: true, bow: true,
 };
 
 /** 全部 ItemId 的正規清單（目前 76 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
@@ -168,6 +172,8 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel',
   // B10 Task 1：原版床不可堆疊（wiki infobox：stackable = No）。
   'bed',
+  // B10 Task 2：弓是耐久武器（384），堆疊 1。
+  'bow',
 ]);
 
 export function maxStack(item: ItemId): number {
