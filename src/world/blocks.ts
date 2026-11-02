@@ -48,6 +48,9 @@ export const BLOCK = {
   TORCH: 32,
   // B8 Task 2：箱子（跨批編號表：本批 = 33；只能往後追加）。
   CHEST: 33,
+  // B10 Task 1：床（跨批編號表：本批 = 34；只能往後追加——舊存檔的 modified
+  // 記的是數字 id）。原版是兩格有方向的床，本作是單一實心方塊（已揭露的簡化）。
+  BED: 34,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -92,7 +95,7 @@ export interface BlockDef {
 
 /** Atlas tile indices. **Exported** (B6 Task 5): `textures.ts` 用 `T.TORCH`
  *  畫貼圖，不寫死數字 → 「最高 tile ＋ 1」的規則維持單一真相。
- *  Tiles `T` defines (0..TILE_COUNT-1) — `TORCH` is the highest tile.
+ *  Tiles `T` defines (0..TILE_COUNT-1) — `BED_SIDE` is the highest tile.
  *  drawAtlas paints exactly these; the texture array fills every layer past
  *  them with the magenta debug color, so adding a tile to T without drawing it
  *  fails loudly instead of silently sampling magenta in-game. */
@@ -120,12 +123,14 @@ export const T = {
   TORCH: 39,
   // B8 Task 2：箱子（跨批編號：本批 = 40 → TILE_COUNT = 41）。
   CHEST: 40,
+  // B10 Task 1：床的兩張 tile（top／side）。跨批編號：本批 = 41、42 → TILE_COUNT = 43。
+  BED_TOP: 41, BED_SIDE: 42,
 } as const;
 
 /** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
- *  (currently `T.CHEST`), so appending a tile and pointing `TILE_COUNT` at it
+ *  (currently `T.BED_SIDE`), so appending a tile and pointing `TILE_COUNT` at it
  *  is the only change needed to grow the atlas. */
-export const TILE_COUNT = T.CHEST + 1;
+export const TILE_COUNT = T.BED_SIDE + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -201,6 +206,8 @@ const DEFS: Record<number, BlockDef> = {
   // （wiki：Tool: Axe Required，但任何工具都能挖；箱子永遠掉自身）。
   // 六面共用同一張 tile（原版正面的鎖扣細節本批簡化）。
   33: { id: 33, name: 'chest', hardness: 2.5, blastResistance: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CHEST, side: T.CHEST, bottom: T.CHEST, requiredTool: null, fastTool: 'axe' },
+  // B10 Task 1：床（單一方塊；原版是兩格有方向的床，這裡是已揭露的簡化）。
+  34: { id: 34, name: 'bed', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: false, shape: 'cube', top: T.BED_TOP, side: T.BED_SIDE, bottom: T.BED_SIDE, requiredTool: null, fastTool: null },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -242,6 +249,8 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.TORCH,
   // B8 Task 2：箱子（物品形式隨方塊一起補上 → 創造清單自動出現）
   BLOCK.CHEST,
+  // B10 Task 1：床（物品形式隨方塊一起補上 → 創造清單自動出現）
+  BLOCK.BED,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

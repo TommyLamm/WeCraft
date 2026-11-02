@@ -357,6 +357,33 @@ export function drawAtlas(): AtlasImage {
     return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
   }); // chest
 
+  // ---- B10 Task 1：床（tile 41／42）----
+  // 原版床是兩格有方向的模型；本作是單一實心方塊（已揭露的簡化）。
+  // 兩張貼圖把「白床墊＋枕頭＋紅毯子＋木框」畫出來；所有像素 alpha 255。
+  put(T.BED_TOP, (x, y, r) => {
+    const edge = x === 0 || y === 0 || x === 15 || y === 15 ? -26 : 0;
+    const pillow = x >= 3 && x <= 12 && y >= 2 && y <= 5 ? 18 : 0;
+    const blanket = y >= 9;
+    const seam = y === 8 ? -40 : 0;
+    const base: RGBA = blanket ? [178, 54, 54, 255] : [232, 232, 228, 255];
+    const c = vary(base, r, 10);
+    const d = edge + pillow + seam;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // bed top
+
+  put(T.BED_SIDE, (x, y, r) => {
+    // 下半木框、上半白床墊、毯子邊（y 6..8）＋木框上緣的暗接縫。
+    const edge = x === 0 || y === 0 || x === 15 || y === 15 ? -24 : 0;
+    const base: RGBA = y >= 11
+      ? [150, 108, 58, 255]
+      : y >= 6
+        ? [178, 54, 54, 255]
+        : [232, 232, 228, 255];
+    const c = vary(base, r, 10);
+    const d = edge + (y === 9 ? -34 : 0);
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // bed side
+
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
 }

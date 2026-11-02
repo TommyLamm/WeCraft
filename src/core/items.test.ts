@@ -34,6 +34,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'gold_ore', 'diamond_ore', 'spruce_planks', 'birch_planks',
   // B6 Task 5：火把的物品形式（隨 BLOCK.TORCH = 32 一起補上 → 挖掉的火把能放回世界）
   'torch',
+  // B10 Task 1：床的物品形式（隨 BLOCK.BED = 34 一起補上）
+  'bed',
 ];
 /** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
 const B5_TOOL_ITEMS: ItemId[] = [
@@ -80,8 +82,9 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B5 Task 2 再補 14 個（3 個原料 ＋ 11 把工具）→ 72。
  *  B6 Task 5 再補 1 個（火把的物品形式，隨 BLOCK.TORCH = 32 一起落地）→ 73。
  *  B9 Task 1 再補 3 個（火藥／線／蜘蛛眼：生物掉落的新材料，不是方塊、不進配方）→ **76**。
+ *  B10 Task 1 再補 1 個（床的物品形式，隨 BLOCK.BED = 34 一起落地）→ **77**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 76;
+const TOTAL_ITEM_COUNT = 77;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -149,6 +152,14 @@ describe('items', () => {
     expect(blockFromItem('chest')).toBe(BLOCK.CHEST);
     expect(itemFromBlock(BLOCK.CHEST)).toBe('chest');
     expect(maxStack('chest')).toBe(64);
+  });
+
+  // ---- B10 Task 1：床的物品形式（隨 BLOCK.BED = 34 一起落地）----
+
+  it('the bed has a block form and stacks to 1 (vanilla: not stackable)', () => {
+    expect(blockFromItem('bed')).toBe(BLOCK.BED);
+    expect(itemFromBlock(BLOCK.BED)).toBe('bed');
+    expect(maxStack('bed')).toBe(1);
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

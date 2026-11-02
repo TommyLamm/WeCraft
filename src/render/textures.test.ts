@@ -544,6 +544,25 @@ describe('buildTextureArray', () => {
     // 未畫的 atlas 區域是透明，不會是洋紅——補一條 alpha 斷言才驗得到「有畫」。
     expect(tilePixel(atlas, chestTile, 8, 8)[3]).toBe(255);
   });
+
+  it('B10: both bed tiles are declared and painted opaque (not the magenta debug fill)', () => {
+    const atlas = drawAtlas();
+    for (const tile of [T.BED_TOP, T.BED_SIDE]) {
+      expect(tile).toBeGreaterThanOrEqual(0);
+      expect(tile).toBeLessThan(TILE_COUNT);
+      let opaque = 0;
+      let magenta = 0;
+      for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+          const [r, g, b, a] = tilePixel(atlas, tile, x, y);
+          if (a === 255) opaque++;
+          if (r === 255 && g === 0 && b === 255) magenta++;
+        }
+      }
+      expect(opaque, `bed tile ${tile} opaque`).toBe(TILE_PX * TILE_PX);
+      expect(magenta, `bed tile ${tile} magenta`).toBeLessThan(TILE_PX * TILE_PX);
+    }
+  });
 });
 
 // ---- Task 3: mining crack overlay stage textures ----

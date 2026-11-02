@@ -52,6 +52,8 @@ describe('materialGroup', () => {
       [BLOCK.TORCH]: 'wood',
       // B8 Task 2：箱子是木頭
       [BLOCK.CHEST]: 'wood',
+      // B10 Task 1：床的木框 → 原版床的 sound type 是 wood
+      [BLOCK.BED]: 'wood',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

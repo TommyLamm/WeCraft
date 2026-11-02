@@ -123,6 +123,8 @@ describe('blocks', () => {
       [BLOCK.TORCH, null, null],
       // B8 Task 2 新增：箱子徒手可挖、斧頭加速
       [BLOCK.CHEST, null, 'axe'],
+      // B10 Task 1 新增：床徒手可挖、沒有加速工具
+      [BLOCK.BED, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -143,6 +145,19 @@ describe('blocks', () => {
     expect(def.top).toBe(def.side);
     expect(def.bottom).toBe(def.top);
     expect(PLACEABLE).toContain(BLOCK.CHEST);
+  });
+
+  it('B10: the bed is a single full block with vanilla hardness and blast resistance', () => {
+    const def = getBlockDef(BLOCK.BED);
+    expect(def.name).toBe('bed');
+    expect(def.solid).toBe(true);
+    expect(def.shape).toBe('cube');
+    expect(def.hardness).toBe(0.2);
+    expect(def.blastResistance).toBe(0.2);
+    expect(def.requiredTool).toBeNull();
+    expect(def.top).toBe(T.BED_TOP);
+    expect(def.side).toBe(T.BED_SIDE);
+    expect(PLACEABLE).toContain(BLOCK.BED);
   });
 
   it('glass is transparent and solid', () => {
@@ -409,9 +424,9 @@ describe('blocks', () => {
     expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
     expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
     expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
-    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B8 的箱子 tile 接在火把後面成為
-    // 新的最高 → 絕對值 41；由「the chest tile is the last declared tile」把關。
-    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.CHEST).top + 1);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B10 的床 side tile 接在箱子後面成為
+    // 新的最高 → 絕對值 43；由「the bed side tile is the last declared tile」把關。
+    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.BED).side + 1);
     expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.BIRCH_PLANKS).top);
   });
 
@@ -486,10 +501,11 @@ describe('blocks', () => {
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
   });
 
-  it('the chest tile is the last declared tile', () => {
-    // 不綁死數字：上游 tile 表變動不會誤報；T.CHEST 的絕對值（40）由跨批編號表
-    // 與下面的撞號檢查一起把關。
-    expect(T.CHEST).toBe(TILE_COUNT - 1);
+  it('the bed side tile is the last declared tile', () => {
+    // 不綁死數字：上游 tile 表變動不會誤報；T.BED_SIDE 的絕對值（42）由跨批編號表
+    // 與下面的撞號檢查一起把關。兩張床 tile 是最後兩個、箱子緊接在床 top 之前。
+    expect(T.BED_SIDE).toBe(TILE_COUNT - 1);
+    expect(T.CHEST).toBe(T.BED_TOP - 1);
     expect(TILE_COUNT).toBeLessThanOrEqual(64); // 紋理陣列 64 層
   });
 

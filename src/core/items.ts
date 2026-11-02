@@ -50,7 +50,10 @@ export type ItemId =
   // B9 Task 1：三個生物掉落材料（苦力怕掉火藥、蜘蛛掉線與蜘蛛眼）。spec §B9 明示
   // 「暫無用途」→ 不進 RECIPES、不進熔爐食譜、不掛 OBTAIN_UNLOCKS（不觸發進度）。
   // `stackName` 自動得到 Gunpowder／String／Spider Eye（與原版名稱一致）。
-  | 'gunpowder' | 'string' | 'spider_eye';
+  | 'gunpowder' | 'string' | 'spider_eye'
+  // B10 Task 1：床的物品形式（隨 BLOCK.BED = 34 一起補上 → 挖掉的床能放回世界）。
+  // 原版床不可堆疊（wiki `Bed` infobox：stackable = No）→ 進 STACK_ONE。
+  | 'bed';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -87,6 +90,8 @@ const ITEM_IDS: Record<ItemId, true> = {
   torch: true,
   // B9 Task 1：三個生物掉落材料（火藥／線／蜘蛛眼）
   gunpowder: true, string: true, spider_eye: true,
+  // B10 Task 1：床的物品形式
+  bed: true,
 };
 
 /** 全部 ItemId 的正規清單（目前 76 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
@@ -146,6 +151,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['birch_planks', BLOCK.BIRCH_PLANKS],
   // B6 Task 5：火把的方塊物品形式（挖掉的火把掉自身 → 要能放回世界裡）
   ['torch', BLOCK.TORCH],
+  // B10 Task 1：床的方塊物品形式
+  ['bed', BLOCK.BED],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);
@@ -159,6 +166,8 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'wooden_shovel', 'stone_shovel', 'iron_shovel',
   'golden_pickaxe', 'golden_axe', 'golden_sword', 'golden_shovel',
   'diamond_pickaxe', 'diamond_axe', 'diamond_sword', 'diamond_shovel',
+  // B10 Task 1：原版床不可堆疊（wiki infobox：stackable = No）。
+  'bed',
 ]);
 
 export function maxStack(item: ItemId): number {
