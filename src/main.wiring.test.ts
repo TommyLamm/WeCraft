@@ -1182,3 +1182,36 @@ describe('main.ts 接線（B10：弓與玩家箭）', () => {
     expect(playing).toContain("spawnDrop(drops, 'arrow', 1, ev.pos)");
   });
 });
+
+// ---- B10 Task 8：床的接線、睡眠流程與重生 -----------------------------------
+describe('main.ts 接線（B10：床與重生）', () => {
+  it('B10: right-click on a bed uses it before food/placement', () => {
+    const playing = playingBranchBody();
+    const bed = playing.indexOf('hitBlock === BLOCK.BED');
+    const food = playing.indexOf('heldIsFood()');
+    expect(bed).toBeGreaterThan(-1);
+    expect(food).toBeGreaterThan(bed); // 床先於進食
+  });
+
+  it('B10: sleeping has an exit: sleepT >= SLEEP_DURATION_SEC -> clock t=0 -> playing', () => {
+    // 釘「sleeping 分支在**外層**迴圈」（tick clock 的那一個 if），不是內層的遊戲尾段：
+    expect(mainSource).toContain("if (state === 'sleeping') {");
+    expect(mainSource).toContain('sleepT += dt');
+    expect(mainSource).toContain('sleepT >= SLEEP_DURATION_SEC');
+    expect(mainSource).toContain("setState('sleeping')");
+    expect(mainSource).toContain('clock = { ...clock, t: 0 }');
+    expect(mainSource).toContain("setState('playing')");
+  });
+
+  it('B10: respawn uses the bed only while the bed still exists; title/new game keep world spawn', () => {
+    expect(functionBody('respawnPoint')).toContain('BLOCK.BED');
+    expect(functionBody('respawnPlayer')).toContain('respawnPoint()');
+    expect(functionBody('handleRespawn')).toContain('respawnPlayer()');
+    expect(functionBody('resetPlayerToSpawn')).not.toContain('bedSpawn');
+  });
+
+  it('B10: breaking or exploding a bed clears the spawn point', () => {
+    expect(mainSource).toContain('clearBedSpawnAt(');
+    expect(functionBody('runExplosion')).toContain('clearBedSpawnAt(');
+  });
+});

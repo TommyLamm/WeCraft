@@ -686,3 +686,29 @@
     transform: translateX(0);
   }
 }
+
+/* Sleep screen (B10): full-viewport pure-black overlay while sleeping.
+   z-index 25 → above toasts (20), below the cursor (30); sleeping cannot die,
+   so it does not need to stay under the death screen (10). pointer-events none
+   → the overlay never intercepts input; the fade-in is a 0.8 s opacity ease
+   (waking snaps straight back — no fade-out). */
+.sleep-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  pointer-events: none;
+  opacity: 1;
+  /* 0.8 s 的過渡保留給「同一個節點被重複 show」的情境；元素是黑幕出現當幀
+     直接掛上（沒有從 0 過渡的雙 rAF）→ 實際上以純黑直接覆蓋（已揭露）。 */
+  transition: opacity 0.8s ease;
+}
+.sleep-screen .sleep-text {
+  font-size: 20px;
+  color: #fff;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6);
+  margin: 0;
+}

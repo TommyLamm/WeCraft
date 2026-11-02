@@ -32,6 +32,9 @@ import type { SpawnPoint } from './core/spawn-point';
 import { damageStack } from './core/durability';
 // B10 Task 5：弓的蓄力與傷害（純邏輯；拉弓/放開的規則本體在 core/bow.ts）。
 import { bowShotFor, stepBowCharge } from './core/bow';
+// B10 Task 8：床的使用規則與睡眠 UI（規則本體在 world/bed.ts；黑幕在 ui/sleep.ts）。
+import { bedUse, bedSpawnPosition, SLEEP_DURATION_SEC } from './world/bed';
+import { createSleepScreen } from './ui/sleep';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry, titleTriState } from './core/boot-entry';
 import { createInventoryModel, type GameMode } from './core/inventory';
@@ -372,6 +375,13 @@ interface WecraftDebug {
     maxHunger: number;
     saturation: number;
   } | null;
+  /** **B10**：床的重生點快照（方塊座標；沒有 → `null`）。**純唯讀**。 */
+  bedSpawn: () => { x: number; y: number; z: number } | null;
+  /** **B10**：是否處於睡眠狀態（驗收「右鍵床 → 黑幕 → 醒來 t=0」要用）。 */
+  sleeping: () => boolean;
+  /** **B10**：箭的逐筆狀態（id／座標／是不是玩家箭）——驗收「射箭 → 命中／落地」
+   *  要用；**純唯讀**（映射出新陣列）。 */
+  arrowStates: () => Array<{ id: number; x: number; y: number; z: number; fromPlayer: boolean }>;
 }
 
 declare global {
@@ -386,7 +396,8 @@ declare global {
 // handling as 'inventory' — the frame loop's final else keeps it static)
 // 'furnace' (Task 6): the furnace panel overlay (same frozen-world handling)
 // 'container' (B8 Task 7): the 27-slot chest panel (same frozen-world handling)
-type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'container' | 'dead';
+// B10：新增 'sleeping'（床的睡眠流程；狀態機的出口在 wakeFromBed）。
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'container' | 'dead' | 'sleeping';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -445,6 +456,8 @@ const furnaceUi = createFurnace(uiRoot, {
 const containerUi = createContainer(uiRoot);
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
+// B10：睡眠黑幕（show/hide 冪等；setState 每次轉移都呼叫 hide()）。
+const sleepScreen = createSleepScreen(uiRoot);
 // Task 12: advancement toasts — top-right stack; main pushes via applyAdvancement
 const toasts = createToasts(uiRoot);
 // B4 Task 15：worker 逾時／messageerror → **一次性** toast（「備援模式」）。
@@ -1069,6 +1082,8 @@ let arrows: Arrow[] = [];
 let bowDraw: { charge: number; slot: number } | null = null;
 /** B10：床設定的重生點（方塊座標）；`null`＝回世界出生點。 */
 let bedSpawn: SpawnPoint | null = null;
+/** B10：睡眠已經過的秒數（進入 'sleeping' 時歸零；累積到 SLEEP_DURATION_SEC 醒來）。 */
+let sleepT = 0;
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 /**
  * 被動生物（雞／豬／羊／牛；B4 Task 6）。**與敵對生物分開存**：
@@ -1735,6 +1750,8 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   let spilled = false;
   for (const b of result.destroyed) {
     world.setBlock(b.x, b.y, b.z, BLOCK.AIR);
+    // B10：被炸掉的是重生點所在的床 → 重生點失效（回世界出生點）。
+    clearBedSpawnAt(b.x, b.y, b.z);
     // **B8 的塊實體**：炸掉箱子／熔爐時比照挖除路徑——內容物逐格溢出（生存）、
     // 塊實體刪除。少了這一步：內容物無聲消失，而且存檔會留下一個孤兒實體——
     // 玩家之後在**同一格**放新箱子時 `openChestAt` 會把舊內容接回去（幽靈物品）。
@@ -2103,6 +2120,7 @@ function setState(next: GameState): void {
   furnaceUi.close(); // same for the furnace overlay (idempotent)
   containerUi.close(); // B8: same for the chest container panel (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
+  sleepScreen.hide(); // B10: every transition clears the sleep overlay too (idempotent; 'sleeping' re-shows)
   if (next === 'title') {
     // Task 14: Continue renders iff a save exists (savedPayload — boot load
     // or a successful in-session save); no save → hidden (settled).
@@ -2306,9 +2324,9 @@ function setState(next: GameState): void {
   }
 }
 
-function resetPlayerToSpawn(): void {
-  const sp = spawnPoint();
-  player = createPlayer(sp.x, sp.y, sp.z);
+/** B10：把玩家重置到指定座標（生命相關的 session 狀態一起歸零）。 */
+function resetPlayerAt(x: number, y: number, z: number): void {
+  player = createPlayer(x, y, z);
   deathCause = null; // fresh life — the next death records its own cause (Task 13)
   // Session-scoped state (review Critical #1 + Minor #5): a stale apex from
   // quitting mid-fall would turn the fresh spawn's drop into a one-shot kill
@@ -2316,6 +2334,34 @@ function resetPlayerToSpawn(): void {
   // session's first swing.
   fallState = resetFall();
   attackCd = 0;
+}
+
+/** 新局／回標題：**永遠**回世界出生點（床的重生點不參與——標題環繞相機與
+ *  新遊戲都要避免跑到未生成的區域；床的重生只在死亡重生時用）。 */
+function resetPlayerToSpawn(): void {
+  const sp = spawnPoint();
+  resetPlayerAt(sp.x, sp.y, sp.z);
+}
+
+/** B10：死亡重生點——床還在原格 → 床頂中心；床被拆／被炸 → 回世界出生點。 */
+function respawnPoint(): { x: number; y: number; z: number } {
+  if (bedSpawn && world.getBlock(bedSpawn.x, bedSpawn.y, bedSpawn.z) === BLOCK.BED) {
+    return bedSpawnPosition(bedSpawn);
+  }
+  return spawnPoint();
+}
+
+/** B10：死亡重生的入口（`handleRespawn` 呼叫；新局／回標題不走這裡）。 */
+function respawnPlayer(): void {
+  const sp = respawnPoint();
+  resetPlayerAt(sp.x, sp.y, sp.z);
+}
+
+/** B10：床格改變（被拆／被炸）→ 若重生點就是它，清掉（回世界出生點）。 */
+function clearBedSpawnAt(x: number, y: number, z: number): void {
+  if (bedSpawn && bedSpawn.x === x && bedSpawn.y === y && bedSpawn.z === z) {
+    bedSpawn = null;
+  }
 }
 
 /** 把「目前模式」的 live 槽位與血量寫回 `modeStash`——**與切換模式時同一個
@@ -3172,13 +3218,56 @@ function handleContinue(): void {
   startGame(); // defensive: button rendered without an entry (unreachable — hasSave gates it)
 }
 
+
+/** B10：右鍵床（Task 8 接線；規則本體在 `world/bed.ts` 的 `bedUse`）。
+ *
+ *  **順序（＝原版語意）**：`too-far` → 連重生點都不設；其餘一律**先設定重生點**
+ *  （白天／有怪物只是不能睡），再依結果提示或進入睡眠。 */
+function tryUseBed(x: number, y: number, z: number): void {
+  const bed = { x, y, z };
+  const eye = { x: player.position.x, y: player.position.y + EYE_HEIGHT, z: player.position.z };
+  const monsters = [
+    ...mobs.map((m) => ({ pos: m.pos })),
+    ...creepers.map((c) => ({ pos: c.pos })),
+    ...spiders.map((sp) => ({ pos: sp.pos })),
+  ];
+  const use = bedUse({ eye, bed, clockT: clock.t, monsters });
+  if (use === 'too-far') {
+    hudHint.show('床太遠了');
+    return;
+  }
+  bedSpawn = { ...bed }; // 原版：右鍵床就設定重生點（白天／有怪物只是不能睡）
+  if (use === 'monsters') {
+    hudHint.show('附近有怪物，無法入睡（重生點已設定）');
+    return;
+  }
+  if (use === 'set-spawn-only') {
+    hudHint.show('你只能在夜晚睡覺（重生點已設定）');
+    return;
+  }
+  sleepT = 0;
+  setState('sleeping');
+  sleepScreen.show();
+}
+
+/** B10：睡滿 → 醒來：時間跳到日出（t = 0）→ 回 playing。
+ *  黑幕由 `setState` 的冪等 `sleepScreen.hide()` 收掉。 */
+function wakeFromBed(): void {
+  clock = { ...clock, t: 0 };
+  bus.emit('time-changed', { phase: 'day', t: 0 });
+  applyAdvancement({ type: 'phase', phase: 'day' });
+  audio.setPhase('day');
+  sleepScreen.hide();
+  setState('playing');
+}
+
 /** Respawn flow (Task 10): full vitals → world spawn → back to 'playing'.
  *  Inventory is intentionally untouched (settled: death does NOT drop items),
  *  and mobs frozen at death stay put (out of scope, settled). The overlay goes
  *  with the transition — setState clears it. */
 function handleRespawn(): void {
   setVitals(createVitals()); // hp 0 → 20 / hunger refilled — emits vitals-changed via the integer gate
-  resetPlayerToSpawn(); // pos/vel/fallState/attackCd → spawn; inventory untouched
+  respawnPlayer(); // B10: 床還在 → 床頂；被拆／被炸 → 世界出生點（inventory untouched）
   // B8 Task 6：重生不清熔爐 —— 死亡不該讓熔爐的內容消失（原版行為）。
   setState('playing'); // resumes the world (playing block + render tail) + clears the overlay
   relockCanvas(); // Respawn click is a user gesture → controls live (mirrors startGame)
@@ -3351,6 +3440,17 @@ window.__wecraft = {
           saturation: vitals.saturation,
         }
       : null,
+  // B10：床的重生點／睡眠狀態／箭的逐筆狀態（全部**純唯讀**快照）。
+  bedSpawn: () => (bedSpawn ? { ...bedSpawn } : null),
+  sleeping: () => state === 'sleeping',
+  arrowStates: () =>
+    arrows.map((a) => ({
+      id: a.id,
+      x: a.pos.x,
+      y: a.pos.y,
+      z: a.pos.z,
+      fromPlayer: a.fromPlayer === true,
+    })),
 };
 /** A1: the boot check (local read → cloud init/read/apply → title settle).
  *  Runs in the BACKGROUND — the title is already on screen while it works.
@@ -3434,7 +3534,13 @@ gs.renderer.setAnimationLoop(() => {
     fpsCount = 0;
   }
 
-  if (state === 'playing') {
+  if (state === 'sleeping') {
+    // B10：睡眠中——只推進睡眠計時（世界凍結：不 tick clock、不步進實體）；
+    // 睡滿 → wakeFromBed()（t=0 → playing）。這個分支在**外層**迴圈（tick clock
+    // 的那一個 if）——內層的遊戲尾段巢在 playing 分支裡、本來就只在 playing 跑。
+    sleepT += dt;
+    if (sleepT >= SLEEP_DURATION_SEC) wakeFromBed();
+  } else if (state === 'playing') {
     // 晝夜：tick clock → 每幀刷新 sun/sky/fog（cheap），僅在 day↔night 翻轉時 emit
     const prevPhase = phaseOf(clock.t);
     clock = tickClock(clock, dt);
@@ -4109,6 +4215,8 @@ gs.renderer.setAnimationLoop(() => {
         if (Number.isFinite(getBreakTime(id, held))) digTarget = hit;
         if (digStep(currentMode, dig, id, hit, dt, held)) {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+          // B10：被拆的是重生點所在的床 → 重生點失效（回世界出生點）。
+          clearBedSpawnAt(hit.x, hit.y, hit.z);
           // Task 7: the broken block becomes a world drop (survival only; creative
           // spawns nothing). Task 6: the held stack gates the drop (bare hands
           // can't harvest stone/iron ore) and breaking costs exhaustion — one
@@ -4265,6 +4373,10 @@ gs.renderer.setAnimationLoop(() => {
           // B8 Task 7: 右鍵箱子 → 開啟容器（手上拿著方塊也先開容器，與熔爐／
           // 工作台一致，也是原版行為）。
           openChestAt(hit.x, hit.y, hit.z);
+        } else if (hit && hitBlock === BLOCK.BED) {
+          // B10：右鍵床 → 使用（距離／時間窗／怪物的判定都在 world/bed.ts；
+          // 與工作台／熔爐／箱子同層——「使用方塊」優先於「使用手上物品」）。
+          tryUseBed(hit.x, hit.y, hit.z);
         } else if (heldIsBow()) {
           // B10：右鍵按住 = 拉弓（放開才發射）——這裡只記錄開始蓄力，
           // 真正的每幀推進與發射在下面（連放／進食之前）。
