@@ -11,7 +11,7 @@ import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import { spawnDrop, dropItemFor, chanceDropFor, gravelDropFor, type DropEntity } from '../world/drops';
-import { damageMob, type Mob } from '../world/mobs';
+import { damageMob, MOB_HALF_WIDTH, MOB_HITBOX_HEIGHT, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
  *  of adding straight to the inventory: survival only — creative spawns nothing
@@ -152,11 +152,6 @@ export function toolDamage(heldItem: ItemId | null): number {
   const d = DAMAGE_TABLE[heldItem];
   return d === undefined ? 1 : d;
 }
-
-/** Settled mob hitbox for the ray test: centred on `pos` in X/Z (±0.35),
- *  y from the feet up 1.8 blocks. */
-const MOB_HALF_WIDTH = 0.35;
-const MOB_HITBOX_HEIGHT = 1.8;
 
 /** The id of the NEAREST mob whose hitbox the ray crosses within `reach`
  *  (distance along the normalized look direction), or null on a miss.

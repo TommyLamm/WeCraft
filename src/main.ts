@@ -1502,6 +1502,9 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
     arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
     return;
   }
+  // B10：玩家箭的事件由 Task 5 的 applyPlayerArrowHit／落地掉落接線；
+  // 在這之前先明確忽略，讓 MobEvent 擴充後 tsc 仍能收斂到 damage 分支。
+  if (ev.type === 'arrow-hit' || ev.type === 'arrow-landed') return;
   if (!vitals) return; // creative (or dead) — nothing to hurt
   // One clock read per event feeds both halves: calling performance.now() twice
   // could straddle the window edge and mark a hit that was just allowed.

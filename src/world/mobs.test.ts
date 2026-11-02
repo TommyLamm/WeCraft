@@ -7,7 +7,11 @@ import {
   damageMob,
   isDead,
   spawnArrow,
+  spawnPlayerArrow,
   stepArrows,
+  MOB_HALF_WIDTH,
+  MOB_HITBOX_HEIGHT,
+  ARROW_SPEED,
   findSpawnPos,
   xzDistance,
   SPAWN_MIN_DIST,
@@ -23,6 +27,7 @@ import {
   SUN_BURN_DPS,
   type Mob,
   type MobEvent,
+  type ArrowTarget,
   type Arrow,
   type SunBurnCtx,
 } from './mobs';
@@ -896,5 +901,112 @@ describe('stepSunBurn — 白天燃燒', () => {
     expect(m.hp).toBe(20);
     expect(m.burn).toBe(0);
     expect(m.burnAcc).toBe(0);
+  });
+});
+
+// ---- B10 Task 4：玩家箭實體與生物命中 --------------------------------------
+describe('B10 player arrows', () => {
+  it('exposes the shared mob hitbox constants', () => {
+    expect(MOB_HALF_WIDTH).toBe(0.35);
+    expect(MOB_HITBOX_HEIGHT).toBe(1.8);
+  });
+
+  it('spawnPlayerArrow copies from, marks the owner as the player, and applies inaccuracy', () => {
+    const from = { x: 1, y: 2, z: 3 };
+    // rng 0.5 → (0.5*2-1)=0 → no inaccuracy on any axis.
+    const [a] = spawnPlayerArrow([], from, { x: 0, y: 0, z: 2 }, { speed: 20, damage: 5 }, () => 0.5);
+    from.x = 99;
+    expect(a.pos).toEqual({ x: 1, y: 2, z: 3 });
+    expect(a.ownerId).toBe(-1);
+    expect(a.age).toBe(0);
+    expect(a.fromPlayer).toBe(true);
+    expect(a.damage).toBe(5);
+    expect(a.fromPos).toEqual({ x: 1, y: 2, z: 3 });
+    expect(Math.hypot(a.vel.x, a.vel.y, a.vel.z)).toBeCloseTo(20, 10);
+    expect(a.vel.z).toBeCloseTo(20, 10);
+  });
+
+  it('spawnPlayerArrow adds per-axis inaccuracy of up to ±0.3446 blocks/s', () => {
+    // rng 0 → each axis gets −0.3446; rng ≈1 → +0.3446 (direction remains +x).
+    const [low] = spawnPlayerArrow([], { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 1 }, () => 0);
+    expect(low.vel.x).toBeCloseTo(40 - 0.3446, 10);
+    expect(low.vel.y).toBeCloseTo(-0.3446, 10);
+    expect(low.vel.z).toBeCloseTo(-0.3446, 10);
+    const [high] = spawnPlayerArrow([], { x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 1 }, () => 0.999999);
+    expect(high.vel.y).toBeCloseTo(0.3446, 5);
+    expect(high.vel.z).toBeCloseTo(0.3446, 5);
+  });
+
+  it('a player arrow hits a zombie AABB and is consumed', () => {
+    // 箭從 y=1.5 起、殭屍腳底 y=1 → 箭在子步進裡一直落在 AABB 的 y 區間 [1, 2.8] 內。
+    // （若箭也從 y=1.0 起：第一個子步進重力就把 vel.y 壓到 −0.98，箭立刻掉出
+    //   AABB 的 y 區間 → **永遠打不到**；這是照抄就紅的坑。）
+    const arrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 6 }, () => 0.5);
+    const target: ArrowTarget = { id: 7, kind: 'zombie', pos: { x: 2, y: 1, z: 0 }, halfWidth: 0.35, height: 1.8 };
+    const out = stepArrows(arrow, 0.1, () => false, { x: 0, y: 1, z: 0 }, [target]);
+    expect(out.arrows).toHaveLength(0);
+    expect(out.events).toContainEqual(expect.objectContaining({
+      type: 'arrow-hit', targetKind: 'zombie', targetId: 7, amount: 6,
+    }));
+    const hit = out.events.find((e) => e.type === 'arrow-hit');
+    expect(hit).toMatchObject({ from: { x: 0, y: 1.5, z: 0 } });
+  });
+
+  it('a player arrow that hits a wall becomes a recoverable landing event', () => {
+    const arrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 1 }, () => 0.5);
+    const out = stepArrows(arrow, 0.1, (x) => x >= 1, { x: 0, y: 1, z: 0 }, []);
+    expect(out.arrows).toHaveLength(0);
+    const landed = out.events.find((e) => e.type === 'arrow-landed');
+    expect(landed).toBeDefined();
+    // 落地點是最後一個**非實心**位置 → 必須在牆前。
+    expect(landed && landed.type === 'arrow-landed' && landed.pos.x).toBeLessThan(1);
+    expect(landed && landed.type === 'arrow-landed' && landed.pos.x).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('a player arrow never hits the shooter; skeleton arrows still hit the player and ignore targets', () => {
+    const playerArrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 0, y: 0, z: -1 }, { speed: 40, damage: 1 }, () => 0.5);
+    expect(stepArrows(playerArrow, 0.1, () => false, { x: 0, y: 1, z: 0 }, []).events).toHaveLength(0);
+
+    // 玩家受擊判定用的是**眼睛點**（`playerPos.y + EYE_OFFSET`，EYE_OFFSET = 1.4）
+    // 與箭的 0.6 格半徑 → 玩家的腳底必須放 y=0、箭也要從眼睛高度 y=1.4 發射。
+    const skeletonArrow = spawnArrow([], { x: 0, y: 1.4, z: 2 }, { x: 0, y: 0, z: -1 }, 1);
+    const out = stepArrows(skeletonArrow, 0.1, () => false, { x: 0, y: 0, z: 0 }, [
+      { id: 7, kind: 'zombie', pos: { x: 0, y: 1, z: -1 }, halfWidth: 0.35, height: 1.8 },
+    ]);
+    expect(out.events).toContainEqual(expect.objectContaining({ type: 'damage', target: 'player' }));
+    expect(out.events.some((e) => e.type === 'arrow-hit')).toBe(false);
+  });
+
+  it('an arrow flying over the target AABB does not hit', () => {
+    const arrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 6 }, () => 0.5);
+    const target: ArrowTarget = { id: 7, kind: 'zombie', pos: { x: 2, y: -2, z: 0 }, halfWidth: 0.35, height: 1.8 };
+    const out = stepArrows(arrow, 0.1, () => false, { x: 99, y: 0, z: 0 }, [target]);
+    expect(out.arrows).toHaveLength(1);
+    expect(out.events.some((e) => e.type === 'arrow-hit')).toBe(false);
+  });
+
+  it('carries creeper and passive target kinds through the hit event', () => {
+    const creeperArrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 5 }, () => 0.5);
+    const creeper: ArrowTarget = { id: 11, kind: 'creeper', pos: { x: 2, y: 1, z: 0 }, halfWidth: 0.3, height: 1.7 };
+    const c = stepArrows(creeperArrow, 0.1, () => false, { x: 99, y: 0, z: 0 }, [creeper]);
+    expect(c.events).toContainEqual(expect.objectContaining({ type: 'arrow-hit', targetKind: 'creeper', targetId: 11, amount: 5 }));
+
+    const chickenArrow = spawnPlayerArrow([], { x: 0, y: 0.7, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 3 }, () => 0.5);
+    const chicken: ArrowTarget = { id: 12, kind: 'chicken', pos: { x: 2, y: 0, z: 0 }, halfWidth: 0.3, height: 0.9 };
+    const p = stepArrows(chickenArrow, 0.1, () => false, { x: 99, y: 0, z: 0 }, [chicken]);
+    expect(p.events).toContainEqual(expect.objectContaining({ type: 'arrow-hit', targetKind: 'chicken', targetId: 12, amount: 3 }));
+  });
+
+  it('the nearest target wins when two AABBs overlap the path', () => {
+    const arrow = spawnPlayerArrow([], { x: 0, y: 1.5, z: 0 }, { x: 1, y: 0, z: 0 }, { speed: 40, damage: 1 }, () => 0.5);
+    const near: ArrowTarget = { id: 1, kind: 'zombie', pos: { x: 1.5, y: 1, z: 0 }, halfWidth: 0.35, height: 1.8 };
+    const far: ArrowTarget = { id: 2, kind: 'zombie', pos: { x: 3, y: 1, z: 0 }, halfWidth: 0.35, height: 1.8 };
+    const out = stepArrows(arrow, 0.1, () => false, { x: 99, y: 0, z: 0 }, [far, near]);
+    expect(out.events).toContainEqual(expect.objectContaining({ targetId: 1 }));
+    expect(out.events.some((e) => e.type === 'arrow-hit' && e.targetId === 2)).toBe(false);
+  });
+
+  it('ARROW_SPEED stays the shared player/skeleton speed', () => {
+    expect(ARROW_SPEED).toBe(40);
   });
 });

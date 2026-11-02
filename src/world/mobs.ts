@@ -1,5 +1,6 @@
 import { BLOCK } from './blocks';
 import { CHUNK_HEIGHT } from './chunk';
+import { rayAabbEntry } from './raycast';
 
 /** Mob entities & AI: zombie (melee chaser) and skeleton (keep-distance
  *  shooter), plus their arrows (pure — no Three/DOM; the renderer lives in
@@ -100,6 +101,11 @@ export const KNOCKBACK_DECAY_PER_SEC = 0.1;
 export const KNOCKBACK_MIN = 0.1;
 /** Eye height used for arrow aim and the arrow→player hit sphere. */
 export const EYE_OFFSET = 1.4;
+/** Settled mob hitbox: centred on `pos` in X/Z (±0.35), y from the feet up
+ *  1.8 blocks. B10 moved this here from interact.ts so the melee ray test and
+ *  the player-arrow AABB test share one truth. */
+export const MOB_HALF_WIDTH = 0.35;
+export const MOB_HITBOX_HEIGHT = 1.8;
 /** Upward bias added before normalizing the shoot direction ("slight arc" —
  *  the actual drop comes from ARROW_GRAVITY in stepArrows, not from dir). */
 export const SHOOT_ARC_BIAS = 0.15;
@@ -179,19 +185,46 @@ export interface Mob {
 }
 
 /** One arrow in flight (plain entity, same file as its shooter). */
+/** 玩家箭可以命中的生物種類（B10）。殭屍／骷髏用 `mobs.ts` 的 Mob；
+ *  其餘由各自模組（creeper／spider／passive-mobs）提供命中盒。 */
+export type ArrowTargetKind =
+  | 'zombie' | 'skeleton' | 'creeper' | 'spider'
+  | 'chicken' | 'pig' | 'sheep' | 'cow';
+
+/** 一個可被玩家箭命中的目標：`pos` 是**腳底**，命中盒是
+ *  `[pos ± halfWidth]` × `[pos.y, pos.y + height]`。 */
+export interface ArrowTarget {
+  id: number;
+  kind: ArrowTargetKind;
+  pos: { x: number; y: number; z: number };
+  halfWidth: number;
+  height: number;
+}
+
 export interface Arrow {
   id: number;
   pos: { x: number; y: number; z: number };
   vel: { x: number; y: number; z: number };
   age: number; // seconds since spawn
   ownerId: number; // mob id — carries through to the damage event
+  /** B10：玩家箭 → 打生物、不打玩家；只有玩家箭會發 `arrow-hit`／`arrow-landed`。 */
+  fromPlayer?: boolean;
+  /** B10：命中生物時套用的傷害（省略＝ARROW_DAMAGE）。 */
+  damage?: number;
+  /** B10：射擊者的眼睛位置（被動生物的 panic 方向要用「攻擊者位置」）。 */
+  fromPos?: { x: number; y: number; z: number };
 }
 
 /** Events produced by one step: player damage (zombie swipe / arrow hit) or a
  *  skeleton volley the caller turns into an Arrow. */
 export type MobEvent =
   | { type: 'damage'; target: 'player'; amount: number; mobId: number }
-  | { type: 'shoot'; from: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number }; mobId: number };
+  | { type: 'shoot'; from: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number }; mobId: number }
+  // B10：玩家箭命中生物／落地（落地 → 呼叫端生成可撿的箭物品）。
+  | { type: 'arrow-hit'; targetKind: ArrowTargetKind; targetId: number; amount: number;
+      pos: { x: number; y: number; z: number }; dir: { x: number; y: number; z: number };
+      from: { x: number; y: number; z: number } }
+  | { type: 'arrow-landed'; pos: { x: number; y: number; z: number } };
 
 /** `stepMob` context: player feet position, injected solidity (as in drops)
  *  and the frame's dt (cooldowns decrement by dt — no `now`, settle note). */
@@ -559,6 +592,36 @@ export function spawnArrow(
   ];
 }
 
+/** B10：玩家箭（沿用 B4 的 Arrow 實體）。與 `spawnArrow` 相同的 max+1 id、
+ *  age 0、`ownerId = -1`；方向 normalize 後乘 `shot.speed`，每軸再加原版
+ *  inaccuracy 1 的近似誤差（±0.3446 格/秒）。`fromPos` 是射擊者眼睛位置。 */
+export function spawnPlayerArrow(
+  arrows: readonly Arrow[],
+  from: { x: number; y: number; z: number },
+  dir: { x: number; y: number; z: number },
+  shot: { speed: number; damage: number },
+  rng: () => number = Math.random,
+): Arrow[] {
+  let maxId = -1;
+  for (const a of arrows) if (a.id > maxId) maxId = a.id;
+  const len = Math.hypot(dir.x, dir.y, dir.z);
+  const k = len > 0 && Number.isFinite(len) ? shot.speed / len : 0;
+  const jitter = (): number => (rng() * 2 - 1) * 0.3446;
+  return [
+    ...arrows,
+    {
+      id: maxId + 1,
+      pos: { x: from.x, y: from.y, z: from.z },
+      vel: { x: dir.x * k + jitter(), y: dir.y * k + jitter(), z: dir.z * k + jitter() },
+      age: 0,
+      ownerId: -1,
+      fromPlayer: true,
+      damage: shot.damage,
+      fromPos: { x: from.x, y: from.y, z: from.z },
+    },
+  ];
+}
+
 /** Distance from point `p` to the segment `from`→`to` (projection clamped to
  *  [0,1]) — the swept player-hit test: an endpoint-only check misses a shot
  *  that grazes the eye at < ARROW_HIT_RADIUS between its endpoints. */
@@ -599,6 +662,7 @@ export function stepArrows(
   dt: number,
   isSolidAt: (x: number, y: number, z: number) => boolean,
   playerPos: { x: number; y: number; z: number },
+  targets: readonly ArrowTarget[] = [],
 ): { arrows: Arrow[]; events: MobEvent[] } {
   const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
   const out: Arrow[] = [];
@@ -628,10 +692,52 @@ export function stepArrows(
       pos.y += uy * sub;
       pos.z += uz * sub;
       if (isSolidAt(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z))) {
-        consumed = true; // solid first: the AABB never occupies a solid cell
+        // 固體優先（生物 AABB 不會佔住實心格）。玩家箭落地 → 回報可撿的箭；
+        // 骷髏箭維持原本的靜默消耗。
+        if (a.fromPlayer === true) events.push({ type: 'arrow-landed', pos: { ...prev } });
+        consumed = true;
         break;
       }
-      if (segmentDistance(prev, pos, eye) <= ARROW_HIT_RADIUS) {
+      if (a.fromPlayer === true) {
+        // 玩家箭：對每個目標的 AABB 做射線相交，取**最小 t**（最近者）；
+        // 跳過玩家自身判定（不然發射後立刻打到自己）。
+        let bestT: number | null = null;
+        let best: ArrowTarget | null = null;
+        for (const target of targets) {
+          const t = rayAabbEntry(
+            prev,
+            { x: ux, y: uy, z: uz },
+            {
+              x: target.pos.x - target.halfWidth,
+              y: target.pos.y,
+              z: target.pos.z - target.halfWidth,
+            },
+            {
+              x: target.pos.x + target.halfWidth,
+              y: target.pos.y + target.height,
+              z: target.pos.z + target.halfWidth,
+            },
+          );
+          if (t === null || t > sub) continue;
+          if (bestT === null || t < bestT) {
+            bestT = t;
+            best = target;
+          }
+        }
+        if (best !== null) {
+          events.push({
+            type: 'arrow-hit',
+            targetKind: best.kind,
+            targetId: best.id,
+            amount: a.damage ?? ARROW_DAMAGE,
+            pos: { ...pos },
+            dir: { ...vel },
+            from: a.fromPos ? { ...a.fromPos } : { ...a.pos },
+          });
+          consumed = true;
+          break;
+        }
+      } else if (segmentDistance(prev, pos, eye) <= ARROW_HIT_RADIUS) {
         events.push({ type: 'damage', target: 'player', amount: ARROW_DAMAGE, mobId: a.ownerId });
         consumed = true;
         break;
