@@ -77,6 +77,7 @@ describe('cloud-save', () => {
       // 要明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     // Mutate every live input after the build.
     pos[0] = 999;
@@ -104,6 +105,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(built.pos).toEqual([0, 0, 0]);
     expect(built.yaw).toBe(0);
@@ -119,6 +121,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(inf.pos).toEqual([1, 2, 3]);
     expect(inf.yaw).toBe(0);
@@ -143,6 +146,7 @@ describe('cloud-save', () => {
       stash,
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     // Mutate every live input after the build.
     stash.survival[0] = { item: 'apple', count: 1 };
@@ -222,6 +226,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: entities,
+      spawnPoint: null,
     });
     entities[0].slots![0]!.count = 99;
     expect(built.blockEntities![0].slots![0]).toEqual({ item: 'stone', count: 1 });
@@ -252,6 +257,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [chest],
+      spawnPoint: null,
     });
     expect(byteSizeOf(built)).toBeLessThan(CLOUD_MAX_BYTES);
   });
@@ -298,6 +304,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(built.inventory).toHaveLength(36);
   });
@@ -379,6 +386,7 @@ describe('cloud-save', () => {
       // B4 Task 10：`passiveMobs` 是**必填**欄位（沒有生物也要明寫空陣列）。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(built.inventory[0]).toEqual({ item: 'iron_axe', count: 1, dur: 88 });
   });
@@ -408,6 +416,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(built.worldgenVersion).toBe(WORLDGEN_VERSION);
   });
@@ -458,6 +467,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [cow],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(built.passiveMobs).toEqual([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 7, yaw: 0.5 }]);
     // 深拷貝 → 改回傳的 payload 不得影響場上的生物
@@ -499,6 +509,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs,
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(data.passiveMobs).toHaveLength(12);
     expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
@@ -519,6 +530,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(byteSizeOf(data)).toBeLessThan(2048);
   });
@@ -538,6 +550,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(byteSizeOf(data)).toBeLessThan(CLOUD_MAX_BYTES);
   });
@@ -555,6 +568,7 @@ describe('cloud-save', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     const withExtra = { ...base, extraPayload: 'x'.repeat(70 * 1024) } as CloudData;
     expect(byteSizeOf(withExtra)).toBeGreaterThan(CLOUD_MAX_BYTES);
@@ -720,5 +734,58 @@ describe('cloud-save', () => {
     expect(classifyCloudError(undefined)).toBe('UNAVAILABLE');
     expect(classifyCloudError({})).toBe('NETWORK');
     expect(classifyCloudError(new Error('boom'))).toBe('NETWORK');
+  });
+});
+
+// ---- B10 Task 7：重生點附加欄位（格式不升版）---------------------------------
+describe('cloud save spawnPoint (B10)', () => {
+  const baseSrc = () => ({
+    seed: 42,
+    pos: [0, 64, 0] as [number, number, number],
+    yaw: 0,
+    vitals: null,
+    clockT: 0,
+    inventory: [],
+    advancements: emptyAdvancements(),
+    settings: validSettings(),
+    stash: createModeStash(),
+    passiveMobs: [],
+    blockEntities: [],
+    spawnPoint: null as { x: number; y: number; z: number } | null,
+  });
+
+  it('B10: buildCloudData deep-copies the spawn point (and writes null when absent)', () => {
+    const point = { x: 1, y: 65, z: 2 };
+    const built = buildCloudData({ ...baseSrc(), spawnPoint: point });
+    expect(built.spawnPoint).toEqual({ x: 1, y: 65, z: 2 });
+    expect(built.spawnPoint).not.toBe(point);
+    expect(buildCloudData(baseSrc()).spawnPoint).toBeNull();
+  });
+
+  it('B10: validateCloudData rejects a malformed spawn point (whole payload)', () => {
+    for (const junk of ['x', { x: 1.5, y: 65, z: 2 }, { x: 1, y: 65 }, 42]) {
+      expect(validateCloudData({ ...rawValid(), spawnPoint: junk })).toBe(false);
+    }
+    expect(validateCloudData({ ...rawValid(), spawnPoint: null })).toBe(true);
+    expect(validateCloudData({ ...rawValid(), spawnPoint: { x: 1, y: 65, z: 2 } })).toBe(true);
+    expect(validateCloudData(rawValid())).toBe(true); // 欄位缺失＝舊 payload，合法
+  });
+
+  it('B10: acceptCloudData always returns spawnPoint (null for absent/illegal-free payload)', () => {
+    const absent = acceptCloudData(rawValid())!;
+    expect(absent.spawnPoint).toBeNull();
+    const nulled = acceptCloudData({ ...rawValid(), spawnPoint: null })!;
+    expect(nulled.spawnPoint).toBeNull();
+    const point = { x: 1, y: 65, z: 2 };
+    const accepted = acceptCloudData({ ...rawValid(), spawnPoint: point })!;
+    expect(accepted.spawnPoint).toEqual({ x: 1, y: 65, z: 2 });
+    expect(accepted.spawnPoint).not.toBe(point);
+    // 髒值 → validateCloudData 整包拒收 → accept 回 null（不是「回 payload 但 spawnPoint 為 null」）
+    expect(acceptCloudData({ ...rawValid(), spawnPoint: 'x' })).toBeNull();
+  });
+
+  it('B10: the format pins do not move (still format 4, readable 1-4)', () => {
+    expect(CLOUD_FORMAT_VERSION).toBe(4);
+    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2, 3, 4]);
   });
 });

@@ -28,6 +28,8 @@ import {
   type AdvancementState,
 } from '../core/advancements';
 import { WORLDGEN_VERSION, readWorldgenVersion } from './worldgen';
+// B10：重生點的型別與清洗（存檔／雲端共用同一支 `normalizeSpawnPoint`）。
+import { normalizeSpawnPoint, type SpawnPoint } from '../core/spawn-point';
 import {
   normalizePassiveMobs,
   serializePassiveMobs,
@@ -118,6 +120,10 @@ export interface SavePayloadV5 extends Omit<SavePayloadV4, 'version'> {
 export interface SavePayloadV6 extends Omit<SavePayloadV5, 'version'> {
 	version: 6;
 	blockEntities: BlockEntity[];
+	/** B10 附加欄位（**不升版**）：床的重生點（方塊座標）；`null`＝回世界出生點。
+	 *  舊版讀到新存檔會忽略這個鍵（與 B3 的 `worldgenVersion`、B4 的
+	 *  `passiveMobs` 同一條規則）。 */
+	spawnPoint?: SpawnPoint | null;
 }
 
 /** The shape written to / read from the single local slot. */
@@ -135,6 +141,9 @@ export type SavePayload = SavePayloadV6;
  * （`saveGame(payload: SavePayload)` 等）完全不受影響。 */
 export interface SavePayloadWithPassiveMobs extends SavePayloadV6 {
 	passiveMobs: PassiveMobRecord[];
+	/** B10：`loadGame`／`collectSavePayload` **一律**帶這個鍵（沒有重生點也要
+	 *  明寫 `null`）→ 呼叫端不必寫「有沒有這個鍵」的分支。 */
+	spawnPoint: SpawnPoint | null;
 }
 
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
@@ -162,6 +171,9 @@ export interface SaveSources {
 	 *  deep-copied into the payload. **必填**（沒有塊實體也要明寫空陣列）
 	 *  → 少了它 typecheck 直接紅，呼叫端不會漏掉「塊實體要存檔」這件事。 */
 	blockEntities: ReadonlyArray<BlockEntity>;
+	/** Live bed spawn point (B10) — copied into the payload. **必填**（沒有重生點
+	 *  也要明寫 `null`）→ 少了它 typecheck 直接紅。 */
+	spawnPoint: SpawnPoint | null;
 	/** Defaults to `Date.now()` when omitted. Note: `saveGame` overwrites
 	 *  `savedAt` with its own `Date.now()` on the way to IndexedDB, so this
 	 *  value only matters for tests / pre-save inspection. */
@@ -210,6 +222,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 		passiveMobs: serializePassiveMobs(args.passiveMobs),
 		// B8 Task 4：塊實體（箱子內容＋熔爐狀態）——逐筆深拷貝（`dur` 一起帶走）。
 		blockEntities: serializeBlockEntities(args.blockEntities),
+		// B10：重生點附加欄位——合法值深拷貝、沒有／髒值一律 `null`。
+		spawnPoint: args.spawnPoint ? { ...args.spawnPoint } : null,
 	};
 }
 
@@ -443,6 +457,7 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			const {
 				worldgenVersion: rawVersion,
 				passiveMobs: rawPassiveMobs,
+				spawnPoint: rawSpawnPoint,
 				...migratedClean
 			} = migrated;
 			const worldgenVersion = readWorldgenVersion(rawVersion);
@@ -462,6 +477,10 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 				...migratedClean,
 				...(worldgenVersion === undefined ? {} : { worldgenVersion }),
 				passiveMobs: normalizePassiveMobs(rawPassiveMobs),
+				// B10：重生點**一律回傳**（正規化後）——舊記錄沒有這個鍵 → `null`
+				// （回世界出生點）；髒值剝成 `null`、不整包拒絕（與 `passiveMobs`
+				// 同一套語意；`isValidSavePayload` 不看這個附加欄位）。
+				spawnPoint: normalizeSpawnPoint(rawSpawnPoint),
 			};
 		} finally {
 			db.close();

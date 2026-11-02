@@ -89,6 +89,8 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
     // B4 Task 10：附加欄位（payload 版本仍是 3）——被動生物的持久化記錄。
     // fixture 帶著空陣列 → round-trip 的 deep-equal 才成立。
     passiveMobs: [],
+    // B10：重生點附加欄位；空 fixture 讓 deep-equal 成立。
+    spawnPoint: null,
     // B8 Task 4：塊實體欄位（箱子內容／熔爐狀態）；空的 fixture 讓 deep-equal 成立。
     blockEntities: [],
     ...patch,
@@ -238,6 +240,23 @@ describe('saveGame / loadGame', () => {
     expect(loaded?.player.inventory).toHaveLength(INVENTORY_SLOTS);
   });
 
+  it('B10: the bed spawn point round-trips and junk/absent values normalize to null', async () => {
+    // 合法值 → 原樣往返
+    await saveGame(makePayload({ spawnPoint: { x: 4, y: 65, z: -7 } }));
+    expect((await loadGame())?.spawnPoint).toEqual({ x: 4, y: 65, z: -7 });
+    // null → null
+    await saveGame(makePayload({ spawnPoint: null }));
+    expect((await loadGame())?.spawnPoint).toBeNull();
+    // 髒值（小數）→ 剝成 null（不放寬結構檢查、不整包拒絕）
+    await putRawRecord({ ...makePayload(), spawnPoint: { x: 4.5, y: 65, z: -7 } });
+    expect((await loadGame())?.spawnPoint).toBeNull();
+    // 缺欄位（舊存檔）→ null
+    const missing = { ...makePayload() } as Record<string, unknown>;
+    delete missing.spawnPoint;
+    await putRawRecord(missing);
+    expect((await loadGame())?.spawnPoint).toBeNull();
+  });
+
   it('round-trips a creative-mode payload', async () => {
     const base = makePayload();
     await saveGame({
@@ -315,6 +334,8 @@ describe('saveGame / loadGame', () => {
       // B4 Task 10：loadGame **一律**回傳 `passiveMobs`（正規化後）→ 舊的 v1
       // 記錄沒有這個欄位 → 空陣列（舊存檔＝沒有生物，不是錯誤）。
       passiveMobs: [],
+      // B10：舊記錄沒有 `spawnPoint` → loadGame 一律補 `null`（回世界出生點）。
+      spawnPoint: null,
     });
     expect(loaded!.version).toBe(6);
     expect(loaded!.blockEntities).toEqual([]);
@@ -345,6 +366,7 @@ describe('saveGame / loadGame', () => {
       },
       // B4 Task 10：同上——舊記錄缺欄位 → 空陣列。
       passiveMobs: [],
+      spawnPoint: null,
     });
     expect(loaded!.version).toBe(6);
     expect(loaded!.blockEntities).toEqual([]);
@@ -978,6 +1000,7 @@ describe('collectSavePayload', () => {
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 123,
     });
     expect(payload.version).toBe(6);
@@ -1010,6 +1033,7 @@ describe('collectSavePayload', () => {
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
     expect(payload.worldgenVersion).toBe(WORLDGEN_VERSION);
@@ -1027,6 +1051,7 @@ describe('collectSavePayload', () => {
       stash: createModeStash(),
       passiveMobs: [cow],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
     expect(payload.passiveMobs).toEqual([{ kind: 'cow', x: 1, y: 2, z: 3, hp: 7, yaw: 0.5 }]);
@@ -1055,6 +1080,7 @@ describe('collectSavePayload', () => {
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
     expect(payload.player.inventory[0]).toEqual({ item: 'diamond_sword', count: 1, dur: 900 });
@@ -1080,6 +1106,7 @@ describe('collectSavePayload', () => {
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
     // fresh pos array — mutating the source must not touch the payload
@@ -1120,6 +1147,7 @@ describe('collectSavePayload', () => {
       // 明寫空陣列）→ 少了它 typecheck 直接紅。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     const after = Date.now();
     expect(payload.player.mode).toBe('creative');
@@ -1148,6 +1176,7 @@ describe('collectSavePayload', () => {
       // B4 Task 10：同上——必填的來源欄位。
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
     // fresh arrays, stacks and vitals — never the live objects
@@ -1193,6 +1222,7 @@ describe('collectSavePayload', () => {
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: src,
+      spawnPoint: null,
       savedAt: 0,
     });
     src[0].slots![0]!.count = 99;
@@ -1230,7 +1260,18 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
     stash: createModeStash(),
     passiveMobs: [],
     blockEntities: [],
+    spawnPoint: null,
     savedAt: 0,
+  });
+
+  it('B10: collectSavePayload writes the bed spawn point as a fresh object', () => {
+    const world = new World();
+    const src = { ...sourcesOf(world), spawnPoint: { x: 4, y: 65, z: -7 } };
+    const payload = collectSavePayload(src);
+    expect(payload.spawnPoint).toEqual({ x: 4, y: 65, z: -7 });
+    expect(payload.spawnPoint).not.toBe(src.spawnPoint); // 新物件
+    // null 進 → null 出（「沒有重生點」是明寫的 null）
+    expect(collectSavePayload(sourcesOf(world)).spawnPoint).toBeNull();
   });
 
   it('a torch survives a save and load round trip', () => {
@@ -1297,6 +1338,7 @@ describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', 
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
       savedAt: 0,
     });
 

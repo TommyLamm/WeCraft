@@ -73,6 +73,7 @@ describe('A4：舞台化的材料在存檔／讀檔之間恰好出現一次', ()
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
 
     // Continue：還原出來的背包必須有**恰好一份**那些材料（不是兩份）。
@@ -102,6 +103,7 @@ describe('A4：舞台化的材料在存檔／讀檔之間恰好出現一次', ()
       stash: createModeStash(),
       passiveMobs: [],
       blockEntities: [],
+      spawnPoint: null,
     });
     expect(countOf(payload.player.inventory, 'stone')).toBe(total);
   });

@@ -41,6 +41,8 @@ import {
 } from './advancements';
 import { normalizeModeStash, type ModeStash, type StashPayload } from './mode-stash';
 import { clampSettings, DEFAULT_SETTINGS, type Settings } from './settings';
+// B10：重生點的型別與清洗（存檔／雲端共用同一支 `normalizeSpawnPoint`）。
+import { normalizeSpawnPoint, type SpawnPoint } from './spawn-point';
 import { WORLDGEN_VERSION, readWorldgenVersion } from '../world/worldgen';
 import {
   normalizePassiveMobs,
@@ -150,6 +152,9 @@ export interface CloudData {
    *  format 1–3 的 payload 沒有這個欄位 → 接受路徑給**空清單**（不是壞
    *  payload）；`CloudData` 保持 optional，`acceptCloudData` 回傳時一律存在。 */
   blockEntities?: BlockEntity[];
+  /** B10 附加欄位（format 4 **不變**）：床的重生點；`null`＝回世界出生點。
+   *  舊 payload 沒有這個欄位 → 接受路徑給 `null`（不是壞 payload）。 */
+  spawnPoint?: SpawnPoint | null;
 }
 
 export interface CloudBuildSource {
@@ -169,6 +174,9 @@ export interface CloudBuildSource {
   /** Live block entities (B8 Task 5) — chest contents + furnace states,
    *  deep-copied into the payload. **必填**（沒有塊實體也要明寫空陣列）。 */
   blockEntities: ReadonlyArray<BlockEntity>;
+  /** Live bed spawn point (B10) — deep-copied into the payload. **必填**
+   *  （沒有重生點也要明寫 `null`）。 */
+  spawnPoint: SpawnPoint | null;
 }
 
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
@@ -231,6 +239,8 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
     passiveMobs: serializePassiveMobs(src.passiveMobs),
     // B8 Task 5：塊實體（箱子內容＋熔爐狀態）——逐筆深拷貝（`dur` 一起帶走）。
     blockEntities: serializeBlockEntities(src.blockEntities),
+    // B10：重生點——合法值深拷貝、沒有／`null` → `null`。
+    spawnPoint: src.spawnPoint ? { ...src.spawnPoint } : null,
   };
 }
 
@@ -289,6 +299,16 @@ export function validateCloudData(x: unknown): x is CloudData {
   // B8 Task 5：附加欄位 `blockEntities` 同理——只驗證「是陣列」，逐筆內容交給
   // `normalizeBlockEntities`（一筆壞箱子不讓整包被拒）。
   if (r.blockEntities !== undefined && !Array.isArray(r.blockEntities)) return false;
+  // B10：附加欄位 `spawnPoint` 若存在（且不是 `null`），座標必須能過
+  // `normalizeSpawnPoint`（小數／缺欄位／非物件 → **整包拒收**；重生點是
+  // 單一值，壞掉沒有「只丟那一筆」的空間）。
+  if (
+    r.spawnPoint !== undefined &&
+    r.spawnPoint !== null &&
+    normalizeSpawnPoint(r.spawnPoint) === null
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -348,6 +368,9 @@ export function acceptCloudData(x: unknown): CloudData | null {
     // B8 Task 5：附加欄位 `blockEntities` **一律回傳**（正規化後的清單）——舊
     // payload 沒有這個鍵 → 空清單；單筆壞掉 → 只丟那一筆（絕不整包拒絕）。
     blockEntities: normalizeBlockEntities(x.blockEntities),
+    // B10：附加欄位 `spawnPoint` **一律回傳**（正規化後）——舊 payload 沒有
+    // 這個鍵 → `null`（回世界出生點）；髒值已被 `validateCloudData` 整包拒收。
+    spawnPoint: normalizeSpawnPoint(x.spawnPoint),
   };
 }
 
@@ -433,6 +456,11 @@ export function mergeCloudData(local: CloudData, remote: CloudData): CloudData {
       ...(local.blockEntities === undefined
         ? {}
         : { blockEntities: serializeBlockEntities(local.blockEntities) }),
+      // B10（規則 1 的延伸）：重生點是本機進度 → 合併時一律用本機，與
+      // stash／passiveMobs／blockEntities 同款 optional-spread 深拷貝。
+      ...(local.spawnPoint === undefined
+        ? {}
+        : { spawnPoint: local.spawnPoint ? { ...local.spawnPoint } : null }),
     };
   };
 

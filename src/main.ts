@@ -26,6 +26,8 @@ import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './wo
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
+// B10 Task 7：重生點的型別（存檔／雲端附加欄位共用）。
+import type { SpawnPoint } from './core/spawn-point';
 // B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
 import { damageStack } from './core/durability';
 // B10 Task 5：弓的蓄力與傷害（純邏輯；拉弓/放開的規則本體在 core/bow.ts）。
@@ -1065,6 +1067,8 @@ const hissedFuseIds = new Set<number>();
 let arrows: Arrow[] = [];
 /** B10：拉弓中的蓄力狀態（slot ＝開始拉弓時的選取格；換格即取消）。 */
 let bowDraw: { charge: number; slot: number } | null = null;
+/** B10：床設定的重生點（方塊座標）；`null`＝回世界出生點。 */
+let bedSpawn: SpawnPoint | null = null;
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 /**
  * 被動生物（雞／豬／羊／牛；B4 Task 6）。**與敵對生物分開存**：
@@ -2384,6 +2388,7 @@ function sessionSavePayload(): SavePayload | null {
     stash: modeStash, // B1.3: the other mode's slots + survival vitals
     passiveMobs, // B4 Task 10: 被動生物（種類／座標／血量／朝向）跨存檔
     blockEntities: [...blockEntities.values()], // B8 Task 4: 箱子內容＋熔爐狀態
+    spawnPoint: bedSpawn, // B10：床的重生點（附加欄位；沒有＝null）
   });
 }
 
@@ -2498,6 +2503,8 @@ function applyCloudData(data: CloudData): void {
   passiveMobs = restorePassiveMobs(
     passiveMobsForLoad(data.passiveMobs, needsWorldgenNotice(data.worldgenVersion)),
   );
+  // B10：床的重生點（附加欄位；舊 payload 沒有 → null＝回世界出生點）。
+  bedSpawn = data.spawnPoint ? { ...data.spawnPoint } : null;
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -2582,6 +2589,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       stash: modeStash,
       passiveMobs, // B4 Task 10: 被動生物隨雲端進度一起旅行
       blockEntities: [...blockEntities.values()], // B8 Task 5: 箱子內容＋熔爐狀態
+      spawnPoint: bedSpawn, // B10：床的重生點（附加欄位；沒有＝null）
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');
@@ -2874,6 +2882,7 @@ function startGame(): void {
   // 丟在腳邊也會被 `resetWorld()` 一起清掉；丟進**新**世界才是洩漏）。
   resetUiOwnedState();
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
+  bedSpawn = null; // B10: 新局沒有床的重生點（回世界出生點）
   modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
   // Task 17.5 Critical (verified live; B5 Task 7 widened the inventory to 36):
@@ -2965,6 +2974,8 @@ function continueGame(payload: SavePayload): void {
   passiveMobs = restorePassiveMobs(
     passiveMobsForLoad(payload.passiveMobs, needsWorldgenNotice(payload.worldgenVersion)),
   );
+  // B10：床的重生點（附加欄位；舊記錄沒有 → null＝回世界出生點）。
+  bedSpawn = payload.spawnPoint ? { ...payload.spawnPoint } : null;
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);

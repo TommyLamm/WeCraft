@@ -187,3 +187,23 @@ describe('mergeCloudData (C1 合併)', () => {
     expect(kept).toBeLessThan(remoteIds.length);
   });
 });
+
+// ---- B10 Task 7：重生點合併（本機為基底；optional-spread）-------------------
+describe('mergeCloudData spawnPoint (B10)', () => {
+  it('B10: the local spawn point wins, deep-copied', () => {
+    const local = mkData({ spawnPoint: { x: 1, y: 65, z: 2 } });
+    const remote = mkData({ spawnPoint: { x: 9, y: 70, z: 9 } });
+    const merged = mergeCloudData(local, remote);
+    expect(merged.spawnPoint).toEqual({ x: 1, y: 65, z: 2 });
+    expect(merged.spawnPoint).not.toBe(local.spawnPoint);
+  });
+
+  it('B10: local undefined → key omitted; local null → null', () => {
+    const localUndefined = mkData();
+    delete localUndefined.spawnPoint;
+    const mergedUndefined = mergeCloudData(localUndefined, mkData({ spawnPoint: { x: 9, y: 70, z: 9 } }));
+    expect(Object.hasOwn(mergedUndefined, 'spawnPoint')).toBe(false);
+    const mergedNull = mergeCloudData(mkData({ spawnPoint: null }), mkData({ spawnPoint: { x: 9, y: 70, z: 9 } }));
+    expect(mergedNull.spawnPoint).toBeNull();
+  });
+});
