@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { ItemId } from '../core/items';
 import {
   bobCurve,
+  bowDrawPose,
   startSwing as beginSwing,
   stepSwing,
   swingCurve,
@@ -22,6 +23,8 @@ export interface Viewmodel {
   setItem(item: ItemId | null): void;
   /** Restart the swing animation (attack / place / mining tick / break). */
   startSwing(): void;
+  /** B10：拉弓的蓄力（0..1；null＝沒在拉）——套在 icon mesh 上的拉弓姿態。 */
+  setDraw(charge: number | null): void;
   /** Per-frame: advance swing + bob and apply the pose. `visible` gates the
    *  whole group (third person / any non-playing state); `horSpeed` is the
    *  horizontal speed in blocks/s that drives the walk bob phase. */
@@ -98,6 +101,12 @@ export function createViewmodel(
 
   let swing: Swing = { t: 0, active: false };
   let bobPhase = 0;
+  /** B10：拉弓蓄力（0..1）；null＝沒在拉弓 → 姿態歸零。 */
+  let draw: number | null = null;
+
+  function setDraw(charge: number | null): void {
+    draw = charge === null ? null : Math.min(1, Math.max(0, Number.isFinite(charge) ? charge : 0));
+  }
 
   function setItem(item: ItemId | null): void {
     const next = viewmodelItem(item);
@@ -128,6 +137,10 @@ export function createViewmodel(
     group.position.set(BASE_X + bob.posX, BASE_Y + pose.posY + bob.posY, BASE_Z + pose.posZ);
     group.rotation.x = pose.rotX;
     group.rotation.z = bob.rotZ;
+    // B10：拉弓姿態只套在 icon mesh（弓是 icon item）→ 方塊的擺放不受影響。
+    const drawPose = bowDrawPose(draw ?? 0);
+    iconMesh.position.set(drawPose.posX, drawPose.posY, drawPose.posZ);
+    iconMesh.rotation.x = drawPose.rotX;
   }
 
   function dispose(): void {
@@ -141,5 +154,5 @@ export function createViewmodel(
     // here (chunk terrain and particles sample the same upload).
   }
 
-  return { setItem, startSwing, update, dispose };
+  return { setItem, setDraw, startSwing, update, dispose };
 }

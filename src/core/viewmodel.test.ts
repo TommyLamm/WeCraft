@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bobCurve,
+  bowDrawPose,
   startSwing,
   stepSwing,
   swingCurve,
@@ -86,5 +87,28 @@ describe('curves', () => {
     expect(atPi.posY).toBeCloseTo(0);
     expect(atPi.posX).toBeCloseTo(0.015);
     expect(atPi.rotZ).toBeCloseTo(0);
+  });
+});
+
+// ---- B10 Task 5：拉弓姿態 ---------------------------------------------------
+describe('bowDrawPose', () => {
+  it('B10: bowDrawPose pulls the bow back and up as charge grows', () => {
+    const p0 = bowDrawPose(0);
+    const p1 = bowDrawPose(1);
+    expect(p1.posZ).toBeLessThan(p0.posZ);
+    expect(p1.rotX).toBeGreaterThan(p0.rotX);
+    expect(bowDrawPose(NaN)).toEqual(bowDrawPose(0));
+    expect(bowDrawPose(2)).toEqual(bowDrawPose(1));
+  });
+
+  it('B10: the draw pose starts at zero, is monotonic and stays in its envelope', () => {
+    const p0 = bowDrawPose(0);
+    // `-0.1 * 0` 是 `-0`；`-0 === 0` 為真 → 逐軸用 `===` 而不是 toEqual。
+    expect(p0.rotX === 0 && p0.posX === 0 && p0.posY === 0 && p0.posZ === 0).toBe(true);
+    const p = bowDrawPose(1);
+    expect(p).toEqual({ rotX: 0.18, posX: -0.1, posY: -0.06, posZ: -0.16 });
+    // 單調：拉了更多 → 位移更遠（sin 曲線在 [0,1] 上遞增）
+    expect(bowDrawPose(0.6).posZ).toBeLessThan(bowDrawPose(0.4).posZ);
+    expect(bowDrawPose(0.6).rotX).toBeGreaterThan(bowDrawPose(0.4).rotX);
   });
 });

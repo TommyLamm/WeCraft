@@ -28,6 +28,8 @@ import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
 // B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
 import { damageStack } from './core/durability';
+// B10 Task 5：弓的蓄力與傷害（純邏輯；拉弓/放開的規則本體在 core/bow.ts）。
+import { bowShotFor, stepBowCharge } from './core/bow';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry, titleTriState } from './core/boot-entry';
 import { createInventoryModel, type GameMode } from './core/inventory';
@@ -121,16 +123,20 @@ import {
   stepArrows,
   stepSunBurn,
   spawnArrow,
+  spawnPlayerArrow,
   isDead,
   hasLineOfSight,
   damageMob,
   EYE_OFFSET,
+  MOB_HALF_WIDTH,
+  MOB_HITBOX_HEIGHT,
   xzDistance,
   SPAWN_INTERVAL_SEC,
   DESPAWN_DISTANCE,
   type Mob,
   type MobKind,
   type Arrow,
+  type ArrowTarget,
   type MobEvent,
 } from './world/mobs';
 // B4 Task 5：生怪光照判準（判準集中在 spawn-rules；B6 起餵真的 per-block 光照）。
@@ -153,6 +159,7 @@ import {
   attackCreeper,
   hitCreeperId,
   damageCreeper,
+  CREEPER_WIDTH,
   CREEPER_HEIGHT,
   type Creeper,
 } from './world/creeper';
@@ -162,6 +169,7 @@ import {
   attackSpider,
   hitSpiderId,
   damageSpider,
+  SPIDER_WIDTH,
   SPIDER_HEIGHT,
   type Spider,
   type SpiderEvent,
@@ -924,6 +932,33 @@ function heldIsFood(): boolean {
   return held !== null && foodFor(held.item) !== null;
 }
 
+/** B10：手上拿的是不是弓。 */
+function heldIsBow(): boolean {
+  return slots[selected]?.item === 'bow';
+}
+
+/** B10：放開右鍵 → 結算這一發（生存耗箭、扣 1 耐久；創造不耗不扣）。
+ *
+ *  **順序**：先檢查箭 → 先扣箭 → 生成箭 → 才扣耐久（最後一發把弓弄壞時，
+ *  箭仍要射出去）。`from`／`aim` 是呼叫端當下的射線原點與方向（第三身時的
+ *  相機姿態與近戰同一條射線）。 */
+function releaseBow(from: { x: number; y: number; z: number }, aim: { x: number; y: number; z: number }): void {
+  const draw = bowDraw;
+  bowDraw = null;
+  viewmodel.setDraw(null);
+  if (!draw) return;
+  const shot = bowShotFor(draw.charge);
+  const hasArrow = currentMode === 'creative' || inventory.countItem('arrow') > 0;
+  if (!hasArrow) {
+    hudHint.show('沒有箭了');
+    return;
+  }
+  if (currentMode === 'survival') inventory.removeItem('arrow', 1);
+  arrows = spawnPlayerArrow(arrows, from, aim, { speed: shot.speed, damage: shot.damage });
+  damageHeldTool(1); // 先射箭、再扣耐久 → 最後一發壞掉時箭仍射出
+  hud.setHotbar(slots, selected);
+}
+
 /** B2.5：丟棄選取格（Q）。`wholeStack` ＝整疊丟棄（Ctrl+Q），否則只丟 1 個。
  *
  *  **「丟幾個」由純函式決定**（`src/player/drop.ts` 的 `dropCount`）→ 創造模式
@@ -1028,6 +1063,8 @@ let spiders: Spider[] = [];
  *  （爆炸、取消、死亡、despawn）時被清掉 → 重新點燃會再播一次（正確）。 */
 const hissedFuseIds = new Set<number>();
 let arrows: Arrow[] = [];
+/** B10：拉弓中的蓄力狀態（slot ＝開始拉弓時的選取格；換格即取消）。 */
+let bowDraw: { charge: number; slot: number } | null = null;
 let spawnAcc = 0; // seconds toward the next 5 s spawn tick
 /**
  * 被動生物（雞／豬／羊／牛；B4 Task 6）。**與敵對生物分開存**：
@@ -1502,9 +1539,9 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
     arrows = spawnArrow(arrows, ev.from, ev.dir, ev.mobId);
     return;
   }
-  // B10：玩家箭的事件由 Task 5 的 applyPlayerArrowHit／落地掉落接線；
-  // 在這之前先明確忽略，讓 MobEvent 擴充後 tsc 仍能收斂到 damage 分支。
-  if (ev.type === 'arrow-hit' || ev.type === 'arrow-landed') return;
+  // B10：MobEvent 多了 arrow-hit／arrow-landed → 這裡只處理 damage 變體
+  // （玩家箭的命中由 applyPlayerArrowHit 套用；落地掉落由呼叫端處理）。
+  if (ev.type !== 'damage') return;
   if (!vitals) return; // creative (or dead) — nothing to hurt
   // One clock read per event feeds both halves: calling performance.now() twice
   // could straddle the window edge and mark a hit that was just allowed.
@@ -1519,6 +1556,65 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
   }
   setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
   hurtFlash.flash();
+}
+
+/** B10 Task 5：把一支玩家箭的命中套用到對應的生物家族（單一目標、早退）。
+ *
+ *  - 找不到／已死 → 直接 return（同一幀的第二支箭不得重複結算、不得重複觸發進度）。
+ *  - `damageMob`／`damageCreeper`／`damageSpider` 的第 3 參數是**擊退方向**
+ *    向量（箭的速度方向）；只有 `damagePassiveMob` 的第 3 參數是**攻擊者位置**
+ *    （panic 方向＝背離攻擊者）→ 用事件帶的 `ev.from`（射擊者的眼睛位置）。
+ *  - `damageSpider` 的第 4 參數 `angry` 預設是 **true**（`opts.angry ?? true`；
+ *    B9 的爆炸才顯式傳 false）→ 箭＝玩家攻擊 → 顯式傳 true。
+ *  - **掉落不在這裡生成**：殭屍／骷髏走既有的死亡清除、苦力怕／蜘蛛在每幀的
+ *    死亡過濾補掉落、被動生物既有過濾已掉；近戰／爆炸的路徑各自移除死者。 */
+function applyPlayerArrowHit(ev: Extract<MobEvent, { type: 'arrow-hit' }>): void {
+  let killed = false;
+  switch (ev.targetKind) {
+    case 'zombie':
+    case 'skeleton': {
+      const target = mobs.find((m) => m.id === ev.targetId);
+      if (!target || isDead(target)) return; // 找不到／已死 → 不重複結算
+      const next = damageMob(target, ev.amount, ev.dir); // 第 3 參數＝擊退方向
+      mobs = mobs.map((m) => (m.id === ev.targetId ? next : m));
+      mobRenderer.flashMob(ev.targetId);
+      killed = isDead(next);
+      break;
+    }
+    case 'creeper': {
+      const target = creepers.find((c) => c.id === ev.targetId);
+      if (!target || isCreeperDead(target)) return;
+      const next = damageCreeper(target, ev.amount, ev.dir); // 第 3 參數＝擊退方向
+      creepers = creepers.map((c) => (c.id === ev.targetId ? next : c));
+      b9Renderer.flashCreeper(ev.targetId);
+      killed = isCreeperDead(next);
+      break;
+    }
+    case 'spider': {
+      const target = spiders.find((sp) => sp.id === ev.targetId);
+      if (!target || isSpiderDead(target)) return;
+      // 第 3 參數＝擊退方向；第 4 參數才是 angry（預設 true；箭＝玩家攻擊）。
+      const next = damageSpider(target, ev.amount, ev.dir, { angry: true });
+      spiders = spiders.map((sp) => (sp.id === ev.targetId ? next : sp));
+      b9Renderer.flashSpider(ev.targetId);
+      killed = isSpiderDead(next);
+      break;
+    }
+    case 'chicken':
+    case 'pig':
+    case 'sheep':
+    case 'cow': {
+      const target = passiveMobs.find((m) => m.id === ev.targetId);
+      if (!target || isPassiveDead(target)) return;
+      // 第 3 參數＝攻擊者位置（panic 方向＝背離攻擊者）；第 4 參數＝擊退方向。
+      const next = damagePassiveMob(target, ev.amount, { x: ev.from.x, z: ev.from.z }, ev.dir);
+      passiveMobs = passiveMobs.map((m) => (m.id === ev.targetId ? next : m));
+      passiveRenderer.flashPassiveMob(ev.targetId);
+      killed = isPassiveDead(next);
+      break;
+    }
+  }
+  if (killed) applyAdvancement({ type: 'mob-killed', mode: currentMode });
 }
 
 /**
@@ -1992,6 +2088,9 @@ function setState(next: GameState): void {
     // 同時歸零進度（回來要重新按住 → 從零開始累積）。
     eatProgressUi.hide();
     eatProgress.reset();
+    // B10：離開 playing 收掉拉弓狀態（不發射——暫停／死亡不該送出一發）。
+    bowDraw = null;
+    viewmodel.setDraw(null);
   }
   state = next;
   menus.hideAll();
@@ -3561,9 +3660,26 @@ gs.renderer.setAnimationLoop(() => {
       dt,
     };
     mobs = mobs.map((m) => stepSunBurn(m, sunCtx));
-    const shot = stepArrows(arrows, dt, isSolidAt, player.position);
+    // B10：玩家箭的目標清單（殭屍／骷髏／苦力怕／蜘蛛／被動生物）——
+    // AABB 半寬＝寬度/2，高度用各自的常數（單一真值在各自模組）。
+    const arrowTargets: ArrowTarget[] = [
+      ...mobs.map((m) => ({ id: m.id, kind: m.kind, pos: m.pos, halfWidth: MOB_HALF_WIDTH, height: MOB_HITBOX_HEIGHT })),
+      ...creepers.map((c) => ({ id: c.id, kind: 'creeper' as const, pos: c.pos, halfWidth: CREEPER_WIDTH / 2, height: CREEPER_HEIGHT })),
+      ...spiders.map((sp) => ({ id: sp.id, kind: 'spider' as const, pos: sp.pos, halfWidth: SPIDER_WIDTH / 2, height: SPIDER_HEIGHT })),
+      ...passiveMobs.map((m) => ({ id: m.id, kind: m.kind, pos: m.pos, halfWidth: m.width / 2, height: m.height })),
+    ];
+    const shot = stepArrows(arrows, dt, isSolidAt, player.position, arrowTargets);
     arrows = shot.arrows;
-    for (const ev of shot.events) applyMobEvent(ev, true);
+    for (const ev of shot.events) {
+      if (ev.type === 'damage') applyMobEvent(ev, true);
+      else if (ev.type === 'arrow-landed') {
+        // 玩家箭命中方塊 → 生存模式留下一支可撿的箭（創造不生成掉落）。
+        if (currentMode === 'survival') {
+          drops = spawnDrop(drops, 'arrow', 1, ev.pos);
+          bus.emit('drops-changed', {});
+        }
+      } else if (ev.type === 'arrow-hit') applyPlayerArrowHit(ev);
+    }
     // **死亡 → 掉落（死因無關的單一路徑）**：任何死因（箭、白天燃燒…）的生物都要
     // 掉掉落表裡的東西 → 在牠們被移出世界**之前**先算掉落。
     const deadNow = mobs.filter((m) => isDead(m));
@@ -3617,14 +3733,27 @@ gs.renderer.setAnimationLoop(() => {
       if (!creepers.some((c) => c.id === id && c.state === 'fuse')) hissedFuseIds.delete(id);
     }
     // 死亡過濾＋despawn：與殭屍／骷髏同一條規則（B4：DESPAWN_DISTANCE = 128）。
-    // **不在此灑掉落**——掉落只走玩家近戰擊殺（避免與 Task 9 的爆炸掉落重複）；
-    // 被距離過濾掉的不是死亡 → 不爆炸也不掉落。
+    // **先收集死者、再過濾**：近戰／爆炸的死者已由各自的路徑移除——這裡看到的
+    // 是**新死因（玩家箭）**；掉落用 `killedByPlayer: true`（箭＝玩家擊殺，
+    // 蜘蛛眼照樣掉）。被距離過濾掉的不是死亡 → 不爆炸也不掉落。
+    const deadCreepersNow = creepers.filter((c) => isCreeperDead(c));
     creepers = creepers.filter(
       (c) => !isCreeperDead(c) && xzDistance(c.pos, player.position) <= DESPAWN_DISTANCE,
     );
+    if (deadCreepersNow.length > 0) {
+      bus.emit('mobs-changed', { count: mobs.length });
+      const table = deadCreepersNow.map((c) => ({ kind: 'creeper' as const, pos: c.pos }));
+      if (spawnB9DeathDrops(table, true)) bus.emit('drops-changed', {});
+    }
+    const deadSpidersNow = spiders.filter((sp) => isSpiderDead(sp));
     spiders = spiders.filter(
-      (s) => !isSpiderDead(s) && xzDistance(s.pos, player.position) <= DESPAWN_DISTANCE,
+      (sp) => !isSpiderDead(sp) && xzDistance(sp.pos, player.position) <= DESPAWN_DISTANCE,
     );
+    if (deadSpidersNow.length > 0) {
+      bus.emit('mobs-changed', { count: mobs.length });
+      const table = deadSpidersNow.map((sp) => ({ kind: 'spider' as const, pos: sp.pos }));
+      if (spawnB9DeathDrops(table, true)) bus.emit('drops-changed', {});
+    }
 
     // ---- 被動生物（B4 Task 6）：AI 步進 → 死亡移除（**不 despawn**）----
     // 與敵對生物同一套物理慣例（重力 32、跳上 1 格台階），但規則不同：漫遊／panic／
@@ -4125,6 +4254,11 @@ gs.renderer.setAnimationLoop(() => {
           // B8 Task 7: 右鍵箱子 → 開啟容器（手上拿著方塊也先開容器，與熔爐／
           // 工作台一致，也是原版行為）。
           openChestAt(hit.x, hit.y, hit.z);
+        } else if (heldIsBow()) {
+          // B10：右鍵按住 = 拉弓（放開才發射）——這裡只記錄開始蓄力，
+          // 真正的每幀推進與發射在下面（連放／進食之前）。
+          bowDraw = { charge: 0, slot: selected };
+          viewmodel.setDraw(0);
         } else if (currentMode === 'survival' && vitals !== null && heldIsFood()) {
           // B4 Task 9：手上拿食物時右鍵＝**進食**（不放置）。
           // 這裡**不吃** —— 只把進度歸零，等下面的每幀 `eatTick()` 依
@@ -4137,6 +4271,21 @@ gs.renderer.setAnimationLoop(() => {
           // B2.2（Task 10）：「放方塊」已抽成 tryPlaceBlock() —— 首次使用路徑與
           // 連放路徑共用同一份實作（見下方連放段）。
           tryPlaceBlock(hit);
+        }
+      }
+
+      // ---- B10 弓：每幀推進蓄力；放開右鍵才發射 ----
+      // 換格／弓沒了 → 取消（不發射）；放開 → releaseBow()；
+      // 還按著 → stepBowCharge 並更新視角姿態。
+      if (bowDraw) {
+        if (selected !== bowDraw.slot || slots[selected]?.item !== 'bow') {
+          bowDraw = null;
+          viewmodel.setDraw(null);
+        } else if (!input.state.placeHeld) {
+          releaseBow(rayOrigin, dir);
+        } else {
+          bowDraw = { ...bowDraw, charge: stepBowCharge(bowDraw.charge, dt) };
+          viewmodel.setDraw(bowDraw.charge);
         }
       }
 

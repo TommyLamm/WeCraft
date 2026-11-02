@@ -1082,11 +1082,11 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
 // 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
 // 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
 describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
-  it('all five damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive)', () => {
+  it('all six damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow)', () => {
     // 實測：敵對生物命中、苦力怕命中（B9）、蜘蛛命中（B9）、被動生物命中、
-    // 挖完方塊各一處；`function damageHeldTool(` 的定義不是呼叫點。
-    // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 依實測同步為 5。
-    expect(countOf('damageHeldTool(1)')).toBe(5);
+    // 挖完方塊、射箭（B10）各一處；`function damageHeldTool(` 的定義不是呼叫點。
+    // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 5；B10 新增弓 → 6。
+    expect(countOf('damageHeldTool(1)')).toBe(6);
   });
 });
 
@@ -1147,5 +1147,38 @@ describe('main.ts 接線（B9 審查修復：爆炸與近戰鏈）', () => {
     // B4 的舊分配器已被移除（B9 Task 7）；留著會變成兩條抽權重的路徑。
     expect(countOf('trySpawnMob(')).toBe(0);
     expect(countOf('chooseSpawnKind(')).toBe(0);
+  });
+});
+
+// ---- B10：弓與玩家箭的接線 ---------------------------------------------------
+describe('main.ts 接線（B10：弓與玩家箭）', () => {
+  it('B10: the bow is wired through charge -> spawnPlayerArrow -> durability', () => {
+    expect(countOf('spawnPlayerArrow(')).toBe(1);
+    expect(countOf('bowShotFor(')).toBe(1);
+    expect(countOf('damageHeldTool(1)')).toBe(6); // B7 的 5 處 ＋ 弓
+    expect(playingBranchBody()).toContain('heldIsBow()');
+    expect(playingBranchBody()).toContain('viewmodel.setDraw(');
+  });
+
+  it('B10: player arrow hits are applied to all four mob families', () => {
+    const body = functionBody('applyPlayerArrowHit');
+    expect(body).toContain("case 'zombie'");
+    expect(body).toContain("case 'creeper'");
+    expect(body).toContain("case 'spider'");
+    expect(body).toContain('damagePassiveMob(');
+  });
+
+  it('B10: arrow targets are built from all four families and passed to stepArrows', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('arrowTargets');
+    expect(playing).toContain('stepArrows(arrows, dt, isSolidAt, player.position, arrowTargets)');
+    expect(playing).toContain("kind: 'creeper'");
+    expect(playing).toContain("kind: 'spider'");
+  });
+
+  it('B10: a landed player arrow drops a recoverable arrow item in survival only', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain("ev.type === 'arrow-landed'");
+    expect(playing).toContain("spawnDrop(drops, 'arrow', 1, ev.pos)");
   });
 });

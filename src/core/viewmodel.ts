@@ -60,3 +60,11 @@ export function bobCurve(phase: number): { posY: number; posX: number; rotZ: num
     rotZ: 0.03 * Math.sin(phase),
   };
 }
+
+/** B10：拉弓姿態（`charge` 0..1）——往後拉（posZ 負）、往上／往左一點、上仰。
+ *  位移量隨 `sin(π/2 · charge)` 遞增（拉滿 1 時是給定振幅的 100%）。
+ *  `charge === null`（沒在拉弓）由呼叫端傳 0 → 全部歸零。 */
+export function bowDrawPose(charge: number): { rotX: number; posX: number; posY: number; posZ: number } {
+  const k = Math.sin(Math.PI * 0.5 * clamp01(Number.isFinite(charge) ? charge : 0));
+  return { rotX: 0.18 * k, posX: -0.1 * k, posY: -0.06 * k, posZ: -0.16 * k };
+}
