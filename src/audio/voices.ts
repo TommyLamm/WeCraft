@@ -204,3 +204,84 @@ export function phaseCue(ctx: BaseAudioContext, dest: AudioNode, noise: AudioBuf
   source.start();
   source.stop(now + PHASE_SEC);
 }
+
+/** 弓的發射聲（B10 Task 9，加分項）：0.14 秒的**帶通白噪音**「咻」——
+ *  濾波噪音近似原版 `entity.arrow.shoot` 的短促弦聲（原版是取樣；本作程序合成）。
+ *  `volume`（可選，預設 1）已含距離衰減（`index.ts` 算好再傳進來）。 */
+export const BOW_SHOOT_BPF_HZ = 1400;
+const BOW_SHOOT_Q = 0.9;
+const BOW_SHOOT_SEC = 0.14;
+const BOW_SHOOT_GAIN = 0.5;
+
+export function bowShoot(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * BOW_SHOOT_GAIN;
+
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = BOW_SHOOT_BPF_HZ;
+  filter.Q.value = BOW_SHOOT_Q;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.02);
+  gain.gain.linearRampToValueAtTime(0, now + BOW_SHOOT_SEC);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + BOW_SHOOT_SEC);
+}
+
+/** 箭的命中聲（B10 Task 9，加分項）：0.08 秒**低通噪音**＋ 220 Hz 短正弦衰減
+ *  ——木頭「咚」（近似原版命中方塊／生物的悶響；程序合成，無取樣）。 */
+export const ARROW_HIT_LPF_HZ = 500;
+const ARROW_HIT_OSC_HZ = 220;
+const ARROW_HIT_SEC = 0.08;
+const ARROW_HIT_GAIN = 0.6;
+
+export function arrowHit(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * ARROW_HIT_GAIN;
+
+  // 低通噪音（撞擊的「啪」）
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = ARROW_HIT_LPF_HZ;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(peak, now);
+  gain.gain.linearRampToValueAtTime(0, now + ARROW_HIT_SEC);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + ARROW_HIT_SEC);
+
+  // 短正弦（木頭「咚」的音高）
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.value = ARROW_HIT_OSC_HZ;
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(peak, now);
+  oscGain.gain.linearRampToValueAtTime(0, now + ARROW_HIT_SEC);
+  osc.connect(oscGain);
+  oscGain.connect(dest);
+  osc.start();
+  osc.stop(now + ARROW_HIT_SEC);
+}

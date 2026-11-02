@@ -1,6 +1,16 @@
 import { createAudioEngine, type AudioEngineDeps } from './engine';
 import { gainForDistance, synthParams, type MaterialGroup, type SoundKind } from './sounds';
-import { chirp, creeperHiss, cricket, createNoiseBuffer, phaseCue, playOneShot, startWind } from './voices';
+import {
+  arrowHit,
+  bowShoot,
+  chirp,
+  creeperHiss,
+  cricket,
+  createNoiseBuffer,
+  phaseCue,
+  playOneShot,
+  startWind,
+} from './voices';
 
 export { createAudioEngine } from './engine';
 export type { AudioEngine, AudioEngineDeps } from './engine';
@@ -39,6 +49,10 @@ export interface GameAudio {
   play(kind: SoundKind, group: MaterialGroup, opts?: PlayOptions): void;
   /** B9：苦力怕引信聲（0.5 秒帶通噪音；距離衰減與其他音效一致）。 */
   playCreeperHiss(opts?: PlayOptions): void;
+  /** B10：弓的發射聲（0.14 秒帶通噪音；距離衰減與其他音效一致）。 */
+  playBowShoot(opts?: PlayOptions): void;
+  /** B10：箭的命中聲（低通噪音＋短正弦；距離衰減與其他音效一致）。 */
+  playArrowHit(opts?: PlayOptions): void;
   /** 最近播放的紀錄（facade 層的 play-call 紀錄，與 `audio/testing.ts` 的節點
    *  紀錄是兩層）；上限 64、新的擠掉最舊的。唯讀視圖——測試用來問「剛剛播了
    *  什麼」。 */
@@ -148,6 +162,39 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     creeperHiss(ctx, dest, noiseBuffer(ctx), volume);
   }
 
+
+
+  /** B10 Task 9：弓的發射聲。距離衰減走 `gainForDistance`（與 `play()` 同一條）；
+   *  引擎還沒啟動時是 no-op（惰性建構不變）。 */
+  function playBowShoot(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    bowShoot(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
+  /** B10 Task 9：箭的命中聲（低通噪音＋短正弦）。距離衰減同上。 */
+  function playArrowHit(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    arrowHit(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
   function startAmbience(): void {
     const ctx = engine.context;
     const dest = engine.master;
@@ -194,6 +241,8 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
       else engine.resume();
     },
     play,
+    playBowShoot,
+    playArrowHit,
     playCreeperHiss,
     played: () => played,
     startAmbience,

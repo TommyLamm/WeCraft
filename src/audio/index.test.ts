@@ -103,6 +103,53 @@ describe('createGameAudio', () => {
     expect(fake.created).toHaveLength(0);
   });
 
+  // ---- B10 Task 9：弓與箭的音效（加分項）----
+  it('playBowShoot synthesises one band-passed whoosh through the master bus', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playBowShoot();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    const filter = fake.biquads.find((b) => b.type === 'bandpass');
+    expect(filter).toBeTruthy();
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+  });
+
+  it('playArrowHit synthesises a wood knock (low-passed noise + short sine)', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playArrowHit();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    const filter = fake.biquads.find((b) => b.type === 'lowpass');
+    expect(filter).toBeTruthy();
+    expect(fake.oscillators).toHaveLength(1); // 短振盪（木頭「咚」的音高）
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+  });
+
+  it('the bow/arrow sounds are silent beyond the audible distance and inert before start', () => {
+    const far = { pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } };
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.playBowShoot(far);
+    audio.playArrowHit(far);
+    for (const g of fake.gains.slice(1)) expect(g.gain.peak).toBe(0);
+
+    const fresh = new FakeAudioContext();
+    const inert = createGameAudio({ createContext: () => fresh as unknown as AudioContext });
+    inert.playBowShoot();
+    inert.playArrowHit();
+    expect(fresh.created).toHaveLength(0);
+  });
+
   it('handleVisibility suspends when hidden and resumes when visible', () => {
     const { fake, audio } = setup();
     audio.ensureStarted(); // initial suspended state → resume

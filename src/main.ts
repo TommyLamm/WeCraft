@@ -970,6 +970,7 @@ function releaseBow(from: { x: number; y: number; z: number }, aim: { x: number;
   }
   if (currentMode === 'survival') inventory.removeItem('arrow', 1);
   arrows = spawnPlayerArrow(arrows, from, aim, { speed: shot.speed, damage: shot.damage });
+  audio.playBowShoot(); // B10：發射聲（本地 → 距離 0 → 全音量）
   damageHeldTool(1); // 先射箭、再扣耐久 → 最後一發壞掉時箭仍射出
   hud.setHotbar(slots, selected);
 }
@@ -3790,12 +3791,16 @@ gs.renderer.setAnimationLoop(() => {
     for (const ev of shot.events) {
       if (ev.type === 'damage') applyMobEvent(ev, true);
       else if (ev.type === 'arrow-landed') {
-        // 玩家箭命中方塊 → 生存模式留下一支可撿的箭（創造不生成掉落）。
+        // 玩家箭命中方塊 → 命中聲（B10）；生存模式留下一支可撿的箭（創造不生成掉落）。
+        audio.playArrowHit({ pos: ev.pos, listener: player.position });
         if (currentMode === 'survival') {
           drops = spawnDrop(drops, 'arrow', 1, ev.pos);
           bus.emit('drops-changed', {});
         }
-      } else if (ev.type === 'arrow-hit') applyPlayerArrowHit(ev);
+      } else if (ev.type === 'arrow-hit') {
+        audio.playArrowHit({ pos: ev.pos, listener: player.position }); // B10：命中生物聲
+        applyPlayerArrowHit(ev);
+      }
     }
     // **死亡 → 掉落（死因無關的單一路徑）**：任何死因（箭、白天燃燒…）的生物都要
     // 掉掉落表裡的東西 → 在牠們被移出世界**之前**先算掉落。
