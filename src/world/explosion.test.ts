@@ -148,4 +148,34 @@ describe('explosion pure logic (B9 Task 3)', () => {
     expect(res.destroyed).toEqual([]);
     expect(res.drops).toEqual([]);
   });
+
+  // ---- B11 Task 3：掉落機率參數（TNT 100%）----
+  // 原版 TNT 爆炸 100% 掉落（minecraft.wiki/TNT："always drop their usual items"）；
+  // 苦力怕等生物爆炸維持 1/power。呼叫端以 `dropChance` 指定。
+
+  it('an explicit drop chance overrides the 1/power default', () => {
+    const result = explodeAt({
+      power: 4,
+      center: { x: 0.5, y: 0.5, z: 0.5 },
+      ...world(BLOCK.STONE),
+      rng: () => 0.999,
+      dropChance: 1,
+    });
+    expect(result.destroyed.length).toBeGreaterThan(0);
+    expect(result.drops).toHaveLength(result.destroyed.length);
+  });
+
+  it('a provided chance is clamped to [0,1] and non-finite falls back to 1/power', () => {
+    const base: ExplosionCtx = {
+      power: 4,
+      center: { x: 0.5, y: 0.5, z: 0.5 },
+      ...world(BLOCK.STONE),
+    };
+    // dropChance 0 → 明示不掉：rng 0 也一格不掉（實作前被忽略 → 掉落全出 → 紅）
+    expect(explodeAt({ ...base, rng: () => 0, dropChance: 0 }).drops).toEqual([]);
+    // NaN → 回退 1/power（power 4 → 0.25）：rng 0.2 < 0.25 → 全掉
+    const fallback = explodeAt({ ...base, rng: () => 0.2, dropChance: Number.NaN });
+    expect(fallback.destroyed.length).toBeGreaterThan(0);
+    expect(fallback.drops).toHaveLength(fallback.destroyed.length);
+  });
 });

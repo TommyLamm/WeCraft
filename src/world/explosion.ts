@@ -13,7 +13,8 @@ import { dropItemFor } from './drops';
 //   blocks/tick）× 20 → blocks/s；苦力怕的這兩個係數都是 1。
 // - 破壞半徑 ≈ 4/3 × power；每 1 格空氣行進消耗 0.75 強度、每格方塊額外消耗
 //   (blastResistance + 0.3) × 0.3。
-// - 破壞方塊的掉落機率 1/power（苦力怕 = 1/3；原版 TNT 才是 100%，本作沒有 TNT）。
+// - 破壞方塊的掉落機率：預設 1/power（苦力怕 = 1/3）；呼叫端可用 `dropChance`
+//   覆寫（B11 的 TNT 傳 1＝原版「always drop their usual items」的 100%）。
 //
 // **與原版的差異（README〈與原版的差異〉）**：
 // 1. 原版用 16×16×16 = 256 條隨機方向的射線逐格消耗強度；本作改成「以爆炸中心
@@ -48,6 +49,9 @@ export interface ExplosionCtx {
   blockIdAt: (x: number, y: number, z: number) => number;
   isSolidAt: (x: number, y: number, z: number) => boolean;
   rng?: () => number;
+  /** 每格破壞後的掉落機率（0..1，超出範圍夾到邊界）。省略或非有限值 →
+   *  原版生物爆炸的 1/power；B11 的 TNT 傳 1（原版 100%）。 */
+  dropChance?: number;
 }
 
 export interface DestroyedBlock {
@@ -140,11 +144,15 @@ export function explodeAt(ctx: ExplosionCtx): ExplosionResult {
     }
   }
 
-  // 掉落：每格 1/power 機率（power 3 → 1/3），掉落物 = dropItemFor。
+  // 掉落：預設每格 1/power 機率（power 3 → 1/3）；`dropChance` 有提供且有限時
+  // 覆寫（TNT = 1）。掉落物 = dropItemFor。
+  const chance = Number.isFinite(ctx.dropChance)
+    ? Math.min(1, Math.max(0, ctx.dropChance as number))
+    : 1 / power;
   const drops: ExplosionDrop[] = [];
   const rng = ctx.rng ?? Math.random;
   for (const b of destroyed) {
-    if (rng() >= 1 / power) continue;
+    if (rng() >= chance) continue;
     const item = dropItemFor(b.blockId);
     if (!item) continue;
     drops.push({ item, count: 1, at: { x: b.x + 0.5, y: b.y + 0.5, z: b.z + 0.5 } });
