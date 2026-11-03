@@ -51,6 +51,9 @@ export const BLOCK = {
   // B10 Task 1：床（跨批編號表：本批 = 34；只能往後追加——舊存檔的 modified
   // 記的是數字 id）。原版是兩格有方向的床，本作是單一實心方塊（已揭露的簡化）。
   BED: 34,
+  // B11 Task 1：TNT（跨批編號表：本批 = 35；只能往後追加）。舊版（0.13.0）遇到
+  // 未知 id 35 時 `getBlockDef(35)` fallback 空氣、不崩（存檔格式不動）。
+  TNT: 35,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -125,12 +128,15 @@ export const T = {
   CHEST: 40,
   // B10 Task 1：床的兩張 tile（top／side）。跨批編號：本批 = 41、42 → TILE_COUNT = 43。
   BED_TOP: 41, BED_SIDE: 42,
+  // B11 Task 1：TNT 的兩張 tile（top／side；底面沿用 top——簡化）。
+  // 跨批編號：本批 = 43、44 → TILE_COUNT = 45（< ARRAY_LAYERS = 64）。
+  TNT_TOP: 43, TNT_SIDE: 44,
 } as const;
 
 /** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
- *  (currently `T.BED_SIDE`), so appending a tile and pointing `TILE_COUNT` at it
+ *  (currently `T.TNT_SIDE`), so appending a tile and pointing `TILE_COUNT` at it
  *  is the only change needed to grow the atlas. */
-export const TILE_COUNT = T.BED_SIDE + 1;
+export const TILE_COUNT = T.TNT_SIDE + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -208,6 +214,9 @@ const DEFS: Record<number, BlockDef> = {
   33: { id: 33, name: 'chest', hardness: 2.5, blastResistance: 2.5, solid: true, transparent: false, shape: 'cube', top: T.CHEST, side: T.CHEST, bottom: T.CHEST, requiredTool: null, fastTool: 'axe' },
   // B10 Task 1：床（單一方塊；原版是兩格有方向的床，這裡是已揭露的簡化）。
   34: { id: 34, name: 'bed', hardness: 0.2, blastResistance: 0.2, solid: true, transparent: false, shape: 'cube', top: T.BED_TOP, side: T.BED_SIDE, bottom: T.BED_SIDE, requiredTool: null, fastTool: null },
+  // B11 Task 1：TNT（minecraft.wiki/TNT，2026-11-03）：硬度 0、爆炸抗性 0、
+  // 任何工具都能瞬破、掉自身、六面紅底白帶貼圖（top／side 兩張，底面沿用 top）。
+  35: { id: 35, name: 'tnt', hardness: 0, blastResistance: 0, solid: true, transparent: false, shape: 'cube', top: T.TNT_TOP, side: T.TNT_SIDE, bottom: T.TNT_TOP, requiredTool: null, fastTool: null },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -251,6 +260,9 @@ export const PLACEABLE: BlockId[] = [
   BLOCK.CHEST,
   // B10 Task 1：床（物品形式隨方塊一起補上 → 創造清單自動出現）
   BLOCK.BED,
+  // B11 Task 1：TNT（物品形式隨方塊一起補上 → 創造清單自動出現；
+  // HOTBAR_DEFAULT 不加——TNT 是做出來的（火藥＋沙），不是初始物品）
+  BLOCK.TNT,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [

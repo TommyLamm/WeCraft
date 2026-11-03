@@ -384,6 +384,40 @@ export function drawAtlas(): AtlasImage {
     return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
   }); // bed side
 
+  // ---- B11 Task 1：TNT（tile 43／44）----
+  // 原版 TNT 是紅底＋中央白帶的「TNT」字樣；本作是 16×16 的像素近似。
+  // 側面：白帶 y 4..11＋深紅 TNT 三字母（4×4 的點陣，位置固定、可數）；
+  // 頂面：紅底＋內縮白框＋中央深色引信孔。所有像素 alpha 255。
+  const TNT_RED: RGBA = [198, 60, 44, 255];
+  const TNT_BAND: RGBA = [235, 235, 235, 255];
+  const TNT_LETTER: RGBA = [148, 28, 24, 255];
+  put(T.TNT_SIDE, (x, y, r) => {
+    const inBand = y >= 4 && y <= 11;
+    if (!inBand) {
+      const edge = x === 0 || y === 0 || x === 15 || y === 15 ? -20 : 0;
+      const c = vary(TNT_RED, r, 12);
+      return [clamp255(c[0] + edge), clamp255(c[1] + edge), clamp255(c[2] + edge), 255];
+    }
+    const letterRow = y >= 6 && y <= 9;
+    const isLetter =
+      letterRow &&
+      ((x >= 2 && x <= 4 && (y === 6 || x === 3)) || // 第一個 T
+        (x >= 6 && x <= 8 && (x === 6 || x === 8 || y === 7 || y === 8)) || // N（兩柱＋斜線）
+        (x >= 10 && x <= 12 && (y === 6 || x === 11))); // 第二個 T
+    return isLetter ? TNT_LETTER : TNT_BAND;
+  }); // tnt side
+
+  put(T.TNT_TOP, (x, y, r) => {
+    const inFrame = x >= 2 && x <= 13 && y >= 2 && y <= 13;
+    const frame = inFrame && (x === 2 || x === 13 || y === 2 || y === 13);
+    const hole = x >= 7 && x <= 8 && y >= 7 && y <= 8;
+    if (hole) return [52, 44, 40, 255];
+    if (frame) return [228, 228, 224, 255];
+    const edge = x === 0 || y === 0 || x === 15 || y === 15 ? -20 : 0;
+    const c = vary(TNT_RED, r, 12);
+    return [clamp255(c[0] + edge), clamp255(c[1] + edge), clamp255(c[2] + edge), 255];
+  }); // tnt top
+
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
 }

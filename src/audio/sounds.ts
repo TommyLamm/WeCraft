@@ -74,6 +74,8 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.TORCH]: 'wood',
   // B10 Task 1：床的木框 → 原版床的 sound type 是 wood。
   [BLOCK.BED]: 'wood',
+  // B11 Task 1：TNT → 原版 TNT 的 sound type 就是 grass（minecraft.wiki/TNT infobox）。
+  [BLOCK.TNT]: 'grass',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

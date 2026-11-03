@@ -54,6 +54,8 @@ describe('materialGroup', () => {
       [BLOCK.CHEST]: 'wood',
       // B10 Task 1：床的木框 → 原版床的 sound type 是 wood
       [BLOCK.BED]: 'wood',
+      // B11 Task 1：TNT 的 sound type 是 grass（minecraft.wiki/TNT infobox）
+      [BLOCK.TNT]: 'grass',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

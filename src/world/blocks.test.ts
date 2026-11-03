@@ -73,6 +73,8 @@ describe('blocks', () => {
       [BLOCK.TORCH, 0],
       // B8 Task 2 新增：箱子硬度 2.5（原版）
       [BLOCK.CHEST, 2.5],
+      // B11 Task 1 新增：TNT 硬度 0（原版「can be broken instantly with any tool」）
+      [BLOCK.TNT, 0],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -125,6 +127,8 @@ describe('blocks', () => {
       [BLOCK.CHEST, null, 'axe'],
       // B10 Task 1 新增：床徒手可挖、沒有加速工具
       [BLOCK.BED, null, null],
+      // B11 Task 1 新增：TNT 任何工具都能瞬破（無門檻、無加速工具）
+      [BLOCK.TNT, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -424,9 +428,9 @@ describe('blocks', () => {
     expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
     expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
     expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
-    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B10 的床 side tile 接在箱子後面成為
-    // 新的最高 → 絕對值 43；由「the bed side tile is the last declared tile」把關。
-    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.BED).side + 1);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B11 的 TNT side tile 接在床後面成為
+    // 新的最高 → 絕對值 45；由「the tnt side tile is the last declared tile」把關。
+    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.TNT).side + 1);
     expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.BIRCH_PLANKS).top);
   });
 
@@ -501,12 +505,37 @@ describe('blocks', () => {
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
   });
 
-  it('the bed side tile is the last declared tile', () => {
-    // 不綁死數字：上游 tile 表變動不會誤報；T.BED_SIDE 的絕對值（42）由跨批編號表
-    // 與下面的撞號檢查一起把關。兩張床 tile 是最後兩個、箱子緊接在床 top 之前。
-    expect(T.BED_SIDE).toBe(TILE_COUNT - 1);
+  it('the tnt side tile is the last declared tile', () => {
+    // 不綁死數字：上游 tile 表變動不會誤報；T.TNT_SIDE 的絕對值（44）由跨批編號表
+    // 與下面的撞號檢查一起把關。兩張 TNT tile 是最後兩個、床緊接在 TNT top 之前。
+    expect(T.TNT_SIDE).toBe(TILE_COUNT - 1);
+    expect(T.BED_SIDE).toBe(T.TNT_TOP - 1);
     expect(T.CHEST).toBe(T.BED_TOP - 1);
     expect(TILE_COUNT).toBeLessThanOrEqual(64); // 紋理陣列 64 層
+  });
+
+  // ---- B11 Task 1：TNT（跨批編號：BLOCK.TNT = 35 / T.TNT_TOP = 43 / T.TNT_SIDE = 44）----
+  // 出處：minecraft.wiki/TNT（2026-11-03）：硬度 0、爆炸抗性 0、任何工具、
+  // stackable 64、sound type grass。
+
+  it('the tnt table matches vanilla', () => {
+    expect(BLOCK.TNT).toBe(35);
+    const def = getBlockDef(BLOCK.TNT);
+    expect(def.id).toBe(35);
+    expect(def.name).toBe('tnt');
+    expect(def.hardness).toBe(0);
+    expect(def.blastResistance).toBe(0);
+    expect(def.requiredTool).toBeNull();
+    expect(def.fastTool).toBeNull();
+    expect(def.solid).toBe(true);
+    expect(def.transparent).toBe(false);
+    expect(def.shape).toBe('cube');
+    expect(def.top).toBe(T.TNT_TOP);
+    expect(def.side).toBe(T.TNT_SIDE);
+    expect(def.bottom).toBe(T.TNT_TOP);
+    // 可放置（合成物、不進 HOTBAR_DEFAULT）
+    expect(PLACEABLE).toContain(BLOCK.TNT);
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TNT);
   });
 
   it('the torch tile does not collide with the chest tile', () => {
