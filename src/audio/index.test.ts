@@ -185,6 +185,17 @@ describe('createGameAudio', () => {
     expect(envelope.gain.peak).toBeGreaterThan(0);
   });
 
+  it('the explosion layers stay below clipping when summed (noise + sub-bass)', () => {
+    // 批末審查：噪音與低頻正弦兩層若都到 1.0，疊加會硬切（> master 1.0）。
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.playExplosion();
+    const peaks = fake.gains.slice(1).map((g) => g.gain.peak);
+    expect(peaks).toHaveLength(2);
+    const sum = peaks.reduce((a, b) => a + b, 0);
+    expect(sum).toBeLessThanOrEqual(1.25); // 預設 master 0.8 → 疊加 ≤ 1.0，不硬切
+  });
+
   it('the tnt sounds are silent beyond the audible distance and inert before start', () => {
     const far = { pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } };
     const { fake, audio } = setup();

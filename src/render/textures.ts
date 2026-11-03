@@ -476,9 +476,11 @@ export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataAr
  *  「不翻轉、維持影像列序」一致——呼叫端用 `flipY` 決定取樣方向）。 */
 export function tilePixels(atlas: AtlasImage, tile: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
-  const t = Math.floor(tile);
-  const tx = ((t % TILES_PER_ROW) + TILES_PER_ROW) % TILES_PER_ROW;
-  const ty = Math.max(0, Math.floor(t / TILES_PER_ROW));
+  // 無效（負）tile 一律夾到 0（內部呼叫端只會傳合法 tile；批末審查：舊版
+  // tx 用 modulo、ty 用 clamp，兩個軸不一致）。
+  const t = Math.max(0, Math.floor(tile));
+  const tx = t % TILES_PER_ROW;
+  const ty = Math.floor(t / TILES_PER_ROW);
   for (let y = 0; y < TILE_PX; y++) {
     for (let x = 0; x < TILE_PX; x++) {
       const src = ((ty * TILE_PX + y) * ATLAS_SIZE + tx * TILE_PX + x) * 4;

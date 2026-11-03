@@ -110,6 +110,22 @@ describe('primed tnt (B11 Task 4)', () => {
     expect(tnts[1]!.fuse).toBe(1.5);
   });
 
+  it('chain priming counts the already-primed list toward the cap', () => {
+    // 批末審查：cap 是「同時存在的引信總數」——1 既存 + 1 新 = 上限 2，
+    // 第二個波及格不誘爆（呼叫端讓它照 100% 掉落）。
+    const existing = createPrimedTnt({ x: 9, y: 9, z: 9 }, { rng: () => 0 });
+    const { tnts, primedCount } = primeTntChain(
+      [existing],
+      [
+        { x: 0, y: 0, z: 0 },
+        { x: 1, y: 0, z: 0 },
+      ],
+      { rng: () => 0, cap: 2 },
+    );
+    expect(primedCount).toBe(1);
+    expect(tnts).toHaveLength(2);
+  });
+
   it('chain priming keeps existing entities and appends new ones', () => {
     const existing = createPrimedTnt({ x: 9, y: 9, z: 9 }, { rng: () => 0 });
     const { tnts, primedCount } = primeTntChain([existing], [{ x: 0, y: 0, z: 0 }], {
@@ -134,14 +150,17 @@ describe('primed tnt (B11 Task 4)', () => {
   });
 
   it('a wall stops the horizontal drift without tunnelling', () => {
-    // 側向速度 +z 0.4；z=1 起有牆（y 0..2）→ 實體不能穿過 z=1。
-    let t = createPrimedTnt({ x: 0, y: 1, z: 0 }, { rng: () => 0 });
+    // **沒有地板**（空中）＋起點貼牆 0.8 格：水平速度 +z 0.4、20 步（1 秒）
+    // 足以撞上 z=1 起的牆面。沒有牆時 z 會走到 ≈ 1.2 → 拿掉逐軸碰撞這條測試
+    // 會轉紅（批末審查：舊版有地板 → 落地即歸零水平速度，從未靠近牆面＝恆真）。
+    let t = createPrimedTnt({ x: 0, y: 1, z: 0.8 }, { rng: () => 0 });
     for (let i = 0; i < 20; i++) {
       t = stepPrimedTnts([t], {
-        isSolidAt: (_x, y, z) => z >= 1 || y <= 0,
+        isSolidAt: (_x, _y, z) => z >= 1, // 只有牆、沒有地板
         dt: 0.05,
       }).tnts[0]!;
     }
+    expect(t.pos.z).toBeGreaterThan(0.9);
     expect(t.pos.z).toBeLessThan(1);
   });
 });

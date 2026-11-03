@@ -1866,6 +1866,11 @@ function runExplosion(
     const primed = primeTntChain(primedTnts, tntAt, { cap: MAX_PRIMED_TNT });
     primedTnts = primed.tnts;
     if (primed.primedCount > 0) {
+      // 原版對**任何**被引爆的 TNT 都播引信嘶聲（點燃路徑已播過）→ 連鎖
+      // 引爆的每一顆也補上（批末審查：連鎖過去完全無聲）。
+      for (const p of tntAt.slice(0, primed.primedCount)) {
+        audio.playTntFuse({ pos: { x: p.x, y: p.y + 0.5, z: p.z }, listener: player.position });
+      }
       const primedKeys = new Set(
         tntAt
           .slice(0, primed.primedCount)
@@ -1878,12 +1883,14 @@ function runExplosion(
   }
 
   // ---- 方塊掉落（機率已在 explodeAt 擲完；預設 1/power、TNT 傳 1）----
-  if (resultDrops.length > 0) {
+  // **生存限定**：與挖除／容器／生物掉落同一條「創造不灑」規則——創造模式的
+  // 爆炸不留（撿不起的）地面掉落物（批末審查：B9 起爆炸是唯一例外）。
+  if (resultDrops.length > 0 && currentMode === 'survival') {
     for (const d of resultDrops) drops = spawnDrop(drops, d.item, d.count, d.at);
     spilled = true;
   }
 
-  // ---- 玩家：傷害＋擊退（繞過無敵幀；死亡原因＝苦力怕）----
+  // ---- 玩家：傷害＋擊退（繞過無敵幀；死亡原因＝來源：creeper／tnt）----
   const playerEye = {
     x: player.position.x,
     y: player.position.y + EYE_HEIGHT,

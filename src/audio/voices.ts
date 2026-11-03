@@ -281,12 +281,17 @@ export function tntFuse(
 
 /** 爆炸聲（B11 Task 5）：0.6 秒**低通噪音**（220 Hz）＋ 70→30 Hz 下滑正弦
  *  ——近似原版 `entity.generic.explode`（Volume 4.0、Pitch 0.56–0.84；程序合成）。
- *  苦力怕爆炸過去完全無聲（B9 已知缺口）——本批起與 TNT 共用這一顆音。 */
+ *  苦力怕爆炸過去完全無聲（B9 已知缺口）——本批起與 TNT 共用這一顆音。
+ *
+ *  兩層的峰值分開給（噪音 0.7＋正弦 0.5）：**疊加 ≤ 1.25**——預設 master 0.8
+ *  之下不會硬切（批末審查：兩層都 1.0 時相加可到 2.0）。原版 Volume 4.0 的
+ *  「最大聲」感由距離衰減與兩層疊加近似。 */
 export const EXPLOSION_LPF_HZ = 220;
 const EXPLOSION_OSC_FROM_HZ = 70;
 const EXPLOSION_OSC_TO_HZ = 30;
 const EXPLOSION_SEC = 0.6;
-const EXPLOSION_GAIN = 1.0;
+const EXPLOSION_NOISE_GAIN = 0.7;
+const EXPLOSION_OSC_GAIN = 0.5;
 
 export function explosionBoom(
   ctx: BaseAudioContext,
@@ -295,7 +300,7 @@ export function explosionBoom(
   volume = 1,
 ): void {
   const now = ctx.currentTime;
-  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * EXPLOSION_GAIN;
+  const vol = Math.max(0, Number.isFinite(volume) ? volume : 0);
 
   // 低通噪音（爆裂的「轟」）
   const source = ctx.createBufferSource();
@@ -304,7 +309,7 @@ export function explosionBoom(
   filter.type = 'lowpass';
   filter.frequency.value = EXPLOSION_LPF_HZ;
   const gain = ctx.createGain();
-  gain.gain.setValueAtTime(peak, now);
+  gain.gain.setValueAtTime(vol * EXPLOSION_NOISE_GAIN, now);
   gain.gain.linearRampToValueAtTime(0, now + EXPLOSION_SEC);
   source.connect(filter);
   filter.connect(gain);
@@ -318,7 +323,7 @@ export function explosionBoom(
   osc.frequency.setValueAtTime(EXPLOSION_OSC_FROM_HZ, now);
   osc.frequency.linearRampToValueAtTime(EXPLOSION_OSC_TO_HZ, now + EXPLOSION_SEC);
   const oscGain = ctx.createGain();
-  oscGain.gain.setValueAtTime(peak, now);
+  oscGain.gain.setValueAtTime(vol * EXPLOSION_OSC_GAIN, now);
   oscGain.gain.linearRampToValueAtTime(0, now + EXPLOSION_SEC);
   osc.connect(oscGain);
   oscGain.connect(dest);

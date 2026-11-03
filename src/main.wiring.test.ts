@@ -1316,6 +1316,25 @@ describe('main.ts 接線（B11：TNT 與打火石）', () => {
   });
 
   it('B11: the debug hook exposes primed tnt states (fuse + position) for browser probes', () => {
-    expect(mainSource).toContain('tntStates');
+    // 介面簽名與唯讀映射都要在（批末審查：只斷言 `tntStates` 字串太弱）。
+    expect(mainSource).toContain(
+      'tntStates: () => Array<{ id: number; x: number; y: number; z: number; fuse: number }>',
+    );
+    expect(mainSource).toContain(
+      'primedTnts.map((t) => ({ id: t.id, x: t.pos.x, y: t.pos.y, z: t.pos.z, fuse: t.fuse }))',
+    );
+  });
+
+  it('B11: explosion block drops are survival-only (creative never litters)', () => {
+    // 與挖除／容器／生物掉落同一條「創造不灑」規則。批末審查：B9 起爆炸是
+    // 唯一會在創造模式留下（撿不起的）地面掉落物的路徑——0.14.0 起一致。
+    expect(functionBody('runExplosion')).toContain('resultDrops.length > 0 && currentMode');
+  });
+
+  it('B11: chained priming plays the fuse hiss for every newly primed tnt', () => {
+    // 原版對任何被引爆的 TNT 都會播 `entity.tnt.primed`（點燃路徑已播）。
+    const body = functionBody('runExplosion');
+    expect(body).toContain('playTntFuse(');
+    expect(body).toContain('tntAt.slice(0, primed.primedCount)');
   });
 });
