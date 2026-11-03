@@ -470,6 +470,44 @@ export function buildTextureArray(atlas: AtlasImage = drawAtlas()): THREE.DataAr
   return tex;
 }
 
+// ---- B11 Task 6：單張 tile 的像素抽取（引信 TNT 的 DataTexture 用）----
+
+/** 抽出一張 tile 的 16×16 RGBA 像素（拷貝；與 `buildTextureArray` 的
+ *  「不翻轉、維持影像列序」一致——呼叫端用 `flipY` 決定取樣方向）。 */
+export function tilePixels(atlas: AtlasImage, tile: number): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
+  const t = Math.floor(tile);
+  const tx = ((t % TILES_PER_ROW) + TILES_PER_ROW) % TILES_PER_ROW;
+  const ty = Math.max(0, Math.floor(t / TILES_PER_ROW));
+  for (let y = 0; y < TILE_PX; y++) {
+    for (let x = 0; x < TILE_PX; x++) {
+      const src = ((ty * TILE_PX + y) * ATLAS_SIZE + tx * TILE_PX + x) * 4;
+      const dst = (y * TILE_PX + x) * 4;
+      out[dst] = atlas.data[src];
+      out[dst + 1] = atlas.data[src + 1];
+      out[dst + 2] = atlas.data[src + 2];
+      out[dst + 3] = atlas.data[src + 3];
+    }
+  }
+  return out;
+}
+
+/** 引信 TNT 亮版貼圖的白化比例（原版是「接近全白的複本」，本作取 0.8）。 */
+export const TILE_BRIGHT_MIX = 0.8;
+
+/** 把一張 tile 的像素拉向白色（`mix` 0..1，超出範圍夾到邊界、非有限 → 預設）。
+ *  alpha 不變；回傳的是新緩衝，`atlas` 不會被改。 */
+export function brightenTile(atlas: AtlasImage, tile: number, mix: number = TILE_BRIGHT_MIX): Uint8ClampedArray {
+  const m = Number.isFinite(mix) ? Math.min(1, Math.max(0, mix)) : TILE_BRIGHT_MIX;
+  const px = tilePixels(atlas, tile);
+  for (let i = 0; i < px.length; i += 4) {
+    px[i] = clamp255(px[i] + (255 - px[i]) * m);
+    px[i + 1] = clamp255(px[i + 1] + (255 - px[i + 1]) * m);
+    px[i + 2] = clamp255(px[i + 2] + (255 - px[i + 2]) * m);
+  }
+  return px;
+}
+
 /** Task 4: the ONE shared GPU texture array (chunk terrain, particle
  *  billboards — later the held-item viewmodel). Memoized: the first caller
  *  builds it from `drawAtlas()` and every later caller gets the same

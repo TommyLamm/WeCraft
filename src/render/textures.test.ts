@@ -4,11 +4,13 @@ import {
   ATLAS_SIZE,
   TILE_PX,
   TILES_PER_ROW,
+  brightenTile,
   buildTextureArray,
   drawAtlas,
   drawCrackStage,
   getTextureArray,
   tileIndexAt,
+  tilePixels,
   type AtlasImage,
 } from './textures';
 import { BLOCK, getBlockDef, T, TILE_COUNT } from '../world/blocks';
@@ -622,5 +624,48 @@ describe('getTextureArray', () => {
     expect(getTextureArray()).toBe(first); // same ref every call
     expect(buildTextureArray()).not.toBe(buildTextureArray()); // build stays fresh
     expect(getTextureArray()).toBe(first); // fresh builds never replace the memo
+  });
+});
+
+// ---- B11 Task 6：單張 tile 的像素抽取與亮版（引信 TNT 閃爍用）----
+
+describe('tilePixels / brightenTile', () => {
+  it('tilePixels extracts one 16×16 RGBA tile', () => {
+    const atlas = drawAtlas();
+    const px = tilePixels(atlas, T.TNT_SIDE);
+    expect(px).toHaveLength(16 * 16 * 4);
+    // 抽出的 tile 與 atlas 的對應位置一致（第一顆像素）
+    const tx = T.TNT_SIDE % TILES_PER_ROW;
+    const ty = Math.floor(T.TNT_SIDE / TILES_PER_ROW);
+    const i = ((ty * TILE_PX) * ATLAS_SIZE + tx * TILE_PX) * 4;
+    expect(px[0]).toBe(atlas.data[i]);
+    expect(px[1]).toBe(atlas.data[i + 1]);
+  });
+
+  it('brightenTile lifts pixels toward white and preserves alpha and size', () => {
+    const atlas = drawAtlas();
+    const normal = tilePixels(atlas, T.TNT_SIDE);
+    const bright = brightenTile(atlas, T.TNT_SIDE);
+    expect(bright).toHaveLength(16 * 16 * 4);
+    for (let i = 0; i < normal.length; i += 4) {
+      expect(bright[i]!).toBeGreaterThanOrEqual(normal[i]!);
+      expect(bright[i + 1]!).toBeGreaterThanOrEqual(normal[i + 1]!);
+      expect(bright[i + 2]!).toBeGreaterThanOrEqual(normal[i + 2]!);
+      expect(bright[i + 3]).toBe(normal[i + 3]);
+    }
+    expect(Math.max(...bright)).toBeGreaterThan(200); // 接近白
+  });
+
+  it('brightenTile clamps the mix and is deterministic', () => {
+    const atlas = drawAtlas();
+    expect(Array.from(brightenTile(atlas, T.TNT_TOP, 2))).toEqual(
+      Array.from(brightenTile(atlas, T.TNT_TOP, 1)),
+    );
+    expect(Array.from(brightenTile(atlas, T.TNT_TOP, -1))).toEqual(
+      Array.from(tilePixels(atlas, T.TNT_TOP)),
+    );
+    expect(Array.from(brightenTile(atlas, T.TNT_TOP))).toEqual(
+      Array.from(brightenTile(atlas, T.TNT_TOP)),
+    );
   });
 });
