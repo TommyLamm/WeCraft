@@ -36,6 +36,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'torch',
   // B10 Task 1：床的物品形式（隨 BLOCK.BED = 34 一起補上）
   'bed',
+  // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）
+  'tnt',
 ];
 /** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
 const B5_TOOL_ITEMS: ItemId[] = [
@@ -56,6 +58,8 @@ const DROP_ITEMS: ItemId[] = [
 ];
 /** B10 Task 2：燧石（材料，堆疊 64）與弓（耐久武器，堆疊 1）。 */
 const B10_ITEM_IDS: ItemId[] = ['flint', 'bow'];
+/** B11 Task 2：打火石（耐久工具，堆疊 1）。TNT 是方塊物品（在 BLOCK_ITEMS）。 */
+const B11_ITEM_IDS: ItemId[] = ['flint_and_steel'];
 /** B4 Task 1：生／熟肉與腐肉（食物值表在 Task 2；熟牛肉的 id 是 'steak'）。 */
 const FOOD_ITEMS: ItemId[] = [
   'raw_chicken', 'cooked_chicken',
@@ -73,6 +77,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...TOOL_ITEMS,
   ...DROP_ITEMS,
   ...B10_ITEM_IDS,
+  ...B11_ITEM_IDS,
   ...FOOD_ITEMS,
   ...MATERIAL_ITEMS,
   'oak_leaves', 'snow_block', 'bedrock',
@@ -86,9 +91,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B6 Task 5 再補 1 個（火把的物品形式，隨 BLOCK.TORCH = 32 一起落地）→ 73。
  *  B9 Task 1 再補 3 個（火藥／線／蜘蛛眼：生物掉落的新材料，不是方塊、不進配方）→ **76**。
  *  B10 Task 1 再補 1 個（床的物品形式，隨 BLOCK.BED = 34 一起落地）→ 77。
- *  B10 Task 2 再補 2 個（燧石與弓）→ **79**。
+ *  B10 Task 2 再補 2 個（燧石與弓）→ 79。
+ *  B11 Task 2 再補 2 個（TNT 的物品形式＋打火石）→ **81**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 79;
+const TOTAL_ITEM_COUNT = 81;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -174,6 +180,27 @@ describe('items', () => {
     expect(blockFromItem('bow')).toBeNull();
     expect(maxStack('bow')).toBe(1);
     expect(sanitizeStack({ item: 'bow', count: 1 })).toEqual({ item: 'bow', count: 1, dur: 384 });
+  });
+
+  // ---- B11 Task 2：TNT 與打火石 ----
+
+  it('the tnt block form stacks to 64 and keeps the vanilla display name', () => {
+    expect(blockFromItem('tnt')).toBe(BLOCK.TNT);
+    expect(itemFromBlock(BLOCK.TNT)).toBe('tnt');
+    expect(stackFromBlock(BLOCK.TNT)).toEqual({ item: 'tnt', count: 64 });
+    expect(maxStack('tnt')).toBe(64);
+    expect(stackName('tnt')).toBe('TNT'); // title-case 會變「Tnt」→ 顯示名覆寫
+  });
+
+  it('flint and steel is a stack-one durable item (64 uses)', () => {
+    expect(blockFromItem('flint_and_steel')).toBeNull();
+    expect(maxStack('flint_and_steel')).toBe(1);
+    expect(sanitizeStack({ item: 'flint_and_steel', count: 1 })).toEqual({
+      item: 'flint_and_steel',
+      count: 1,
+      dur: 64,
+    });
+    expect(stackName('flint_and_steel')).toBe('Flint and Steel');
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

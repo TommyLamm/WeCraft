@@ -502,6 +502,36 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fill();
       break;
     }
+    case 'flint_and_steel': {
+      // B11 Task 2：灰色燧石碎塊＋亮鐵片（右側）＋一點火花。
+      ctx.fillStyle = '#4a4a52';
+      ctx.beginPath();
+      ctx.moveTo(6, 18);
+      ctx.lineTo(14, 8);
+      ctx.lineTo(20, 14);
+      ctx.lineTo(12, 25);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#6f6f7a';
+      ctx.beginPath();
+      ctx.moveTo(6, 18);
+      ctx.lineTo(14, 8);
+      ctx.lineTo(15, 14);
+      ctx.closePath();
+      ctx.fill();
+      // 鐵片：亮色斜長條
+      ctx.fillStyle = '#c9ccd4';
+      ctx.save();
+      ctx.translate(19, 16);
+      ctx.rotate(-0.5);
+      ctx.fillRect(-3, -10, 5, 20);
+      ctx.restore();
+      // 火花
+      ctx.fillStyle = '#ffd86b';
+      ctx.fillRect(21, 6, 2, 2);
+      ctx.fillRect(25, 9, 2, 2);
+      break;
+    }
     default: {
       // unknown/future item — neutral placeholder until it gets real art
       ctx.fillStyle = '#7a7a7a';

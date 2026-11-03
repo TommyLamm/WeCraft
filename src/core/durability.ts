@@ -11,6 +11,9 @@ export const TOOL_MAX_DURABILITY: Readonly<Partial<Record<ItemId, number>>> = {
   diamond_pickaxe: 1561, diamond_axe: 1561, diamond_shovel: 1561, diamond_sword: 1561,
   // B10 Task 2：弓的耐久（wiki `Bow`：384；每次射擊扣 1）。
   bow: 384,
+  // B11 Task 2：打火石的耐久（wiki `Flint and Steel`：JE 64；本作只在點燃 TNT
+  // 成功時扣 1——原版對任何使用都扣，本作沒有火系統 → 已揭露的簡化）。
+  flint_and_steel: 64,
 };
 
 export function maxDurability(item: string): number {

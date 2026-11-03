@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 37). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 39). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 37 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(37);
+  it('holds exactly the 39 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(39);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -57,6 +57,9 @@ describe('recipe table', () => {
         'arrow',
         'wool',
         'bed',
+        // B11 Task 2：打火石／TNT
+        'flint_and_steel',
+        'tnt',
       ].sort(),
     );
   });
@@ -506,6 +509,36 @@ describe('matchRecipe — matching rules', () => {
     g[5] = s('birch_planks');
     expect(findRecipe(g, 3)?.id).toBe('bed');
     expect(findRecipe(g, 3)?.result).toEqual({ item: 'bed', count: 1 });
+  });
+
+  // ---- B11 Task 2：打火石與 TNT ----
+
+  it('B11: flint and steel = iron ingot + flint (shapeless)', () => {
+    const g = emptyGrid(2);
+    g[0] = s('iron_ingot');
+    g[1] = s('flint');
+    expect(findRecipe(g, 2)?.id).toBe('flint_and_steel');
+    expect(findRecipe(g, 2)?.result).toEqual({ item: 'flint_and_steel', count: 1 });
+    // 材料錯（金錠不是鐵錠）→ 不成立
+    const wrong = emptyGrid(2);
+    wrong[0] = s('gold_ingot');
+    wrong[1] = s('flint');
+    expect(findRecipe(wrong, 2)?.id ?? null).not.toBe('flint_and_steel');
+  });
+
+  it('B11: tnt = 5 gunpowder + 4 sand checkerboard (3×3 only)', () => {
+    const g = emptyGrid(3);
+    g[0] = s('gunpowder'); g[1] = s('sand'); g[2] = s('gunpowder');
+    g[3] = s('sand'); g[4] = s('gunpowder'); g[5] = s('sand');
+    g[6] = s('gunpowder'); g[7] = s('sand'); g[8] = s('gunpowder');
+    expect(findRecipe(g, 3)?.id).toBe('tnt');
+    expect(findRecipe(g, 3)?.result).toEqual({ item: 'tnt', count: 1 });
+    // 反色棋盤（沙在角、火藥在邊）→ 不成立
+    const wrong = emptyGrid(3);
+    wrong[0] = s('sand'); wrong[1] = s('gunpowder'); wrong[2] = s('sand');
+    wrong[3] = s('gunpowder'); wrong[4] = s('sand'); wrong[5] = s('gunpowder');
+    wrong[6] = s('sand'); wrong[7] = s('gunpowder'); wrong[8] = s('sand');
+    expect(findRecipe(wrong, 3)?.id ?? null).not.toBe('tnt');
   });
 });
 

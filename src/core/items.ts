@@ -55,7 +55,10 @@ export type ItemId =
   // 原版床不可堆疊（wiki `Bed` infobox：stackable = No）→ 進 STACK_ONE。
   | 'bed'
   // B10 Task 2：燧石（礫石 10% 掉落）與弓（3 線＋3 木棍；耐久 384）。
-  | 'flint' | 'bow';
+  | 'flint' | 'bow'
+  // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）與打火石
+  // （鐵錠＋燧石；耐久 64、堆疊 1）。
+  | 'tnt' | 'flint_and_steel';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -96,12 +99,15 @@ const ITEM_IDS: Record<ItemId, true> = {
   bed: true,
   // B10 Task 2：燧石與弓
   flint: true, bow: true,
+  // B11 Task 2：TNT 的物品形式與打火石
+  tnt: true, flint_and_steel: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 76 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 81 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
- *  ＋ B9 Task 1 補的 3 個生物掉落材料）。 */
+ *  ＋ B9 Task 1 補的 3 個生物掉落材料 ＋ B10 補的 3 個（床／燧石／弓）
+ *  ＋ B11 補的 2 個（TNT／打火石））。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {
@@ -157,6 +163,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['torch', BLOCK.TORCH],
   // B10 Task 1：床的方塊物品形式
   ['bed', BLOCK.BED],
+  // B11 Task 2：TNT 的方塊物品形式（挖掉掉自身 → 要能放回世界）
+  ['tnt', BLOCK.TNT],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);
@@ -174,13 +182,24 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'bed',
   // B10 Task 2：弓是耐久武器（384），堆疊 1。
   'bow',
+  // B11 Task 2：打火石是耐久工具（64），原版堆疊 1（wiki：Stackable No）。
+  'flint_and_steel',
 ]);
 
 export function maxStack(item: ItemId): number {
   return STACK_ONE.has(item) ? 1 : 64;
 }
 
+/** 顯示名覆寫（多數 id 由 title-case 推導；這裡修掉原版不照規則的兩個）。
+ *  只影響 UI 文字（HUD／背包／合成／熔爐／toast），不影響存檔（存的是 id）。 */
+const DISPLAY_NAMES: Readonly<Partial<Record<ItemId, string>>> = {
+  tnt: 'TNT',
+  flint_and_steel: 'Flint and Steel',
+};
+
 export function stackName(item: ItemId): string {
+  const override = DISPLAY_NAMES[item];
+  if (override) return override;
   return item.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 

@@ -17,6 +17,8 @@ describe('durability', () => {
     expect(maxDurability('golden_pickaxe')).toBe(32);
     expect(maxDurability('diamond_sword')).toBe(1561);
     expect(maxDurability('bow')).toBe(384);
+    // B11 Task 2：打火石（JE 耐久 64；minecraft.wiki/Flint_and_Steel）
+    expect(maxDurability('flint_and_steel')).toBe(64);
     expect(maxDurability('stone')).toBe(0);
     expect(maxDurability('apple')).toBe(0);
     expect(maxDurability('toString')).toBe(0);
@@ -37,6 +39,7 @@ describe('durability', () => {
     expect(isDurableItem('wooden_pickaxe')).toBe(true);
     expect(isDurableItem('diamond_sword')).toBe(true);
     expect(isDurableItem('bow')).toBe(true);
+    expect(isDurableItem('flint_and_steel')).toBe(true); // B11
     expect(isDurableItem('stone')).toBe(false);
     expect(isDurableItem('apple')).toBe(false);
   });

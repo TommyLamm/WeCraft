@@ -63,8 +63,11 @@ const STR: PatternCell = 'string';
 const FLI: PatternCell = 'flint';
 const FEA: PatternCell = 'feather';
 const WO: PatternCell = 'wool';
+// B11 Task 2：TNT 的棋盤格常量（火藥在角與中心、沙在邊）。
+const GUN: PatternCell = 'gunpowder';
+const SAN: PatternCell = 'sand';
 
-/** The settled recipe table — exactly 37 entries, checked by tests. */
+/** The settled recipe table — exactly 39 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -374,6 +377,24 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [P, P, P],
     ],
     result: { item: 'bed', count: 1 },
+  },
+  // B11 Task 2：打火石（鐵錠＋燧石；原版 shapeless，2×2 背包也能合）。
+  {
+    id: 'flint_and_steel',
+    kind: 'shapeless',
+    inputs: ['iron_ingot', 'flint'],
+    result: { item: 'flint_and_steel', count: 1 },
+  },
+  // B11 Task 2：TNT（原版 3×3 棋盤：5 火藥＋4 沙；只有一般沙——本作沒有紅沙）。
+  {
+    id: 'tnt',
+    kind: 'shaped',
+    pattern: [
+      [GUN, SAN, GUN],
+      [SAN, GUN, SAN],
+      [GUN, SAN, GUN],
+    ],
+    result: { item: 'tnt', count: 1 },
   },
 ];
 
