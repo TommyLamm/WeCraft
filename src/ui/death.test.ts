@@ -88,6 +88,7 @@ describe('death screen', () => {
     expect(deathMessageFor('cactus')).toBe('你被仙人掌刺死了');
     // B9 Task 8: 苦力怕（爆炸）與蜘蛛（咬擊）各自一句
     expect(deathMessageFor('creeper')).toBe('你被苦力怕炸死了');
+    expect(deathMessageFor('tnt')).toBe('你被 TNT 炸死了'); // B11
     expect(deathMessageFor('spider')).toBe('你被蜘蛛殺死了');
     expect(deathMessageFor('unknown')).toBe('你死了');
     expect(deathMessageFor(null)).toBe('');

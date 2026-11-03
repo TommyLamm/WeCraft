@@ -1084,11 +1084,13 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
 // 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
 // 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
 describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
-  it('all six damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow)', () => {
+  it('all seven damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow / flint-and-steel)', () => {
     // 實測：敵對生物命中、苦力怕命中（B9）、蜘蛛命中（B9）、被動生物命中、
-    // 挖完方塊、射箭（B10）各一處；`function damageHeldTool(` 的定義不是呼叫點。
-    // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 5；B10 新增弓 → 6。
-    expect(countOf('damageHeldTool(1)')).toBe(6);
+    // 挖完方塊、射箭（B10）、點燃 TNT（B11）各一處；`function damageHeldTool(`
+    // 的定義不是呼叫點。
+    // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 5；B10 新增弓 → 6；
+    // B11 新增打火石點燃 → 7。
+    expect(countOf('damageHeldTool(1)')).toBe(7);
   });
 });
 
@@ -1158,7 +1160,7 @@ describe('main.ts 接線（B10：弓與玩家箭）', () => {
   it('B10: the bow is wired through charge -> spawnPlayerArrow -> durability', () => {
     expect(countOf('spawnPlayerArrow(')).toBe(1);
     expect(countOf('bowShotFor(')).toBe(1);
-    expect(countOf('damageHeldTool(1)')).toBe(6); // B7 的 5 處 ＋ 弓
+    expect(countOf('damageHeldTool(1)')).toBe(7); // B7 的 5 處 ＋ 弓（B10）＋ 打火石（B11）
     expect(playingBranchBody()).toContain('heldIsBow()');
     expect(playingBranchBody()).toContain('viewmodel.setDraw(');
   });
@@ -1251,5 +1253,69 @@ describe('main.ts 接線（B10：床與重生）', () => {
   it('B10: breaking or exploding a bed clears the spawn point', () => {
     expect(mainSource).toContain('clearBedSpawnAt(');
     expect(functionBody('runExplosion')).toContain('clearBedSpawnAt(');
+  });
+});
+
+// ---- B11：TNT 與打火石的接線 -----------------------------------------------
+describe('main.ts 接線（B11：TNT 與打火石）', () => {
+  it('B11: right-click on TNT with flint and steel ignites before bow/food/placement', () => {
+    const playing = playingBranchBody();
+    const tnt = playing.indexOf('hitBlock === BLOCK.TNT');
+    const bow = playing.indexOf('heldIsBow()');
+    expect(tnt).toBeGreaterThan(-1);
+    expect(bow).toBeGreaterThan(tnt); // TNT 先於弓（弓在手上時才看得到；順序不影響）
+    expect(playing.slice(tnt, bow)).toContain('heldIsFlintAndSteel()');
+    expect(playing.slice(tnt, bow)).toContain('tryIgniteTnt(');
+  });
+
+  it('B11: tryIgniteTnt verifies the block first, spawns the entity before spending durability', () => {
+    const body = functionBody('tryIgniteTnt');
+    // 已點燃（方塊已換成 AIR）→ 再點同一格是 no-op（不能重複扣耐久）。
+    expect(body).toContain('world.getBlock(');
+    expect(body).toContain('world.setBlock(');
+    expect(body).toContain('createPrimedTnt(');
+    expect(body).toContain('audio.playTntFuse(');
+    // 順序＝行為：先建立引信實體（`createPrimedTnt`）再扣耐久；反過來會在
+    // 「最後一次使用」把打火石弄壞前就失敗（與 B10 弓箭同一條釘法）。
+    const spawnAt = body.indexOf('createPrimedTnt(');
+    const durAt = body.indexOf('damageHeldTool(1)');
+    expect(spawnAt).toBeGreaterThan(-1);
+    expect(durAt).toBeGreaterThan(-1);
+    expect(spawnAt).toBeLessThan(durAt);
+  });
+
+  it('B11: runExplosion is parameterised (creeper source vs tnt source with power 4 and 100% drops)', () => {
+    const body = functionBody('runExplosion');
+    expect(body).toContain("opts.source === 'tnt'"); // 死因分流
+    expect(body).toContain('dropChance');
+    // 連鎖引爆：爆炸波及的 TNT 會轉成引信實體（不是掉落物）。
+    expect(body).toContain('primeTntChain(');
+    const playing = playingBranchBody();
+    expect(playing).toContain("source: 'creeper'");
+    expect(playing).toContain("source: 'tnt'");
+    expect(playing).toContain('power: TNT_EXPLOSION_POWER');
+    expect(playing).toContain('dropChance: 1');
+    expect(countOf('runExplosion(')).toBe(3); // 定義 + 苦力怕呼叫 + TNT 呼叫
+    // 舊守門照舊：第一個 runExplosion( 之前仍有苦力怕的過濾（TNT 事件迴圈在後）。
+    const at = playing.indexOf('runExplosion(');
+    expect(playing.slice(0, at)).toContain('creepers.filter((c) => c.id !== ev.creeperId)');
+  });
+
+  it('B11: the tnt fuse is stepped every playing frame and explodes with the tnt source', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('stepPrimedTnts(');
+    expect(playing).toContain('primedTnts = tntStep.tnts');
+    expect(playing).toContain("source: 'tnt'");
+    expect(playing).toContain('dropChance: 1');
+  });
+
+  it('B11: session boundaries clear primed tnt (no stray fuse in the next session)', () => {
+    expect(functionBody('resetSessionEntities')).toContain('primedTnts = [];');
+    expect(mainSource).toContain('createTntRenderer(');
+    expect(mainSource).toContain('tntRenderer.syncTnts(');
+  });
+
+  it('B11: the debug hook exposes primed tnt states (fuse + position) for browser probes', () => {
+    expect(mainSource).toContain('tntStates');
   });
 });

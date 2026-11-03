@@ -7,6 +7,8 @@ import { createParticleRenderer } from './render/particles';
 import { createPassiveMobRenderer } from './render/passive-mobs';
 // B9 Task 10：苦力怕與蜘蛛的方塊模型（引信閃白／蜘蛛八足）。
 import { createB9MobRenderer } from './render/b9-mobs';
+// B11 Task 7：引信 TNT 的貼圖方塊渲染（0.5 秒閃爍；材質在 render/tnt.ts）。
+import { createTntRenderer } from './render/tnt';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
@@ -179,6 +181,15 @@ import {
   type Spider,
   type SpiderEvent,
 } from './world/spider';
+// B11 Task 7：引信 TNT（純邏輯在 world/tnt.ts；渲染在 render/tnt.ts）。
+import {
+  createPrimedTnt,
+  primeTntChain,
+  stepPrimedTnts,
+  MAX_PRIMED_TNT,
+  TNT_EXPLOSION_POWER,
+  type PrimedTnt,
+} from './world/tnt';
 // B4 Task 6：被動生物（雞／豬／羊／牛）的模型與 AI（純邏輯層，渲染是後續任務）。
 // **被動生物與敵對生物是兩套東西**：不會主動攻擊、不會 despawn、不進
 // `mobs-changed`（那是敵對生物的計數事件）。
@@ -355,6 +366,12 @@ interface WecraftDebug {
     hp: number;
     state: Spider['state'];
   }>;
+  /** **B11**：引信 TNT 的逐顆狀態（id／座標／引信剩餘秒數）。
+   *
+   *  **用途**：批末的真實瀏覽器驗收要觀察「放置 → 點燃 → 4 秒後爆炸」——
+   *  `modified()` 看不出引信進度，需要這份逐顆快照。**純唯讀**（只映射出
+   *  一份新陣列，不修改任何遊戲狀態）。 */
+  tntStates: () => Array<{ id: number; x: number; y: number; z: number; fuse: number }>;
   /** 地面掉落物的**逐筆**（物品 id／數量）快照。
    *
    *  **用途**：B9 批末驗收要分辨「爆炸掉的是方塊」與「爆炸的苦力怕自己掉火藥」
@@ -413,6 +430,8 @@ const mobRenderer = createMobRenderer(gs.scene);
 const passiveRenderer = createPassiveMobRenderer(gs.scene);
 // B9 Task 10：苦力怕與蜘蛛（獨立 renderer；模型骨架與人形／四足都不同）
 const b9Renderer = createB9MobRenderer(gs.scene);
+// B11 Task 7：引信 TNT 的貼圖方塊（0.5 秒閃爍；材質與 DataTexture 在 render/tnt.ts）
+const tntRenderer = createTntRenderer(gs.scene);
 // Task 4: break/dig debris — billboard quads over the shared block texture array
 const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
@@ -952,6 +971,31 @@ function heldIsBow(): boolean {
   return slots[selected]?.item === 'bow';
 }
 
+/** B11：手上拿的是不是打火石（只支援點燃 TNT——本作沒有火系統）。 */
+function heldIsFlintAndSteel(): boolean {
+  return slots[selected]?.item === 'flint_and_steel';
+}
+
+/** B11：手持打火石右鍵 TNT → **點燃**（原版：方塊被換成 primed TNT 實體，
+ *  引信 80 tick＝4 秒）。規則本體在 `world/tnt.ts`；這裡是組裝根。
+ *
+ *  **先驗方塊再動手**：已點燃的 TNT 格早被換成 AIR → 再點同一格必須是 no-op
+ *  （不能重複扣耐久、不能生出第二顆實體）。
+ *  **順序＝行為**：先建立引信實體、最後才扣耐久——最後一次使用時打火石壞掉，
+ *  TNT 仍要點燃（與 B10 弓箭「先射箭再扣耐久」同一條）。創造模式不扣
+ *  （`damageHeldTool` 的既有守門）。 */
+function tryIgniteTnt(x: number, y: number, z: number): void {
+  if (world.getBlock(x, y, z) !== BLOCK.TNT) return;
+  world.setBlock(x, y, z, BLOCK.AIR); // 方塊 → 空氣（原版把方塊換成實體）
+  primedTnts = [...primedTnts, createPrimedTnt({ x: x + 0.5, y, z: z + 0.5 })];
+  audio.playTntFuse({
+    pos: { x: x + 0.5, y: y + 0.5, z: z + 0.5 },
+    listener: player.position,
+  });
+  damageHeldTool(1);
+  hud.setHotbar(slots, selected); // 耐久變了 → 刷新熱鍵欄
+}
+
 /** B10：放開右鍵 → 結算這一發（生存耗箭、扣 1 耐久；創造不耗不扣）。
  *
  *  **順序**：先檢查箭 → 先扣箭 → 生成箭 → 才扣耐久（最後一發把弓弄壞時，
@@ -1073,6 +1117,9 @@ let mobs: Mob[] = [];
 let creepers: Creeper[] = [];
 /** B9：蜘蛛（HP16／暗處敵對／攀牆）。同樣**不跨存檔**。 */
 let spiders: Spider[] = [];
+/** B11：引信中的 TNT（純邏輯在 `world/tnt.ts`）。與敵對生物同級——**不跨存檔**
+ *  （「儲存並離開」時未爆的 TNT 消失），由 `resetSessionEntities` 清空。 */
+let primedTnts: PrimedTnt[] = [];
 /** B9 Task 11（修正）：引信聲的「已經播過」書籤——用狀態轉移而不是
  *  `fuse === CREEPER_FUSE_SEC` 等值判斷。等值判斷在 `dt === 0` 的幀（分頁凍結、
  *  幀率保護）不會倒數 → 同一隻會**每幀重播**嘶嘶聲。id 在牠離開 fuse 狀態
@@ -1741,12 +1788,17 @@ function spawnB9DeathDrops(
 }
 
 /**
- * **爆炸執行**（B9 Task 9）：`explodeAt` 算出「壞哪些方塊／掉什麼」之後，這裡把
- * 結果套到世界、玩家與生物上。純邏輯全在 `world/explosion.ts`（可單元測試），
- * 這個函式是**未測的組裝根**（以批末的真瀏覽器驗收把關）。
+ * **爆炸執行**（B9 Task 9；B11 參數化）：`explodeAt` 算出「壞哪些方塊／掉什麼」
+ * 之後，這裡把結果套到世界、玩家與生物上。純邏輯全在 `world/explosion.ts`
+ * （可單元測試），這個函式是**未測的組裝根**（以批末的真瀏覽器驗收把關）。
+ *
+ * B11：呼叫端以 `opts` 指定**威力**（苦力怕 3／TNT 4）、**死因來源**
+ * （`'creeper'`／`'tnt'`）與**掉落機率**（TNT 傳 1＝原版 100%；苦力怕維持
+ * 1/power）；爆炸音效（`entity.generic.explode` 的近似）也在這裡統一播放
+ * ——B9 當時苦力怕爆炸完全無聲，B11 起兩者共用。
  *
  * 規則：
- * - **中心＝苦力怕的腳底位置**（原版 TNT 的中心在實體上方 0.06125 格；差異 < 1 格）。
+ * - **中心由呼叫端決定**：苦力怕＝腳底位置；TNT＝實體位置 +0.06125 格（原版）。
  * - **玩家傷害繞過 0.5 秒受擊無敵幀**：原版爆炸沒有無敵幀，且這是單次大傷害；
  *   紅色回饋與疲勞照舊。擊退方向取「中心 → 眼睛」、垂直分量壓到
  *   `EXPLOSION_KNOCKBACK_MAX_Y`。
@@ -1757,20 +1809,29 @@ function spawnB9DeathDrops(
  * - **引爆的苦力怕本身不掉落**：牠是被「移除」而不是「死亡」（原版 `discard()`），
  *   呼叫端在跑 `runExplosion` 前已把牠從清單移除。
  */
-function runExplosion(at: { x: number; y: number; z: number }): void {
-  const power = CREEPER_EXPLOSION_POWER;
+function runExplosion(
+  at: { x: number; y: number; z: number },
+  opts: { source: 'creeper' | 'tnt'; power?: number; dropChance?: number },
+): void {
+  const power = opts.power ?? CREEPER_EXPLOSION_POWER;
   const solid = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
+  // B11：爆炸音效（原版 `entity.generic.explode` 的程序合成近似）——B9 的
+  // 苦力怕爆炸過去無聲，本批起與 TNT 共用同一個 facade 方法。
+  audio.playExplosion({ pos: at, listener: player.position });
   const result = explodeAt({
     power,
     center: at,
     blockIdAt: (x, y, z) => world.getBlock(x, y, z),
     isSolidAt: solid,
+    dropChance: opts.dropChance,
   });
 
   // ---- 破壞方塊（走 world.setBlock → modified overlay 保留戰痕）＋粒子 ----
   // `spilled` 統整這一場爆炸造成的**所有**掉落（方塊／容器內容物／生物），
   // 函式結尾只發一次 `drops-changed`。
   let spilled = false;
+  // B11：被波及的 TNT 方塊（連鎖引爆用；成功誘爆的格位不進掉落）。
+  const tntAt: Array<{ x: number; y: number; z: number }> = [];
   for (const b of result.destroyed) {
     world.setBlock(b.x, b.y, b.z, BLOCK.AIR);
     // B10：被炸掉的是重生點所在的床 → 重生點失效（回世界出生點）。
@@ -1793,11 +1854,32 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
       y: b.y + 0.5,
       z: b.z + 0.5,
     });
+    // B11：爆炸波及的 TNT → 連鎖引爆（原版 0.5–1.5 秒隨機引信）。先收集，
+    // 迴圈跑完才建立實體——`explodeAt` 已先把這些格位記成 destroyed 並
+    // setBlock(AIR)，不影響本場爆炸的結果。
+    if (b.blockId === BLOCK.TNT) tntAt.push({ x: b.x + 0.5, y: b.y, z: b.z + 0.5 });
   }
 
-  // ---- 方塊掉落（1/power 機率已在 explodeAt 擲完）----
-  if (result.drops.length > 0) {
-    for (const d of result.drops) drops = spawnDrop(drops, d.item, d.count, d.at);
+  // ---- B11：連鎖引爆（上限 MAX_PRIMED_TNT；未誘爆的照常掉落）----
+  let resultDrops = result.drops;
+  if (tntAt.length > 0) {
+    const primed = primeTntChain(primedTnts, tntAt, { cap: MAX_PRIMED_TNT });
+    primedTnts = primed.tnts;
+    if (primed.primedCount > 0) {
+      const primedKeys = new Set(
+        tntAt
+          .slice(0, primed.primedCount)
+          .map((p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`),
+      );
+      resultDrops = result.drops.filter(
+        (d) => !primedKeys.has(`${Math.floor(d.at.x)},${Math.floor(d.at.y)},${Math.floor(d.at.z)}`),
+      );
+    }
+  }
+
+  // ---- 方塊掉落（機率已在 explodeAt 擲完；預設 1/power、TNT 傳 1）----
+  if (resultDrops.length > 0) {
+    for (const d of resultDrops) drops = spawnDrop(drops, d.item, d.count, d.at);
     spilled = true;
   }
 
@@ -1817,7 +1899,7 @@ function runExplosion(at: { x: number; y: number; z: number }): void {
   // `!isPlayerDead(vitals)`：同一幀稍早（例如摔落）已經致命時，爆炸不該對屍體
   // 再套傷害／擊退、也不該把死因從「摔落」改寫成「苦力怕」。
   if (playerDmg > 0 && vitals && !isPlayerDead(vitals)) {
-    deathCause = 'creeper';
+    deathCause = opts.source === 'tnt' ? 'tnt' : 'creeper';
     setVitals(exhaust(damage(vitals, playerDmg), EXHAUST_HURT));
     hurtFlash.flash();
     const mag = explosionKnockback(power, playerDist, playerExposure);
@@ -2912,6 +2994,8 @@ function resetSessionEntities(): void {
   // B9：苦力怕／蜘蛛不跨存檔（與既有敵對生物一致）→ 新遊戲／讀檔一律清空。
   creepers = [];
   spiders = [];
+  // B11：引信 TNT 同樣不跨存檔——上一場的引信不得在新世界憑空爆炸。
+  primedTnts = [];
   passiveMobs = []; // B4 Task 10：清空後由 continueGame／applyCloudData 從存檔還原
   drops = [];
   arrows = [];
@@ -3461,6 +3545,9 @@ window.__wecraft = {
       hp: s.hp,
       state: s.state,
     })),
+  // B11：引信 TNT 逐顆狀態（點燃 → 4 秒後爆炸的驗收要看 fuse／清空時機）。
+  tntStates: () =>
+    primedTnts.map((t) => ({ id: t.id, x: t.pos.x, y: t.pos.y, z: t.pos.z, fuse: t.fuse })),
   // 玩家的生命／飢餓／飽食度（創造模式 → null）→ 供驗收探針讀「進食後的飽食度」。
   // **純唯讀**（只複製出一份新物件）。
   vitalsState: () =>
@@ -3880,7 +3967,16 @@ gs.renderer.setAnimationLoop(() => {
       // （否則同一幀多一次爆破、多一批方塊被炸掉）。
       if (!creepers.some((c) => c.id === ev.creeperId)) continue;
       creepers = creepers.filter((c) => c.id !== ev.creeperId);
-      runExplosion(ev.at);
+      runExplosion(ev.at, { source: 'creeper' });
+    }
+    // ---- B11：引信 TNT 的每幀步進（**必須排在苦力怕事件迴圈之後**：wiring
+    // 守門要求 playing 分支的第一個 `runExplosion(` 之前仍有苦力怕過濾字串）。
+    // 到期 → 爆炸（power 4、100% 掉落、死因 'tnt'）。`stepPrimedTnts` 已把
+    // 爆炸的實體從清單移除；連鎖引爆在 `runExplosion` 內建立新實體。 */
+    const tntStep = stepPrimedTnts(primedTnts, { isSolidAt, dt });
+    primedTnts = tntStep.tnts;
+    for (const ev of tntStep.events) {
+      runExplosion(ev.at, { source: 'tnt', power: TNT_EXPLOSION_POWER, dropChance: 1 });
     }
     // B9 Task 11：引信**剛開始**的那一幀播一次「嘶——」（狀態轉移；
     // 見 `hissedFuseIds` 的說明——等值判斷在 dt = 0 的幀會重播）。
@@ -4421,6 +4517,10 @@ gs.renderer.setAnimationLoop(() => {
           // B10：右鍵床 → 使用（距離／時間窗／怪物的判定都在 world/bed.ts；
           // 與工作台／熔爐／箱子同層——「使用方塊」優先於「使用手上物品」）。
           tryUseBed(hit.x, hit.y, hit.z);
+        } else if (hit && hitBlock === BLOCK.TNT && heldIsFlintAndSteel()) {
+          // B11：手持打火石右鍵 TNT → 點燃（沒拿打火石時落在下面的一般放置路徑
+          // ——TNT 是方塊，可以被疊放）。
+          tryIgniteTnt(hit.x, hit.y, hit.z);
         } else if (heldIsBow()) {
           // B10：右鍵按住 = 拉弓（放開才發射）——這裡只記錄開始蓄力，
           // 真正的每幀推進與發射在下面（連放／進食之前）。
@@ -4657,6 +4757,9 @@ gs.renderer.setAnimationLoop(() => {
   // B9 Task 10：苦力怕／蜘蛛（非 playing 時 dt = 0 → 走路與引信動畫凍結）。
   b9Renderer.syncCreepers(creepers, state === 'playing' ? dt : 0);
   b9Renderer.syncSpiders(spiders, state === 'playing' ? dt : 0);
+  // B11 Task 7：引信 TNT（引信步進本身只在 playing 分支；這裡只同步外觀——
+  // 爆炸後實體已從清單移除 → 這一幀 mesh 跟著消失）。
+  tntRenderer.syncTnts(primedTnts, state === 'playing' ? dt : 0);
   // Task 3: cracks belong to the dig loop only — the playing branch above
   // drives set(digTarget, dig.progress); every other state (title/paused/
   // inventory/crafting/dead) clears any quad left hanging on the frozen view.

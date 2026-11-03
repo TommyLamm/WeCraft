@@ -16,6 +16,7 @@ export type DamageSource =
   | 'zombie'
   | 'skeleton'
   | 'creeper'
+  | 'tnt' // B11：TNT 爆炸（runExplosion 的 source='tnt'）
   | 'spider'
   | 'starve'
   | 'cactus'
@@ -32,6 +33,8 @@ export function deathMessageFor(source: DamageSource | null): string {
       return '你被骷髏射死了';
     case 'creeper':
       return '你被苦力怕炸死了'; // B9：苦力怕爆炸（Task 9 的 runExplosion 記這個死因）
+    case 'tnt':
+      return '你被 TNT 炸死了'; // B11：TNT 爆炸
     case 'spider':
       return '你被蜘蛛殺死了'; // B9：蜘蛛咬擊（Task 8 的 applySpiderDamage）
     case 'starve':
