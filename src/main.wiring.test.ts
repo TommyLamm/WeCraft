@@ -781,16 +781,18 @@ describe('main.ts 接線（B4 Task 4 I-2：任何死因都會掉落）', () => {
   it('both the melee kill and the death-removal path use the shared helper', () => {
     // 近戰支（當場擊殺）→ 共用函式
     expect(countOf('spawnMobDeathDrops(dead)')).toBe(1);
-    // 死亡移除支（**任何其他死因**：箭、白天燃燒…）→ 同一個共用函式
-    expect(countOf('spawnMobDeathDrops(deadNow)')).toBe(1);
-    // 定義 + 兩個呼叫端（沒有第三條私藏的掉落路徑）
-    expect(countOf('spawnMobDeathDrops(')).toBe(3);
+    // 死亡移除支（**任何其他死因**：箭、白天燃燒…）→ 同一個共用函式。
+    // B10 審查 I2：死者**分成兩組**結算——玩家箭擊殺、其他死因（燃燒）。
+    expect(countOf('spawnMobDeathDrops(playerDead)')).toBe(1);
+    expect(countOf('spawnMobDeathDrops(otherDead, { killedByPlayer: false })')).toBe(1);
+    // 定義 + 三個呼叫端（沒有第三條私藏的掉落路徑）
+    expect(countOf('spawnMobDeathDrops(')).toBe(4);
   });
 
   it('the death-removal path drops the loot before the corpse leaves the world', () => {
     // 死亡移除的那一段（本體：過濾死亡／超距的生物）必須**先**算掉落再移除
     const playing = playingBranchBody();
-    const at = playing.indexOf('spawnMobDeathDrops(deadNow)');
+    const at = playing.indexOf('spawnMobDeathDrops(playerDead)');
     const filterAt = playing.indexOf('!isDead(m)');
     expect(at).toBeGreaterThan(-1);
     expect(filterAt).toBeGreaterThan(-1);
@@ -1108,8 +1110,9 @@ describe('main.ts 接線（B9 審查修復：爆炸與近戰鏈）', () => {
   it('explosion kills never claim a player kill (spider eyes must not drop)', () => {
     // 四條被炸死的路徑（殭屍／骷髏、苦力怕、蜘蛛、被動生物）都傳 false；
     // 只有玩家近戰擊殺傳 true。註解已被剔除 → 這個數字是**呼叫點**數。
+    // B10 審查 I2：死亡移除支的「其他死因」（白天燃燒）也傳 false → 5。
     const body = functionBody('runExplosion');
-    expect(countOf('killedByPlayer: false')).toBe(4);
+    expect(countOf('killedByPlayer: false')).toBe(5);
     expect(body).toContain('killedByPlayer: false');
   });
 
@@ -1181,6 +1184,30 @@ describe('main.ts 接線（B10：弓與玩家箭）', () => {
     expect(playing).toContain("ev.type === 'arrow-landed'");
     expect(playing).toContain("spawnDrop(drops, 'arrow', 1, ev.pos)");
   });
+
+  it('B10 審查 I2: the death sweep attributes arrow kills as player kills (bow only from player kills)', () => {
+    // 箭殺 → 記進本幀的玩家擊殺集合（殭屍／骷髏）。
+    expect(functionBody('applyPlayerArrowHit')).toContain('playerArrowKills.add(');
+    const playing = playingBranchBody();
+    // 死亡移除支把死者分開：玩家箭擊殺 → 可掉玩家擊殺限定掉落；其他死因（白天
+    // 燃燒）→ 明確 `killedByPlayer: false`（否則日出的骷髏會噴弓——審查實證）。
+    expect(playing).toContain('playerArrowKills.has(m.id)');
+    expect(playing).toContain('spawnMobDeathDrops(playerDead)');
+    expect(playing).toContain('spawnMobDeathDrops(otherDead, { killedByPlayer: false })');
+    // 當幀集合用完即清（不會跨幀殘留）。
+    expect(playing).toContain('playerArrowKills.clear()');
+  });
+
+  it('B10 審查 I3: releaseBow spawns the arrow BEFORE spending durability (the last arrow still fires)', () => {
+    // 順序就是行為：先扣耐久的話，最後一發會在箭生成前把弓弄壞 → 箭不射。
+    // indexOf 比較會釘住兩行的相對順序（對調兩行 → 這條轉紅）。
+    const body = functionBody('releaseBow');
+    const spawnAt = body.indexOf('spawnPlayerArrow(');
+    const durAt = body.indexOf('damageHeldTool(1)');
+    expect(spawnAt).toBeGreaterThan(-1);
+    expect(durAt).toBeGreaterThan(-1);
+    expect(spawnAt).toBeLessThan(durAt);
+  });
 });
 
 // ---- B10 Task 8：床的接線、睡眠流程與重生 -----------------------------------
@@ -1208,6 +1235,17 @@ describe('main.ts 接線（B10：床與重生）', () => {
     expect(functionBody('respawnPlayer')).toContain('respawnPoint()');
     expect(functionBody('handleRespawn')).toContain('respawnPlayer()');
     expect(functionBody('resetPlayerToSpawn')).not.toContain('bedSpawn');
+  });
+
+  it('B10 審查 I1: only a LOADED chunk is evidence the bed is gone (unloaded ≠ broken)', () => {
+    // `getBlock` 對未載入的區塊回 AIR——直接拿它當「床沒了」的證據時，玩家離家
+    // 超過載入距離死亡會失去床的重生。修復後：先查區塊在不在（`world.hasChunk`），
+    // 未載入 → `'unloaded'`（信賴記錄）；已載入才敢說 `'placed'`／`'missing'`。
+    const body = functionBody('respawnPoint');
+    expect(body).toContain('world.hasChunk(');
+    expect(body).toContain('respawnPointFor(');
+    expect(body).toContain("'unloaded'");
+    expect(body).toContain("'missing'");
   });
 
   it('B10: breaking or exploding a bed clears the spawn point', () => {

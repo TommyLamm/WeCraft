@@ -12,6 +12,7 @@
  */
 
 import { internalSkyLight } from './lighting';
+import type { SpawnPoint } from '../core/spawn-point';
 
 /** 使用距離（格）：眼睛到**床方塊中心**的 3D 距離 ≤ 3 才算近。 */
 export const BED_USE_DISTANCE = 3;
@@ -68,4 +69,34 @@ export function bedUse(ctx: {
 /** 重生座標＝床的**頂面中心**（床方塊上方一格）。 */
 export function bedSpawnPosition(bed: BlockPos): { x: number; y: number; z: number } {
   return { x: bed.x + 0.5, y: bed.y + 1, z: bed.z + 0.5 };
+}
+
+/**
+ * 「床還在不在？」的查證結果（B10 批末審查 I1）。
+ *
+ * - `placed`：床所在區塊**已載入**、那一格還是床；
+ * - `missing`：區塊已載入、**確定不是床**（被拆／被炸）；
+ * - `unloaded`：區塊不在記憶體裡 → **無從查證**（不是「床沒了」的證據！）。
+ */
+export type BedLookup = 'placed' | 'missing' | 'unloaded';
+
+/**
+ * 死亡重生點（B10 批末審查 I1）：**只有確定床沒了才回世界出生點**。
+ *
+ * 背景：`World.getBlock` 對**未載入**的區塊回 `AIR`——直接拿這個結果當「床沒了」
+ * 的證據時，玩家離家超過載入距離（預設載入半徑 ~200 格）死亡就會**失去床的重生**
+ * ——正是本批的核心承諾。區塊未載入時**信賴存檔記錄**（床回到視野時
+ * `reapplyModifiedInChunk` 會把它放回來，重生點就是床頂）；只有 `missing`
+ * （已載入、那一格確定不是床）才退回世界出生點。
+ *
+ * 純函式（不碰世界、不改輸入）。標題／新局不走這裡（`resetPlayerToSpawn` 永遠
+ * 用世界出生點）；呼叫端把查證結果算成 {@link BedLookup} 傳進來。
+ */
+export function respawnPointFor(
+  bed: SpawnPoint | null,
+  lookup: BedLookup,
+  worldSpawn: { x: number; y: number; z: number },
+): { x: number; y: number; z: number } {
+  if (bed && lookup !== 'missing') return bedSpawnPosition(bed);
+  return worldSpawn;
 }

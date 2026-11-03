@@ -33,7 +33,7 @@ import { damageStack } from './core/durability';
 // B10 Task 5：弓的蓄力與傷害（純邏輯；拉弓/放開的規則本體在 core/bow.ts）。
 import { bowShotFor, stepBowCharge } from './core/bow';
 // B10 Task 8：床的使用規則與睡眠 UI（規則本體在 world/bed.ts；黑幕在 ui/sleep.ts）。
-import { bedUse, bedSpawnPosition, SLEEP_DURATION_SEC } from './world/bed';
+import { bedUse, respawnPointFor, SLEEP_DURATION_SEC, type BedLookup } from './world/bed';
 import { createSleepScreen } from './ui/sleep';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry, titleTriState } from './core/boot-entry';
@@ -1079,6 +1079,11 @@ let spiders: Spider[] = [];
  *  （爆炸、取消、死亡、despawn）時被清掉 → 重新點燃會再播一次（正確）。 */
 const hissedFuseIds = new Set<number>();
 let arrows: Arrow[] = [];
+/** B10 批末審查 I2：**本幀**被玩家箭擊殺的殭屍／骷髏 id。
+ *  死亡移除支（每幀的死亡過濾）用它把死者分成「玩家擊殺」（可掉骷髏的弓等
+ *  玩家擊殺限定掉落）與「其他死因」（白天燃燒 → `killedByPlayer: false`）；
+ *  用完即清（不跨幀殘留）。 */
+const playerArrowKills = new Set<number>();
 /** B10：拉弓中的蓄力狀態（slot ＝開始拉弓時的選取格；換格即取消）。 */
 let bowDraw: { charge: number; slot: number } | null = null;
 /** B10：床設定的重生點（方塊座標）；`null`＝回世界出生點。 */
@@ -1634,7 +1639,16 @@ function applyPlayerArrowHit(ev: Extract<MobEvent, { type: 'arrow-hit' }>): void
       break;
     }
   }
-  if (killed) applyAdvancement({ type: 'mob-killed', mode: currentMode });
+  if (killed) {
+    // B10 批末審查 I2：殭屍／骷髏的死亡由每幀的死亡移除支統一掉落——那裡要能
+    // 分辨「玩家箭擊殺」（可掉玩家擊殺限定掉落：骷髏的弓）與「白天燃燒」等其他
+    // 死因 → 記進本幀的玩家擊殺集合。苦力怕／蜘蛛的死亡過濾目前只可能看到箭殺
+    // （近戰／爆炸各自移除死者），且它們的太陽燃燒不適用 → 不記。
+    if (ev.targetKind === 'zombie' || ev.targetKind === 'skeleton') {
+      playerArrowKills.add(ev.targetId);
+    }
+    applyAdvancement({ type: 'mob-killed', mode: currentMode });
+  }
 }
 
 /**
@@ -1667,11 +1681,19 @@ function applySpiderDamage(ev: SpiderEvent): void {
  * 死亡移除那一支就看不到牠（同一幀內也不會二次觸發）。
  *
  * 回傳「有沒有真的掉東西」→ 呼叫端才知道要不要發 `drops-changed`。
+ *
+ * **B10 批末審查 I2**：`opts.killedByPlayer` 透傳給掉落表（只影響玩家擊殺限定
+ * 掉落：骷髏的弓）。預設不變＝玩家擊殺（近戰支沿用）；死亡移除支要把箭殺與
+ * 白天燃燒**分開**呼叫——燃燒傳 `{ killedByPlayer: false }`，否則日出的骷髏
+ * 會掉弓（審查實證的缺陷）。
  */
-function spawnMobDeathDrops(dead: readonly Mob[]): boolean {
+function spawnMobDeathDrops(
+  dead: readonly Mob[],
+  opts: { killedByPlayer?: boolean } = {},
+): boolean {
   if (currentMode !== 'survival') return false; // 創造模式不掉落
   let spilled = false;
-  for (const d of dropsForDeaths(dead)) {
+  for (const d of dropsForDeaths(dead, undefined, opts)) {
     drops = spawnDrop(drops, d.item, d.count, d.pos);
     spilled = true;
   }
@@ -2344,12 +2366,22 @@ function resetPlayerToSpawn(): void {
   resetPlayerAt(sp.x, sp.y, sp.z);
 }
 
-/** B10：死亡重生點——床還在原格 → 床頂中心；床被拆／被炸 → 回世界出生點。 */
+/** B10：死亡重生點——床還在（**或它所在的區塊未載入、無從查證**）→ 床頂中心；
+ *  確定被拆／被炸 → 回世界出生點。
+ *
+ *  B10 批末審查 I1：`getBlock` 對未載入的區塊回 `AIR`——先查區塊在不在
+ *  （`world.hasChunk`），未載入 → `'unloaded'`（信賴記錄，不是「床沒了」）；
+ *  已載入才敢說 `'placed'`／`'missing'`。三態語意見 `world/bed.ts` 的 `BedLookup`。 */
 function respawnPoint(): { x: number; y: number; z: number } {
-  if (bedSpawn && world.getBlock(bedSpawn.x, bedSpawn.y, bedSpawn.z) === BLOCK.BED) {
-    return bedSpawnPosition(bedSpawn);
-  }
-  return spawnPoint();
+  if (!bedSpawn) return spawnPoint();
+  const cx = Math.floor(bedSpawn.x / CHUNK_SIZE);
+  const cz = Math.floor(bedSpawn.z / CHUNK_SIZE);
+  const lookup: BedLookup = !world.hasChunk(cx, cz)
+    ? 'unloaded'
+    : world.getBlock(bedSpawn.x, bedSpawn.y, bedSpawn.z) === BLOCK.BED
+      ? 'placed'
+      : 'missing';
+  return respawnPointFor(bedSpawn, lookup, spawnPoint());
 }
 
 /** B10：死亡重生的入口（`handleRespawn` 呼叫；新局／回標題不走這裡）。 */
@@ -3804,8 +3836,15 @@ gs.renderer.setAnimationLoop(() => {
     }
     // **死亡 → 掉落（死因無關的單一路徑）**：任何死因（箭、白天燃燒…）的生物都要
     // 掉掉落表裡的東西 → 在牠們被移出世界**之前**先算掉落。
+    // B10 批末審查 I2：掉落表仍與死因無關，但**玩家擊殺限定掉落**（骷髏的弓）
+    // 要分辨死因 → 死者分兩組：本幀的玩家箭擊殺（`playerArrowKills`）與其他
+    // （白天燃燒 → 明確 `killedByPlayer: false`）。
     const deadNow = mobs.filter((m) => isDead(m));
-    const spilled = deadNow.length > 0 && spawnMobDeathDrops(deadNow);
+    const playerDead = deadNow.filter((m) => playerArrowKills.has(m.id));
+    const otherDead = deadNow.filter((m) => !playerArrowKills.has(m.id));
+    let spilled = playerDead.length > 0 && spawnMobDeathDrops(playerDead);
+    if (spawnMobDeathDrops(otherDead, { killedByPlayer: false })) spilled = true;
+    playerArrowKills.clear(); // 本幀的歸屬用完即清（不跨幀殘留）
     // dead mobs despawn past 128 blocks (超距的生物不是死的 → 不掉東西)
     mobs = mobs.filter((m) => !isDead(m) && xzDistance(m.pos, player.position) <= DESPAWN_DISTANCE);
     if (mobs.length !== mobsBefore) bus.emit('mobs-changed', { count: mobs.length });

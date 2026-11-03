@@ -7,6 +7,7 @@ import {
   SLEEP_DURATION_SEC,
   bedUse,
   bedSpawnPosition,
+  respawnPointFor,
 } from './bed';
 
 const bed = { x: 10, y: 64, z: 10 };
@@ -61,5 +62,32 @@ describe('bedUse', () => {
     expect(SLEEP_DURATION_SEC).toBe(5.05);
     expect(bedSpawnPosition(bed)).toEqual({ x: 10.5, y: 65, z: 10.5 });
     expect(bedSpawnPosition({ x: -3, y: 0, z: 8 })).toEqual({ x: -2.5, y: 1, z: 8.5 });
+  });
+});
+
+// B10 批末審查 I1：`World.getBlock` 對**未載入**的區塊回 AIR——如果拿它當「床沒了」
+// 的證據，玩家離家超過載入距離死亡就會**失去床的重生**（本批的核心承諾）。
+// `respawnPointFor` 把查證結果分成 placed／missing／unloaded 三態：只有 **missing**
+// （區塊已載入、確定不是床）才退回世界出生點。
+describe('respawnPointFor（死亡重生點的三態決定）', () => {
+  const worldSpawn = { x: 0, y: 70, z: 0 };
+
+  it('B10 審查 I1: a loaded, still-placed bed wins — the bed top is the spawn', () => {
+    expect(respawnPointFor(bed, 'placed', worldSpawn)).toEqual({ x: 10.5, y: 65, z: 10.5 });
+  });
+
+  it('B10 審查 I1: an UNLOADED chunk is not evidence the bed is gone — the record stands', () => {
+    // 回歸：修復前這條會拿到世界出生點（玩家離家約 200 格死亡 → 失去床的重生）。
+    expect(respawnPointFor(bed, 'unloaded', worldSpawn)).toEqual({ x: 10.5, y: 65, z: 10.5 });
+  });
+
+  it('B10 審查 I1: only a confirmed-missing bed (broken / exploded) falls back to world spawn', () => {
+    expect(respawnPointFor(bed, 'missing', worldSpawn)).toEqual(worldSpawn);
+  });
+
+  it('B10 審查 I1: no bed record → world spawn, whatever the lookup says', () => {
+    expect(respawnPointFor(null, 'unloaded', worldSpawn)).toEqual(worldSpawn);
+    expect(respawnPointFor(null, 'missing', worldSpawn)).toEqual(worldSpawn);
+    expect(respawnPointFor(null, 'placed', worldSpawn)).toEqual(worldSpawn);
   });
 });
