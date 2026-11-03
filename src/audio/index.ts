@@ -7,9 +7,11 @@ import {
   creeperHiss,
   cricket,
   createNoiseBuffer,
+  explosionBoom,
   phaseCue,
   playOneShot,
   startWind,
+  tntFuse,
 } from './voices';
 
 export { createAudioEngine } from './engine';
@@ -53,6 +55,10 @@ export interface GameAudio {
   playBowShoot(opts?: PlayOptions): void;
   /** B10：箭的命中聲（低通噪音＋短正弦；距離衰減與其他音效一致）。 */
   playArrowHit(opts?: PlayOptions): void;
+  /** B11：TNT 引信嘶聲（帶通噪音；距離衰減與其他音效一致）。 */
+  playTntFuse(opts?: PlayOptions): void;
+  /** B11：爆炸聲（低通噪音＋低頻下滑正弦）——TNT 與苦力怕共用。 */
+  playExplosion(opts?: PlayOptions): void;
   /** 最近播放的紀錄（facade 層的 play-call 紀錄，與 `audio/testing.ts` 的節點
    *  紀錄是兩層）；上限 64、新的擠掉最舊的。唯讀視圖——測試用來問「剛剛播了
    *  什麼」。 */
@@ -195,6 +201,36 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     arrowHit(ctx, dest, noiseBuffer(ctx), volume);
   }
 
+  /** B11 Task 5：TNT 引信嘶聲。距離衰減走同一條 `gainForDistance`。 */
+  function playTntFuse(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    tntFuse(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
+  /** B11 Task 5：爆炸聲（TNT＋苦力怕共用）。距離衰減同上。 */
+  function playExplosion(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    explosionBoom(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
   function startAmbience(): void {
     const ctx = engine.context;
     const dest = engine.master;
@@ -244,6 +280,8 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     playBowShoot,
     playArrowHit,
     playCreeperHiss,
+    playTntFuse,
+    playExplosion,
     played: () => played,
     startAmbience,
     stopAmbience,

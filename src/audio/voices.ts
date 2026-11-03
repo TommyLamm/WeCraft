@@ -242,6 +242,90 @@ export function bowShoot(
   source.stop(now + BOW_SHOOT_SEC);
 }
 
+/** TNT 引信嘶聲（B11 Task 5，加分項）：0.6 秒的**帶通白噪音**（中心 1100 Hz、
+ *  Q 1.0）＋上升再收的包絡——近似原版 `entity.tnt.primed` 的引信嘶聲
+ *  （Volume 1.0；程序合成，無取樣）。`volume` 已含距離衰減。 */
+export const TNT_FUSE_BPF_HZ = 1100;
+const TNT_FUSE_Q = 1.0;
+const TNT_FUSE_SEC = 0.6;
+const TNT_FUSE_GAIN = 0.9;
+
+export function tntFuse(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * TNT_FUSE_GAIN;
+
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = TNT_FUSE_BPF_HZ;
+  filter.Q.value = TNT_FUSE_Q;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + TNT_FUSE_SEC * 0.5);
+  gain.gain.linearRampToValueAtTime(0, now + TNT_FUSE_SEC);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + TNT_FUSE_SEC);
+}
+
+/** 爆炸聲（B11 Task 5）：0.6 秒**低通噪音**（220 Hz）＋ 70→30 Hz 下滑正弦
+ *  ——近似原版 `entity.generic.explode`（Volume 4.0、Pitch 0.56–0.84；程序合成）。
+ *  苦力怕爆炸過去完全無聲（B9 已知缺口）——本批起與 TNT 共用這一顆音。 */
+export const EXPLOSION_LPF_HZ = 220;
+const EXPLOSION_OSC_FROM_HZ = 70;
+const EXPLOSION_OSC_TO_HZ = 30;
+const EXPLOSION_SEC = 0.6;
+const EXPLOSION_GAIN = 1.0;
+
+export function explosionBoom(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * EXPLOSION_GAIN;
+
+  // 低通噪音（爆裂的「轟」）
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = EXPLOSION_LPF_HZ;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(peak, now);
+  gain.gain.linearRampToValueAtTime(0, now + EXPLOSION_SEC);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + EXPLOSION_SEC);
+
+  // 低頻正弦（爆炸的胸口「砰」；70 → 30 Hz 下滑）
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(EXPLOSION_OSC_FROM_HZ, now);
+  osc.frequency.linearRampToValueAtTime(EXPLOSION_OSC_TO_HZ, now + EXPLOSION_SEC);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(peak, now);
+  oscGain.gain.linearRampToValueAtTime(0, now + EXPLOSION_SEC);
+  osc.connect(oscGain);
+  oscGain.connect(dest);
+  osc.start();
+  osc.stop(now + EXPLOSION_SEC);
+}
+
 /** 箭的命中聲（B10 Task 9，加分項）：0.08 秒**低通噪音**＋ 220 Hz 短正弦衰減
  *  ——木頭「咚」（近似原版命中方塊／生物的悶響；程序合成，無取樣）。 */
 export const ARROW_HIT_LPF_HZ = 500;

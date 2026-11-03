@@ -150,6 +150,56 @@ describe('createGameAudio', () => {
     expect(fresh.created).toHaveLength(0);
   });
 
+  // ---- B11 Task 5：TNT 嘶聲與爆炸聲 ----
+  it('playTntFuse synthesises one band-passed fizz through the master bus', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playTntFuse();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    const filter = fake.biquads.find((b) => b.type === 'bandpass');
+    expect(filter).toBeTruthy();
+    expect(filter!.frequency.value).toBeCloseTo(1100, 5);
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+    expect(fake.bufferSources[0].stopCalls[0].when).toBeCloseTo(0.6, 5); // 0.6 秒的嘶聲
+  });
+
+  it('playExplosion synthesises a low-passed boom with a sub-bass tone', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playExplosion();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    const filter = fake.biquads.find((b) => b.type === 'lowpass');
+    expect(filter).toBeTruthy();
+    expect(filter!.frequency.value).toBeCloseTo(220, 5);
+    expect(fake.oscillators).toHaveLength(1); // 低頻「砰」的音高
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+  });
+
+  it('the tnt sounds are silent beyond the audible distance and inert before start', () => {
+    const far = { pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } };
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.playTntFuse(far);
+    audio.playExplosion(far);
+    for (const g of fake.gains.slice(1)) expect(g.gain.peak).toBe(0);
+
+    const fresh = new FakeAudioContext();
+    const inert = createGameAudio({ createContext: () => fresh as unknown as AudioContext });
+    inert.playTntFuse();
+    inert.playExplosion();
+    expect(fresh.created).toHaveLength(0);
+  });
+
   it('handleVisibility suspends when hidden and resumes when visible', () => {
     const { fake, audio } = setup();
     audio.ensureStarted(); // initial suspended state → resume
