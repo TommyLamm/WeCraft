@@ -1337,4 +1337,16 @@ describe('main.ts 接線（B11：TNT 與打火石）', () => {
     expect(body).toContain('playTntFuse(');
     expect(body).toContain('tntAt.slice(0, primed.primedCount)');
   });
+
+  it('B12: armor is applied to four damage paths but not fall/starve', () => {
+    expect(countOf('applyArmorDamage(')).toBe(5); // 1 定義 + 4 呼叫
+    expect(functionBody('applyMobEvent')).toContain('applyArmorDamage(ev.amount)');
+    expect(functionBody('applySpiderDamage')).toContain('applyArmorDamage(ev.amount)');
+    expect(functionBody('runExplosion')).toContain('applyArmorDamage(playerDmg)');
+    expect(playingBranchBody()).toContain('applyArmorDamage(hazard.damage)');
+    // 墜落與飢餓不得套盔甲（fall 只走 fallDamage，starve 在 tickVitals）。
+    expect(functionBody('continueGame')).not.toContain('applyArmorDamage');
+    expect(mainSource).toContain('fallDamage(fall.distance)');
+    expect(mainSource).toContain('tickVitals(v, dt)');
+  });
 });

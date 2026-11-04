@@ -28,6 +28,15 @@ import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './wo
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
+// B12：盔甲純邏輯（部位分類、減傷、磨損、清洗）。main 只負責接線與 HUD／模型。
+import {
+  absorbArmorDamage,
+  emptyArmorSet,
+  normalizeArmorSet,
+  totalArmorPoints,
+  type ArmorSet,
+  type ArmorSlot,
+} from './core/armor';
 // B10 Task 7：重生點的型別（存檔／雲端附加欄位共用）。
 import type { SpawnPoint } from './core/spawn-point';
 // B7 Task 5：耐久扣損的純邏輯（`damageStack` 一次吃當下的堆疊 → 挖完／命中各 −1）
@@ -209,7 +218,7 @@ import {
 import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
-import { renderVitals } from './ui/survival-hud';
+import { renderVitals, renderArmorBar } from './ui/survival-hud';
 import { confirmQuitToTitle, createMenus } from './ui/menus';
 import { createDeathScreen, deathMessageFor, type DamageSource } from './ui/death';
 import { createInventory } from './ui/inventory';
@@ -531,6 +540,9 @@ input.setFlyEnabled(currentMode === 'creative');
 // room for drops and craft results (Task 17.5 Critical).
 const inventory = createInventoryModel(starterSlots(settings.mode), settings.mode);
 const slots = inventory.slots;
+/** B12：生存模式穿著的四格盔甲（live 物件；UI 持有同一個參考）。
+ *  盔甲不進 per-mode stash：創造模式看不到、也改不到它，切回生存時原樣穿著。 */
+let armor: ArmorSet = emptyArmorSet();
 let selected = 0;
 let showDebug = false;
 // B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
@@ -1324,6 +1336,11 @@ const vitalsEl = document.createElement('div');
 vitalsEl.className = 'vitals';
 uiRoot.appendChild(vitalsEl);
 
+/** B12：護甲條容器（獨立於 .vitals；0 點或創造模式時隱藏）。 */
+const armorEl = document.createElement('div');
+armorEl.className = 'armor';
+uiRoot.appendChild(armorEl);
+
 /** Current vitals — null while in creative mode (the whole `.vitals` bar hides).
  *  Boot mode comes from settings; the mode-changed handler (Task 5) and damage
  *  sources (Task 9) update it through `setVitals` (starts null so the first
@@ -1360,6 +1377,7 @@ function setVitals(next: Vitals | null): void {
   if (!next) {
     renderVitals(vitalsEl, null);
     vitalsEl.style.display = 'none';
+    refreshArmor();
     return;
   }
   const visible =
@@ -1369,12 +1387,45 @@ function setVitals(next: Vitals | null): void {
   if (!visible) return; // nothing HUD-visible changed → no repaint, no emit
   renderVitals(vitalsEl, next);
   vitalsEl.style.display = '';
+  refreshArmor();
   bus.emit('vitals-changed', {
     hp: next.hp,
     maxHp: next.maxHp,
     hunger: next.hunger,
     maxHunger: next.maxHunger,
   });
+}
+
+/** B12：把 live `armor` 同步到護甲條與第三身模型。`setVitals`（模式切換 →
+ *  隱藏／顯示）與每次裝備／磨損都呼叫這裡；0 點時整條隱藏。 */
+function refreshArmor(): void {
+  const points = totalArmorPoints(armor);
+  renderArmorBar(armorEl, points);
+  armorEl.style.display = vitals && points > 0 ? '' : 'none';
+  playerModel.setArmor(armor);
+}
+
+/** B12：寫入一格盔甲（UI 回報）。清洗器拒絕錯誤部位／非法堆疊；結果**原地**
+ *  寫回 live 物件（UI 持有同一個參考 → 開著的面板立即看到新內容）。 */
+function setArmorPiece(slot: ArmorSlot, stack: ItemStack | null): void {
+  const next = normalizeArmorSet({ ...armor, [slot]: stack });
+  armor[slot] = next[slot];
+  refreshArmor();
+}
+
+/** B12：對「盔甲可減免」的傷害先過盔甲，回傳實際要扣的血量。
+ *  沒有 `vitals`（創造／已死）或沒有護甲 → 原值回傳且不磨損。
+ *  **墜落與飢餓刻意不呼叫這支**（見 main.wiring.test.ts 的釘子）。 */
+function applyArmorDamage(amount: number): number {
+  if (!vitals || currentMode !== 'survival') return amount;
+  const hit = absorbArmorDamage(armor, amount);
+  if (hit.armor === armor) return amount; // 沒有護甲 → 不磨損、不重繪
+  armor = hit.armor;
+  for (const b of hit.broken) {
+    toasts.push({ title: '盔甲損壞', description: `${stackName(b.item)} 壞掉了`, icon: b.item });
+  }
+  refreshArmor();
+  return hit.damage;
 }
 
 setVitals(inventory.mode === 'survival' ? createVitals() : null); // initial paint (hidden in creative)
@@ -1626,7 +1677,7 @@ function applyMobEvent(ev: MobEvent, fromArrow = false): void {
     const kind = mobs.find((m) => m.id === ev.mobId)?.kind;
     deathCause = kind ?? 'unknown';
   }
-  setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
+  setVitals(exhaust(damage(vitals, applyArmorDamage(ev.amount)), EXHAUST_HURT));
   hurtFlash.flash();
 }
 
@@ -1709,7 +1760,7 @@ function applySpiderDamage(ev: SpiderEvent): void {
   if (!canBeHurt(invuln, nowSec)) return; // 0.5 秒無敵幀內是完整的 no-op
   invuln = markHurt(invuln, nowSec);
   deathCause = 'spider';
-  setVitals(exhaust(damage(vitals, ev.amount), EXHAUST_HURT));
+  setVitals(exhaust(damage(vitals, applyArmorDamage(ev.amount)), EXHAUST_HURT));
   hurtFlash.flash();
 }
 
@@ -1907,7 +1958,7 @@ function runExplosion(
   // 再套傷害／擊退、也不該把死因從「摔落」改寫成「苦力怕」。
   if (playerDmg > 0 && vitals && !isPlayerDead(vitals)) {
     deathCause = opts.source === 'tnt' ? 'tnt' : 'creeper';
-    setVitals(exhaust(damage(vitals, playerDmg), EXHAUST_HURT));
+    setVitals(exhaust(damage(vitals, applyArmorDamage(playerDmg)), EXHAUST_HURT));
     hurtFlash.flash();
     const mag = explosionKnockback(power, playerDist, playerExposure);
     const dxe = playerEye.x - at.x;
@@ -2374,6 +2425,17 @@ function setState(next: GameState): void {
             ? { item: stack.item, count: overflow, ...(stack.dur !== undefined ? { dur: stack.dur } : {}) }
             : null;
         },
+        // B12：生存模式才渲染四格盔甲（創造模式看不到、也改不到）。
+        // `armor` 是 live 物件 → `setArmorPiece` 原地寫回，開著的面板立即同步。
+        ...(currentMode === 'survival'
+          ? {
+              armor,
+              onArmorChange: (slot: ArmorSlot, stack: ItemStack | null) => {
+                setArmorPiece(slot, stack);
+                hud.setHotbar(slots, selected);
+              },
+            }
+          : {}),
       },
     );
   } else if (next === 'crafting') {
@@ -3053,6 +3115,7 @@ function startGame(): void {
   resetUiOwnedState();
   resetWorld(); // review #4: New Game starts from a fresh world, not the boot one
   bedSpawn = null; // B10: 新局沒有床的重生點（回世界出生點）
+  armor = emptyArmorSet(); // B12: 新局不繼承上一局的盔甲（洗白一律走新物件）
   modeStash = createModeStash(); // B1.3: fresh per-mode state for the fresh session
   // Plan 14.3 "new → fresh state" for everything the world reset can't see.
   // Task 17.5 Critical (verified live; B5 Task 7 widened the inventory to 36):
@@ -3808,7 +3871,7 @@ gs.renderer.setAnimationLoop(() => {
       if (canBeHurt(invuln, nowSec)) {
         invuln = markHurt(invuln, nowSec);
         deathCause = 'cactus'; // Task 13 的慣例：著實的傷害記錄死因（讀取時機＝死亡轉場）
-        setVitals(exhaust(damage(vitals, hazard.damage), EXHAUST_HURT)); // emits vitals-changed via setVitals
+        setVitals(exhaust(damage(vitals, applyArmorDamage(hazard.damage)), EXHAUST_HURT)); // emits vitals-changed via setVitals
         hurtFlash.flash(); // 與生物傷害同一套受擊回饋（紅色閃爍）
       }
     }
