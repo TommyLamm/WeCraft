@@ -490,6 +490,29 @@ describe('inventory panel (B5 Task 8: 36 slots + cursor stacks)', () => {
     inv.close();
   });
 
+  it('B12: right-click also refuses a wrong item in an armor slot', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[10] = { item: 'stone', count: 3 };
+    const armor = emptyArmorSet();
+    const onArmorChange = vi.fn();
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      armor,
+      onArmorChange,
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+    });
+    root.querySelectorAll<HTMLElement>('.ui-inv-main .ui-slot')[1].click(); // pick up stone
+    root
+      .querySelectorAll<HTMLElement>('.ui-inv-armor .ui-slot')[0]
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(onArmorChange).not.toHaveBeenCalled();
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1);
+    inv.close();
+  });
+
   it('B12: a creative panel does not render armor slots', () => {
     const root = document.getElementById('ui-root')!;
     const inv = createInventory(root);

@@ -70,7 +70,9 @@ const FOOD: BarSpec = {
 
 /** B12：護甲圖示（盾牌輪廓）；`renderArmorBar` 以半格為單位。 */
 const ARMOR: BarSpec = {
-  row: 'armor',
+  // 不可叫 `armor`：`.armor` 是外層 fixed 容器的 class，內層同名會一起吃定位
+  // → 被推高 90px（2026-11-04 審查 I1，瀏覽器實測 180..196px）。
+  row: 'armor-row',
   icon: 'armor-icon',
   fill: ARMOR_FILL,
   empty: ARMOR_EMPTY,

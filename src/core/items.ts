@@ -114,11 +114,11 @@ const ITEM_IDS: Record<ItemId, true> = {
   diamond_helmet: true, diamond_chestplate: true, diamond_leggings: true, diamond_boots: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 81 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 97 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
  *  ＋ B9 Task 1 補的 3 個生物掉落材料 ＋ B10 補的 3 個（床／燧石／弓）
- *  ＋ B11 補的 2 個（TNT／打火石））。 */
+ *  ＋ B11 補的 2 個（TNT／打火石）＋ B12 補的 16 個盔甲）。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {

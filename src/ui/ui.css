@@ -558,7 +558,7 @@
   justify-content: flex-start;
   pointer-events: none;
 }
-.armor .armor {
+.armor .armor-row {
   display: flex;
   gap: 1px;
 }

@@ -42,6 +42,14 @@ describe('renderVitals', () => {
     expect(iconStates('.armor-icon', container)).toEqual(FIFTEEN);
   });
 
+  it('B12: the inner armor row uses a class that cannot collide with the outer .armor container', () => {
+    // 外層容器（main）與內層列若同名 `.armor`，內層會吃到外層的 fixed 定位
+    // → bottom 再加 90px（實測 180..196，疊到疾跑提示）。內層必須是 `armor-row`。
+    renderArmorBar(container, 15);
+    expect(container.firstElementChild?.className).toBe('armor-row');
+    expect(container.querySelector('.armor')).toBeNull();
+  });
+
   it('B12: zero and non-finite armor render all-empty shields', () => {
     renderArmorBar(container, 0);
     expect(iconStates('.armor-icon', container)).toEqual(new Array(10).fill('empty'));

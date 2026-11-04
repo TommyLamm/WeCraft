@@ -69,7 +69,7 @@ const SAN: PatternCell = 'sand';
 // B12：盔甲材質格（鐵／金／鑽沿用既有的 I／G／D；皮革另加）。
 const LEA: PatternCell = 'leather';
 
-/** The settled recipe table — exactly 39 entries, checked by tests. */
+/** The settled recipe table — exactly 55 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },

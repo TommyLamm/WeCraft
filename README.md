@@ -140,7 +140,7 @@ npm run dev        # 開啟 http://localhost:5173
   （以前只活在記憶體，重開遊戲／死亡都會消失）；破壞熔爐時內容物逐格掉出
   （生存；創造不灑）
 - **盔甲（0.15.0）**：**皮革／鐵／金／鑽石 × 頭盔／胸甲／護腿／靴子共 16 件**；
-  配方照原版（頭盔 5 塊、胸甲 8 塊、護腿 7 塊、靴子 4 塊；胸甲與護腿需工作台）；
+  配方照原版（頭盔 5 塊、胸甲 8 塊、護腿 7 塊、靴子 4 塊；**四件都需工作台 3×3**，2×2 背包合不出來）；
   **E 開啟背包 → 左上四格裝備**（左鍵拿放／右鍵半堆疊的游標模型；只有對應部位
   的盔甲放得進去）。護甲點數照原版（皮革 7／鐵 15／金 11／鑽石 20），減傷
   `每點 4%`、上限 80%（**不減免墜落與飢餓**）；每次受傷害到盔甲的攻擊，每個
@@ -597,7 +597,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1924 tests / 98 files 全綠（效能檔另跑，見下）
+npm test           # vitest run — 1926 tests / 98 files 全綠（效能檔另跑，見下）
 npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
@@ -705,7 +705,7 @@ npm run lint       # eslint .
   歸零即壞）＋**護甲條 HUD** 與**第三身盔甲外觀**（四片色塊，無貼圖）。
   **存檔格式不升版**（本機 v6／雲端 format 4、`cloudSave` 一字未動；`player.armor`
   與雲端 `armor` 都是附加欄位——舊版忽略、盔甲物品 id 也會被舊版清洗掉，回退時
-  盔甲會消失）。驗證：**1924 tests / 98 files**、typecheck／lint／build 全綠；
+  盔甲會消失）。驗證：**1926 tests / 98 files**、typecheck／lint／build 全綠；
   完整驗證與已知簡化見 `docs/releases/v0.15.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
