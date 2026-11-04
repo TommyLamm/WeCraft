@@ -2,12 +2,19 @@ import './ui.css';
 import {
   ALL_ITEM_IDS,
   HOTBAR_SLOTS,
+  INVENTORY_SLOTS,
   MAIN_SLOTS,
   maxStack,
   stackName,
   type ItemStack,
 } from '../core/items';
 import type { GameMode } from '../core/inventory';
+import {
+  ARMOR_SLOTS,
+  armorSlotForItem,
+  type ArmorSet,
+  type ArmorSlot,
+} from '../core/armor';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
 import { mountCrafting, type CraftingParams, type CraftingSection } from './crafting';
 import { mountDurabilityBar } from './durbar';
@@ -50,6 +57,12 @@ export interface InventoryOpenOptions {
    *  **不可用 `??` 判斷**：`??` 只在 null/undefined 時取右側，會把「回傳 null＝
    *  已放回」誤判成「沒有回傳」→ 同一疊同時在游標與背包 → 複製物品。 */
   onReturnCursor?(stack: ItemStack): ItemStack | null;
+  /** B12：生存模式的四格盔甲（UI 只讀；變動經 `onArmorChange` 回報）。
+   *  傳 `undefined`（或創造模式）→ 不渲染裝備格。 */
+  armor?: ArmorSet;
+  /** B12：盔甲格內容改變 → 擁有者寫回 live `armor` 並刷新 HUD／模型。
+   *  UI 只在物品與部位相符時呼叫；錯誤物品留在游標上。 */
+  onArmorChange?(slot: ArmorSlot, stack: ItemStack | null): void;
 }
 
 export interface InventoryUi {
@@ -103,21 +116,44 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
   let onPick: (slot: number, stack: ItemStack) => void = () => {};
   let selected = 0;
   let survival = true;
+  let armorView: ArmorSet | null = null;
   let barEls: HTMLElement[] = [];
   let mainEls: HTMLElement[] = [];
+  let armorEls: HTMLElement[] = [];
   let cursorEl: HTMLElement | null = null;
   let hoverEl: HTMLElement | null = null;
+
+  const ARMOR_SLOT_LABELS: Record<ArmorSlot, string> = {
+    helmet: '頭盔',
+    chestplate: '胸甲',
+    leggings: '護腿',
+    boots: '靴子',
+  };
+
+  const armorSlotAt = (index: number): ArmorSlot | null => {
+    if (!armorView) return null;
+    return ARMOR_SLOTS[index - INVENTORY_SLOTS] ?? null;
+  };
+
+  const armorStackAt = (slot: ArmorSlot): ItemStack | null => {
+    const s = armorView?.[slot];
+    return valid(s) ? s : null;
+  };
 
   const valid = (s: ItemStack | null | undefined): s is ItemStack =>
     !!s && Number.isFinite(s.count) && s.count >= 1;
 
   const slotStack = (index: number): ItemStack | null => {
+    const armorSlot = armorSlotAt(index);
+    if (armorSlot) return armorStackAt(armorSlot);
     const s = slotsView[index]; // 越界 → undefined → 一律當空格
     return valid(s) ? s : null;
   };
 
   const emitChange = (index: number, stack: ItemStack | null): void => {
-    opts?.onSlotChange?.(index, stack);
+    const armorSlot = armorSlotAt(index);
+    if (armorSlot) opts?.onArmorChange?.(armorSlot, stack);
+    else opts?.onSlotChange?.(index, stack);
   };
 
   /** 重繪一格（沿用持久節點，靠 replaceChildren 換內容——shared-icon 迴歸
@@ -131,6 +167,7 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
   const render = (): void => {
     barEls.forEach((node, i) => paintSlot(node, slotsView[i])); // 0..8 熱鍵列
     mainEls.forEach((node, i) => paintSlot(node, slotsView[HOTBAR_SLOTS + i])); // 9..35 主背包
+    armorEls.forEach((node, i) => paintSlot(node, armorStackAt(ARMOR_SLOTS[i])));
   };
 
   const renderCursor = (): void => {
@@ -157,6 +194,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
    *  目標空就放下。只透過 onSlotChange 回報，UI 自己不碰 slotsView。 */
   const leftClickSlot = (index: number): void => {
     const target = slotStack(index);
+    const armorSlot = armorSlotAt(index);
+    if (cursor && armorSlot && armorSlotForItem(cursor.item) !== armorSlot) return; // 錯誤部位
     if (!cursor) {
       if (!target) return; // 空手點空格 → 無事發生
       cursor = { ...target };
@@ -178,6 +217,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
    *  事件必須 preventDefault（擋瀏覽器右鍵選單）。 */
   const rightClickSlot = (index: number): void => {
     const target = slotStack(index);
+    const armorSlot = armorSlotAt(index);
+    if (cursor && armorSlot && armorSlotForItem(cursor.item) !== armorSlot) return; // 錯誤部位
     if (!cursor) {
       if (!target) return;
       const half = Math.ceil(target.count / 2);
@@ -232,6 +273,7 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       selected = pSelected;
       onPick = pPick;
       survival = mode === 'survival';
+      armorView = survival ? (options?.armor ?? null) : null;
       // Full-screen transparent backdrop captures outside clicks so they never
       // reach the canvas (prevents requestPointerLock while inventory is open).
       // Phase 1 close path: E only fires while pointer-locked and opening the
@@ -257,6 +299,20 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       const h = document.createElement('h3');
       h.textContent = survival ? '背包' : `方塊（點選放入欄位 ${selected + 1}）`;
       panel.appendChild(h);
+      // B12：生存模式最上方四格盔甲（頭／胸／腿／靴）；創造模式不渲染。
+      armorEls = [];
+      if (armorView) {
+        const armorBox = document.createElement('div');
+        armorBox.className = 'ui-inv-armor';
+        ARMOR_SLOTS.forEach((slot, i) => {
+          const s = document.createElement('div');
+          wireSlot(s, INVENTORY_SLOTS + i);
+          s.title = ARMOR_SLOT_LABELS[slot];
+          armorBox.appendChild(s);
+          armorEls.push(s);
+        });
+        panel.appendChild(armorBox);
+      }
       // 2×2 crafting section sits above the grids（ survival；creative 無）。
       if (crafting) craftingSection = mountCrafting(panel, crafting);
 
@@ -330,6 +386,8 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       slotsView = [];
       barEls = [];
       mainEls = [];
+      armorEls = [];
+      armorView = null;
       el?.remove();
       el = null;
     },

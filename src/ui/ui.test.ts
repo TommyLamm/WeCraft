@@ -14,6 +14,7 @@ import {
   type ItemStack,
 } from '../core/items';
 import { loadSettings, saveSettings } from '../core/settings';
+import { emptyArmorSet } from '../core/armor';
 
 /** Build the stack form of a block list (every placeable block has an item). */
 function stacksOf(blocks: BlockId[]): Array<ItemStack | null> {
@@ -438,6 +439,64 @@ describe('inventory panel (B5 Task 8: 36 slots + cursor stacks)', () => {
     const list = root.querySelectorAll<HTMLElement>('.ui-inv-list .ui-slot');
     list[0].click();
     expect(onPick).toHaveBeenCalledWith(3, expect.objectContaining({ item: ALL_ITEM_IDS[0] }));
+    inv.close();
+  });
+
+  it('B12: survival renders four armor slots and equips through the cursor', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[10] = { item: 'iron_helmet', count: 1, dur: 165 };
+    const armor = emptyArmorSet();
+    const changes: Array<[string, ItemStack | null]> = [];
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      armor,
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+      onArmorChange: (slot, st) => {
+        armor[slot] = st;
+        changes.push([slot, st]);
+      },
+    });
+    expect(root.querySelectorAll('.ui-inv-armor .ui-slot').length).toBe(4);
+    const helmet = root.querySelectorAll<HTMLElement>('.ui-inv-armor .ui-slot')[0];
+    const main1 = root.querySelectorAll<HTMLElement>('.ui-inv-main .ui-slot')[1]; // index 10
+    main1.click();
+    helmet.click();
+    expect(armor.helmet).toEqual({ item: 'iron_helmet', count: 1, dur: 165 });
+    expect(changes.at(-1)?.[0]).toBe('helmet');
+    inv.close();
+  });
+
+  it('B12: rejects a wrong item in an armor slot without moving the cursor', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    const s = slots36();
+    s[10] = { item: 'stone', count: 3 };
+    const armor = emptyArmorSet();
+    const onArmorChange = vi.fn();
+    inv.open(s, 0, () => {}, undefined, undefined, 'survival', {
+      armor,
+      onArmorChange,
+      onSlotChange: (i, st) => {
+        s[i] = st;
+      },
+    });
+    root.querySelectorAll<HTMLElement>('.ui-inv-main .ui-slot')[1].click(); // pick up stone
+    root.querySelectorAll<HTMLElement>('.ui-inv-armor .ui-slot')[0].click(); // try helmet slot
+    expect(onArmorChange).not.toHaveBeenCalled();
+    expect(root.querySelectorAll('.ui-cursor-stack').length).toBe(1);
+    inv.close();
+  });
+
+  it('B12: a creative panel does not render armor slots', () => {
+    const root = document.getElementById('ui-root')!;
+    const inv = createInventory(root);
+    inv.open(slots36(), 0, () => {}, undefined, undefined, 'creative', {
+      armor: emptyArmorSet(),
+    });
+    expect(root.querySelectorAll('.ui-inv-armor').length).toBe(0);
     inv.close();
   });
 
