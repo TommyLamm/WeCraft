@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 39). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 55). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 39 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(39);
+  it('holds exactly the 55 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(55);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -60,6 +60,11 @@ describe('recipe table', () => {
         // B11 Task 2：打火石／TNT
         'flint_and_steel',
         'tnt',
+        // B12：16 件盔甲（4 材質 × 4 部位）
+        'leather_helmet', 'leather_chestplate', 'leather_leggings', 'leather_boots',
+        'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
+        'golden_helmet', 'golden_chestplate', 'golden_leggings', 'golden_boots',
+        'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
       ].sort(),
     );
   });
@@ -99,6 +104,30 @@ describe('recipe table', () => {
       'diamond_shovel',
     ]) {
       expect(recipe(id).result.count).toBe(1);
+    }
+  });
+
+  it('B12: every armor piece has the vanilla-shaped recipe', () => {
+    const materials = {
+      leather: 'leather',
+      iron: 'iron_ingot',
+      golden: 'gold_ingot',
+      diamond: 'diamond',
+    } as const;
+    const counts = { helmet: 5, chestplate: 8, leggings: 7, boots: 4 } as const;
+    for (const [material, ingredient] of Object.entries(materials)) {
+      for (const [slot, count] of Object.entries(counts)) {
+        const id = `${material}_${slot}`;
+        const r = recipe(id);
+        expect(r.kind).toBe('shaped');
+        expect(r.result).toEqual({ item: id, count: 1 });
+        if (r.kind !== 'shaped') continue;
+        const cells = r.pattern.flat();
+        expect(cells.filter((c) => c === ingredient)).toHaveLength(count);
+        expect(cells.filter((c) => c === null).length).toBe(
+          r.pattern.length * r.pattern[0].length - count,
+        );
+      }
     }
   });
 });

@@ -1,6 +1,7 @@
 import { ATLAS_SIZE, TILE_PX, TILES_PER_ROW, drawAtlas, type AtlasImage } from '../render/textures';
 import { getBlockDef } from '../world/blocks';
 import { blockFromItem, type ItemId } from '../core/items';
+import { armorMaterialOf, type ArmorMaterial } from '../core/armor';
 
 export const ICON_PX = 32;
 
@@ -123,6 +124,72 @@ function meatChunkPath(ctx: CanvasRenderingContext2D, grow: number): void {
   ctx.quadraticCurveTo(28 - g, 21 - g, 20 - g, 24 - g);
   ctx.quadraticCurveTo(11 - g, 26 - g, 8 - g, 18 - g);
   ctx.closePath();
+}
+
+/** B12：盔甲材質色票（圖示用；第三身模型用 render/player-model.ts 自己的色票）。 */
+const ARMOR_COLORS: Record<ArmorMaterial, { fill: string; edge: string }> = {
+  leather: { fill: '#8a5a2b', edge: '#b8945f' },
+  iron: { fill: '#7f8fa1', edge: '#b9c6d4' },
+  golden: { fill: '#f0c83c', edge: '#ffe89a' },
+  diamond: { fill: '#78dce8', edge: '#bff2f7' },
+};
+
+/** 16 件盔甲共用的像素圖：依材質取色、依 id 後綴選形狀。 */
+function drawArmorArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
+  const material = armorMaterialOf(item);
+  if (!material) return;
+  const { fill, edge } = ARMOR_COLORS[material];
+  if (item.endsWith('_helmet')) {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(16, 17, 9, Math.PI, 0);
+    ctx.lineTo(25, 21);
+    ctx.lineTo(7, 21);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = edge;
+    ctx.fillRect(9, 13, 14, 4);
+    ctx.fillStyle = '#202020';
+    ctx.fillRect(11, 20, 10, 5); // face opening
+    return;
+  }
+  if (item.endsWith('_chestplate')) {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(8, 9);
+    ctx.lineTo(24, 9);
+    ctx.lineTo(27, 14);
+    ctx.lineTo(22, 17);
+    ctx.lineTo(22, 25);
+    ctx.lineTo(10, 25);
+    ctx.lineTo(10, 17);
+    ctx.lineTo(5, 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = edge;
+    ctx.fillRect(10, 9, 12, 3);
+    ctx.fillStyle = '#202020';
+    ctx.fillRect(15, 12, 2, 10);
+    return;
+  }
+  if (item.endsWith('_leggings')) {
+    ctx.fillStyle = fill;
+    ctx.fillRect(8, 7, 16, 6); // waist
+    ctx.fillRect(8, 13, 7, 15); // left leg
+    ctx.fillRect(17, 13, 7, 15); // right leg
+    ctx.fillStyle = edge;
+    ctx.fillRect(8, 7, 16, 2);
+    return;
+  }
+  // boots
+  ctx.fillStyle = fill;
+  ctx.fillRect(7, 7, 8, 15);
+  ctx.fillRect(17, 7, 8, 15);
+  ctx.fillRect(7, 19, 12, 4);
+  ctx.fillRect(17, 19, 12, 4);
+  ctx.fillStyle = edge;
+  ctx.fillRect(7, 7, 8, 2);
+  ctx.fillRect(17, 7, 8, 2);
 }
 
 function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
@@ -530,6 +597,25 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fillStyle = '#ffd86b';
       ctx.fillRect(21, 6, 2, 2);
       ctx.fillRect(25, 9, 2, 2);
+      break;
+    }
+    case 'leather_helmet':
+    case 'iron_helmet':
+    case 'golden_helmet':
+    case 'diamond_helmet':
+    case 'leather_chestplate':
+    case 'iron_chestplate':
+    case 'golden_chestplate':
+    case 'diamond_chestplate':
+    case 'leather_leggings':
+    case 'iron_leggings':
+    case 'golden_leggings':
+    case 'diamond_leggings':
+    case 'leather_boots':
+    case 'iron_boots':
+    case 'golden_boots':
+    case 'diamond_boots': {
+      drawArmorArt(ctx, item);
       break;
     }
     default: {

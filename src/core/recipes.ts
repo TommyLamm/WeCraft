@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed: exactly 37) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor: exactly 55) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -66,6 +66,8 @@ const WO: PatternCell = 'wool';
 // B11 Task 2：TNT 的棋盤格常量（火藥在角與中心、沙在邊）。
 const GUN: PatternCell = 'gunpowder';
 const SAN: PatternCell = 'sand';
+// B12：盔甲材質格（鐵／金／鑽沿用既有的 I／G／D；皮革另加）。
+const LEA: PatternCell = 'leather';
 
 /** The settled recipe table — exactly 39 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
@@ -395,6 +397,105 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [GUN, SAN, GUN],
     ],
     result: { item: 'tnt', count: 1 },
+  },
+  // B12：16 件盔甲（4 材質 × 4 部位）。形狀照原版：
+  // 頭盔 5、胸甲 8、護腿 7、靴子 4。2×2 背包只能合頭盔與靴子（高度 2），
+  // 胸甲／護腿需要工作台（高度 3）——與原版一致。
+  {
+    id: 'leather_helmet',
+    kind: 'shaped',
+    pattern: [[LEA, LEA, LEA], [LEA, null, LEA]],
+    result: { item: 'leather_helmet', count: 1 },
+  },
+  {
+    id: 'leather_chestplate',
+    kind: 'shaped',
+    pattern: [[LEA, null, LEA], [LEA, LEA, LEA], [LEA, LEA, LEA]],
+    result: { item: 'leather_chestplate', count: 1 },
+  },
+  {
+    id: 'leather_leggings',
+    kind: 'shaped',
+    pattern: [[LEA, LEA, LEA], [LEA, null, LEA], [LEA, null, LEA]],
+    result: { item: 'leather_leggings', count: 1 },
+  },
+  {
+    id: 'leather_boots',
+    kind: 'shaped',
+    pattern: [[LEA, null, LEA], [LEA, null, LEA]],
+    result: { item: 'leather_boots', count: 1 },
+  },
+  {
+    id: 'iron_helmet',
+    kind: 'shaped',
+    pattern: [[I, I, I], [I, null, I]],
+    result: { item: 'iron_helmet', count: 1 },
+  },
+  {
+    id: 'iron_chestplate',
+    kind: 'shaped',
+    pattern: [[I, null, I], [I, I, I], [I, I, I]],
+    result: { item: 'iron_chestplate', count: 1 },
+  },
+  {
+    id: 'iron_leggings',
+    kind: 'shaped',
+    pattern: [[I, I, I], [I, null, I], [I, null, I]],
+    result: { item: 'iron_leggings', count: 1 },
+  },
+  {
+    id: 'iron_boots',
+    kind: 'shaped',
+    pattern: [[I, null, I], [I, null, I]],
+    result: { item: 'iron_boots', count: 1 },
+  },
+  {
+    id: 'golden_helmet',
+    kind: 'shaped',
+    pattern: [[G, G, G], [G, null, G]],
+    result: { item: 'golden_helmet', count: 1 },
+  },
+  {
+    id: 'golden_chestplate',
+    kind: 'shaped',
+    pattern: [[G, null, G], [G, G, G], [G, G, G]],
+    result: { item: 'golden_chestplate', count: 1 },
+  },
+  {
+    id: 'golden_leggings',
+    kind: 'shaped',
+    pattern: [[G, G, G], [G, null, G], [G, null, G]],
+    result: { item: 'golden_leggings', count: 1 },
+  },
+  {
+    id: 'golden_boots',
+    kind: 'shaped',
+    pattern: [[G, null, G], [G, null, G]],
+    result: { item: 'golden_boots', count: 1 },
+  },
+  {
+    id: 'diamond_helmet',
+    kind: 'shaped',
+    pattern: [[D, D, D], [D, null, D]],
+    result: { item: 'diamond_helmet', count: 1 },
+  },
+  {
+    id: 'diamond_chestplate',
+    kind: 'shaped',
+    pattern: [[D, null, D], [D, D, D], [D, D, D]],
+    result: { item: 'diamond_chestplate', count: 1 },
+  },
+  {
+    id: 'diamond_leggings',
+    kind: 'shaped',
+    pattern: [[D, D, D], [D, null, D], [D, null, D]],
+    result: { item: 'diamond_leggings', count: 1 },
+  },
+  {
+    id: 'diamond_boots',
+    kind: 'shaped',
+    pattern: [[D, null, D], [D, null, D]],
+    result: { item: 'diamond_boots', count: 1 },
   },
 ];
 

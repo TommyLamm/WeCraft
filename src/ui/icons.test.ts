@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
 import rawIconsSource from './icons.ts?raw';
 import { ALL_ITEM_IDS, blockFromItem } from '../core/items';
+import { ARMOR_ITEM_IDS } from '../core/armor';
 import { BLOCK } from '../world/blocks';
 
 /** `src/ui/icons.ts` 的原始碼（含註解）。 */
@@ -88,6 +89,15 @@ describe('icons', () => {
     const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
     expect(B5_NEEDS_ART).toHaveLength(14);
     for (const id of B5_NEEDS_ART) {
+      expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
+      expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
+    }
+  });
+
+  it('every B12 armor id has its own icon branch', () => {
+    const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
+    expect(ARMOR_ITEM_IDS).toHaveLength(16);
+    for (const id of ARMOR_ITEM_IDS) {
       expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
       expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
     }
