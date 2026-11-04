@@ -14,6 +14,11 @@ export const TOOL_MAX_DURABILITY: Readonly<Partial<Record<ItemId, number>>> = {
   // B11 Task 2：打火石的耐久（wiki `Flint and Steel`：JE 64；本作只在點燃 TNT
   // 成功時扣 1——原版對任何使用都扣，本作沒有火系統 → 已揭露的簡化）。
   flint_and_steel: 64,
+  // B12：16 件盔甲（wiki `Armor` 耐久表；同一材質依部位不同）。
+  leather_helmet: 55, leather_chestplate: 80, leather_leggings: 75, leather_boots: 65,
+  iron_helmet: 165, iron_chestplate: 240, iron_leggings: 225, iron_boots: 195,
+  golden_helmet: 77, golden_chestplate: 112, golden_leggings: 105, golden_boots: 91,
+  diamond_helmet: 363, diamond_chestplate: 528, diamond_leggings: 495, diamond_boots: 429,
 };
 
 export function maxDurability(item: string): number {

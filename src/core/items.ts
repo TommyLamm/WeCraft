@@ -58,7 +58,13 @@ export type ItemId =
   | 'flint' | 'bow'
   // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）與打火石
   // （鐵錠＋燧石；耐久 64、堆疊 1）。
-  | 'tnt' | 'flint_and_steel';
+  | 'tnt' | 'flint_and_steel'
+  // B12：16 件盔甲（4 材質 × 4 部位）。盔甲不是方塊、沒有方塊形式；
+  // 耐久上限在 durability.ts、護甲點數與減傷在 core/armor.ts。
+  | 'leather_helmet' | 'leather_chestplate' | 'leather_leggings' | 'leather_boots'
+  | 'iron_helmet' | 'iron_chestplate' | 'iron_leggings' | 'iron_boots'
+  | 'golden_helmet' | 'golden_chestplate' | 'golden_leggings' | 'golden_boots'
+  | 'diamond_helmet' | 'diamond_chestplate' | 'diamond_leggings' | 'diamond_boots';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -101,6 +107,11 @@ const ITEM_IDS: Record<ItemId, true> = {
   flint: true, bow: true,
   // B11 Task 2：TNT 的物品形式與打火石
   tnt: true, flint_and_steel: true,
+  // B12：16 件盔甲（4 材質 × 4 部位）
+  leather_helmet: true, leather_chestplate: true, leather_leggings: true, leather_boots: true,
+  iron_helmet: true, iron_chestplate: true, iron_leggings: true, iron_boots: true,
+  golden_helmet: true, golden_chestplate: true, golden_leggings: true, golden_boots: true,
+  diamond_helmet: true, diamond_chestplate: true, diamond_leggings: true, diamond_boots: true,
 };
 
 /** 全部 ItemId 的正規清單（目前 81 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
@@ -184,6 +195,11 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'bow',
   // B11 Task 2：打火石是耐久工具（64），原版堆疊 1（wiki：Stackable No）。
   'flint_and_steel',
+  // B12：盔甲一律堆疊 1（耐久裝備）。
+  'leather_helmet', 'leather_chestplate', 'leather_leggings', 'leather_boots',
+  'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
+  'golden_helmet', 'golden_chestplate', 'golden_leggings', 'golden_boots',
+  'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
 ]);
 
 export function maxStack(item: ItemId): number {

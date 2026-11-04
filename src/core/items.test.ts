@@ -17,6 +17,7 @@ import {
   type ItemId,
 } from './items';
 import { BLOCK, PLACEABLE, HOTBAR_DEFAULT } from '../world/blocks';
+import { maxDurability } from './durability';
 
 // Type-annotated: a missing union member fails `tsc --noEmit`.
 const BLOCK_ITEMS: ItemId[] = [
@@ -60,6 +61,13 @@ const DROP_ITEMS: ItemId[] = [
 const B10_ITEM_IDS: ItemId[] = ['flint', 'bow'];
 /** B11 Task 2：打火石（耐久工具，堆疊 1）。TNT 是方塊物品（在 BLOCK_ITEMS）。 */
 const B11_ITEM_IDS: ItemId[] = ['flint_and_steel'];
+/** B12：16 件盔甲（4 材質 × 4 部位；不是方塊、不是食物，耐久裝備）。 */
+const ARMOR_ITEMS: ItemId[] = [
+  'leather_helmet', 'leather_chestplate', 'leather_leggings', 'leather_boots',
+  'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
+  'golden_helmet', 'golden_chestplate', 'golden_leggings', 'golden_boots',
+  'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
+];
 /** B4 Task 1：生／熟肉與腐肉（食物值表在 Task 2；熟牛肉的 id 是 'steak'）。 */
 const FOOD_ITEMS: ItemId[] = [
   'raw_chicken', 'cooked_chicken',
@@ -78,6 +86,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...DROP_ITEMS,
   ...B10_ITEM_IDS,
   ...B11_ITEM_IDS,
+  ...ARMOR_ITEMS,
   ...FOOD_ITEMS,
   ...MATERIAL_ITEMS,
   'oak_leaves', 'snow_block', 'bedrock',
@@ -93,8 +102,9 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B10 Task 1 再補 1 個（床的物品形式，隨 BLOCK.BED = 34 一起落地）→ 77。
  *  B10 Task 2 再補 2 個（燧石與弓）→ 79。
  *  B11 Task 2 再補 2 個（TNT 的物品形式＋打火石）→ **81**。
+ *  B12 再補 16 個（4 材質 × 4 部位盔甲）→ **97**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 81;
+const TOTAL_ITEM_COUNT = 97;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -201,6 +211,31 @@ describe('items', () => {
       dur: 64,
     });
     expect(stackName('flint_and_steel')).toBe('Flint and Steel');
+  });
+
+  // ---- B12：16 件盔甲 ----
+
+  it('every armor id is a known, stack-one durable non-block item', () => {
+    const durability: Partial<Record<ItemId, number>> = {
+      leather_helmet: 55, leather_chestplate: 80, leather_leggings: 75, leather_boots: 65,
+      iron_helmet: 165, iron_chestplate: 240, iron_leggings: 225, iron_boots: 195,
+      golden_helmet: 77, golden_chestplate: 112, golden_leggings: 105, golden_boots: 91,
+      diamond_helmet: 363, diamond_chestplate: 528, diamond_leggings: 495, diamond_boots: 429,
+    };
+    expect(ARMOR_ITEMS).toHaveLength(16);
+    for (const id of ARMOR_ITEMS) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(maxStack(id)).toBe(1);
+      expect(blockFromItem(id)).toBeNull();
+      expect(maxDurability(id)).toBe(durability[id]);
+      expect(sanitizeStack({ item: id, count: 1 })).toEqual({
+        item: id,
+        count: 1,
+        dur: durability[id],
+      });
+    }
+    expect(stackName('golden_chestplate')).toBe('Golden Chestplate');
+    expect(stackName('diamond_boots')).toBe('Diamond Boots');
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----
