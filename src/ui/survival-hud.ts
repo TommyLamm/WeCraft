@@ -17,6 +17,9 @@ export const HEART_FILL = '#e02020';
 export const HEART_EMPTY = '#3f3f3f';
 const FOOD_FILL = '#c87830';
 const FOOD_EMPTY = '#3f3f3f';
+/** B12：護甲條（銀灰盾牌）。 */
+export const ARMOR_FILL = '#d8d8d8';
+export const ARMOR_EMPTY = '#3f3f3f';
 
 type IconState = 'full' | 'half' | 'empty';
 
@@ -62,6 +65,24 @@ const FOOD: BarSpec = {
     '####....',
     '##......',
     '#.......',
+  ],
+};
+
+/** B12：護甲圖示（盾牌輪廓）；`renderArmorBar` 以半格為單位。 */
+const ARMOR: BarSpec = {
+  row: 'armor',
+  icon: 'armor-icon',
+  fill: ARMOR_FILL,
+  empty: ARMOR_EMPTY,
+  grid: [
+    '.######.',
+    '########',
+    '########',
+    '########',
+    '.######.',
+    '..####..',
+    '...##...',
+    '........',
   ],
 };
 
@@ -113,4 +134,10 @@ export function renderVitals(container: HTMLElement, vitals: Vitals | null): voi
     return;
   }
   container.replaceChildren(renderBar(HEARTS, vitals.hp), renderBar(FOOD, vitals.hunger));
+}
+
+/** B12：把護甲點數（0–20）畫成 10 個盾牌圖示（每圖示 2 點，半格＝1 點）。
+ *  非有限值視為 0；超過 20 夾到全滿。呼叫端負責在 0 點時隱藏整個容器。 */
+export function renderArmorBar(container: HTMLElement, points: number): void {
+  container.replaceChildren(renderBar(ARMOR, Number.isFinite(points) ? points : 0));
 }

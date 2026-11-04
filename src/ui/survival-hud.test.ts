@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { renderVitals, HEART_FILL, HEART_EMPTY } from './survival-hud';
+import { renderVitals, renderArmorBar, HEART_FILL, HEART_EMPTY } from './survival-hud';
 import { createVitals, damage, starve } from '../player/survival';
 
 /** Icon states ('full' | 'half' | 'empty') in DOM order for a selector. */
@@ -35,6 +35,23 @@ describe('renderVitals', () => {
     renderVitals(container, createVitals());
     expect(iconStates('.heart', container)).toEqual(new Array(10).fill('full'));
     expect(iconStates('.hunger-icon', container)).toEqual(new Array(10).fill('full'));
+  });
+
+  it('B12: armor renders 10 shield icons with half-filled odd points', () => {
+    renderArmorBar(container, 15);
+    expect(iconStates('.armor-icon', container)).toEqual(FIFTEEN);
+  });
+
+  it('B12: zero and non-finite armor render all-empty shields', () => {
+    renderArmorBar(container, 0);
+    expect(iconStates('.armor-icon', container)).toEqual(new Array(10).fill('empty'));
+    renderArmorBar(container, Number.NaN);
+    expect(iconStates('.armor-icon', container)).toEqual(new Array(10).fill('empty'));
+  });
+
+  it('B12: armor above 20 clamps to all-full shields', () => {
+    renderArmorBar(container, 30);
+    expect(iconStates('.armor-icon', container)).toEqual(new Array(10).fill('full'));
   });
 
   it('hp=15 renders 7 full + 1 half + 2 empty hearts (10 elements, left-filled)', () => {

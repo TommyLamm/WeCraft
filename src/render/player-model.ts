@@ -20,6 +20,7 @@
  *  **材質**：沿用 `src/render/scene.ts` 生物模型的扁平調色盤風格——純色
  *  `MeshLambertMaterial`（會受日光／環境光影響），**不**貼圖、不進紋理陣列。 */
 import * as THREE from 'three';
+import { armorMaterialOf, type ArmorSet } from '../core/armor';
 
 /** 玩家模型（第三身視角顯示的方塊人）。 */
 export interface PlayerModel {
@@ -38,6 +39,9 @@ export interface PlayerModel {
   /** 切換整個模型的可見性（第一人稱隱藏、第三身顯示）。初始值沿用 Three 預設
    *  （可見），由呼叫端每幀同步當前視角。 */
   setVisible(visible: boolean): void;
+  /** B12：依裝備中的四格盔甲切換外觀片（頭盔／胸甲／護腿／靴子）並依材質上色。
+   *  空格 → 該片隱藏；不合法物品 id → 視為空。 */
+  setArmor(set: ArmorSet): void;
   /** 從場景移除模型並釋放幾何與材質。
    *
    *  **非冪等**：每次呼叫都會再對 **4 個幾何**與 **4 個材質**各送一次 `dispose()`
@@ -55,6 +59,14 @@ const FACE_COLOR = 0x2b1d12; // 臉部貼片（深褐色）
 /** 模型整體縮放：原高 2.0 格 × 0.9 ＝ 1.8 格（與玩家 hitbox 同高）。 */
 const MODEL_SCALE = 0.9;
 
+/** B12：盔甲材質色（與 UI 圖示分開維護——這裡是渲染用數值）。 */
+const ARMOR_COLORS = {
+  leather: 0x8a5a2b,
+  iron: 0x9aa7b4,
+  golden: 0xf0c83c,
+  diamond: 0x78dce8,
+} as const;
+
 /** 臉部貼片相對頭部 −z 面的浮出量（避免與頭部表面 z-fighting）。 */
 const FACE_PROTRUDE = 0.01;
 
@@ -68,14 +80,29 @@ export function createPlayerModel(scene: THREE.Scene): PlayerModel {
   const bodyGeo = new THREE.BoxGeometry(0.5, 0.75, 0.25);
   const limbGeo = new THREE.BoxGeometry(0.25, 0.75, 0.25);
   const faceGeo = new THREE.PlaneGeometry(0.4, 0.25);
-  const geometries = [headGeo, bodyGeo, limbGeo, faceGeo];
+  // B12：四片盔甲外觀（略大於對應部位；初始隱藏）。
+  const armorHelmetGeo = new THREE.BoxGeometry(0.54, 0.5, 0.54);
+  const armorChestGeo = new THREE.BoxGeometry(0.54, 0.5, 0.29);
+  const armorLeggingsGeo = new THREE.BoxGeometry(0.54, 0.4, 0.27);
+  const armorBootsGeo = new THREE.BoxGeometry(0.54, 0.2, 0.27);
+  const geometries = [
+    headGeo, bodyGeo, limbGeo, faceGeo,
+    armorHelmetGeo, armorChestGeo, armorLeggingsGeo, armorBootsGeo,
+  ];
 
   // 材質：純色 Lambert（頭與手臂共用膚色材質）。
   const skinMat = new THREE.MeshLambertMaterial({ color: SKIN_COLOR });
   const shirtMat = new THREE.MeshLambertMaterial({ color: SHIRT_COLOR });
   const pantsMat = new THREE.MeshLambertMaterial({ color: PANTS_COLOR });
   const faceMat = new THREE.MeshLambertMaterial({ color: FACE_COLOR });
-  const materials = [skinMat, shirtMat, pantsMat, faceMat];
+  const armorHelmetMat = new THREE.MeshLambertMaterial({ color: ARMOR_COLORS.iron });
+  const armorChestMat = new THREE.MeshLambertMaterial({ color: ARMOR_COLORS.iron });
+  const armorLeggingsMat = new THREE.MeshLambertMaterial({ color: ARMOR_COLORS.iron });
+  const armorBootsMat = new THREE.MeshLambertMaterial({ color: ARMOR_COLORS.iron });
+  const materials = [
+    skinMat, shirtMat, pantsMat, faceMat,
+    armorHelmetMat, armorChestMat, armorLeggingsMat, armorBootsMat,
+  ];
 
   // 頭：y 1.5–2.0
   const head = new THREE.Mesh(headGeo, skinMat);
@@ -114,7 +141,28 @@ export function createPlayerModel(scene: THREE.Scene): PlayerModel {
   face.position.set(0, 1.75, -(0.25 + FACE_PROTRUDE));
   face.rotation.y = Math.PI;
 
-  group.add(head, body, armL, armR, legL, legR, face);
+  // B12：四片盔甲外觀（依裝備切換；位置對齊頭／胸／腿／腳）。
+  const armorHelmet = new THREE.Mesh(armorHelmetGeo, armorHelmetMat);
+  armorHelmet.name = 'armorHelmet';
+  armorHelmet.position.y = 1.75;
+  armorHelmet.visible = false;
+  const armorChestplate = new THREE.Mesh(armorChestGeo, armorChestMat);
+  armorChestplate.name = 'armorChestplate';
+  armorChestplate.position.y = 1.3;
+  armorChestplate.visible = false;
+  const armorLeggings = new THREE.Mesh(armorLeggingsGeo, armorLeggingsMat);
+  armorLeggings.name = 'armorLeggings';
+  armorLeggings.position.y = 0.55;
+  armorLeggings.visible = false;
+  const armorBoots = new THREE.Mesh(armorBootsGeo, armorBootsMat);
+  armorBoots.name = 'armorBoots';
+  armorBoots.position.y = 0.1;
+  armorBoots.visible = false;
+
+  group.add(
+    head, body, armL, armR, legL, legR, face,
+    armorHelmet, armorChestplate, armorLeggings, armorBoots,
+  );
 
   // 與生物模型一致：每個部件都投影（Phase 3 Task 5 的太陽陰影）。
   group.traverse((obj) => {
@@ -136,6 +184,25 @@ export function createPlayerModel(scene: THREE.Scene): PlayerModel {
     },
     setVisible(visible) {
       group.visible = visible;
+    },
+    setArmor(set) {
+      const apply = (mesh: THREE.Mesh, stack: ArmorSet[keyof ArmorSet]): void => {
+        if (!stack) {
+          mesh.visible = false;
+          return;
+        }
+        const material = armorMaterialOf(stack.item);
+        if (!material) {
+          mesh.visible = false;
+          return;
+        }
+        (mesh.material as THREE.MeshLambertMaterial).color.setHex(ARMOR_COLORS[material]);
+        mesh.visible = true;
+      };
+      apply(armorHelmet, set.helmet);
+      apply(armorChestplate, set.chestplate);
+      apply(armorLeggings, set.leggings);
+      apply(armorBoots, set.boots);
     },
     dispose() {
       scene.remove(group);

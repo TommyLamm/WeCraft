@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { createPlayerModel } from './player-model';
+import { emptyArmorSet } from '../core/armor';
 
 // jsdom 建得出真正的 Three 物件（Scene / Group / Mesh / 幾何 / 材質）——不需要
 // WebGL context（比照 src/render/scene.test.ts 的做法：只建場景物件，不建 Renderer）。
@@ -109,6 +110,31 @@ describe('createPlayerModel', () => {
     expect(g.visible).toBe(false);
     model.setVisible(true);
     expect(g.visible).toBe(true);
+  });
+
+  it('B12: setArmor shows only equipped pieces and tints by material', () => {
+    const scene = new THREE.Scene();
+    const model = createPlayerModel(scene);
+    const g = scene.children[0] as THREE.Group;
+
+    model.setArmor(emptyArmorSet());
+    for (const name of ['armorHelmet', 'armorChestplate', 'armorLeggings', 'armorBoots']) {
+      expect((g.getObjectByName(name) as THREE.Mesh).visible).toBe(false);
+    }
+
+    model.setArmor({
+      ...emptyArmorSet(),
+      helmet: { item: 'iron_helmet', count: 1, dur: 165 },
+      chestplate: { item: 'golden_chestplate', count: 1, dur: 112 },
+    });
+    const helmet = g.getObjectByName('armorHelmet') as THREE.Mesh;
+    const chest = g.getObjectByName('armorChestplate') as THREE.Mesh;
+    expect(helmet.visible).toBe(true);
+    expect(meshColor(helmet)).toBe(0x9aa7b4);
+    expect(chest.visible).toBe(true);
+    expect(meshColor(chest)).toBe(0xf0c83c);
+    expect((g.getObjectByName('armorLeggings') as THREE.Mesh).visible).toBe(false);
+    expect((g.getObjectByName('armorBoots') as THREE.Mesh).visible).toBe(false);
   });
 
   it('dispose removes the model from the scene', () => {
@@ -220,12 +246,12 @@ describe('createPlayerModel', () => {
     g.traverse((obj) => {
       if (obj instanceof THREE.Mesh) meshes.push(obj);
     });
-    // 頭／貼片／身／2 手臂／2 腿 ＝ 7 個 Mesh
-    expect(meshes).toHaveLength(7);
+    // 頭／貼片／身／2 手臂／2 腿 ＋ B12 的 4 片盔甲外觀 ＝ 11 個 Mesh
+    expect(meshes).toHaveLength(11);
     for (const mesh of meshes) expect(mesh.castShadow).toBe(true);
-    // 6 個盒子 × 12 三角形 ＋ 貼片（PlaneGeometry）2 三角形 ＝ 74
+    // 10 個盒子 × 12 三角形 ＋ 貼片（PlaneGeometry）2 三角形 ＝ 122
     const triangles = meshes.reduce((sum, mesh) => sum + triangleCount(mesh.geometry), 0);
-    expect(triangles).toBe(74);
+    expect(triangles).toBe(122);
   });
 
   it('dispose frees the geometries and the materials', () => {
