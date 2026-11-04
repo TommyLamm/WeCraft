@@ -31,6 +31,7 @@
 //   要玩家在同座標放一個箱子／熔爐才看得到。本批不解決，但必須誠實揭露。
 
 import { normalizeVitals, type Vitals } from '../player/survival';
+import { emptyArmorSet, normalizeArmorSet, type ArmorSet } from './armor';
 import { createInventoryModel } from './inventory';
 import { INVENTORY_SLOTS, type ItemId, type ItemStack } from './items';
 import { maxDurability, normalizeDurability } from './durability';
@@ -155,6 +156,9 @@ export interface CloudData {
   /** B10 附加欄位（format 4 **不變**）：床的重生點；`null`＝回世界出生點。
    *  舊 payload 沒有這個欄位 → 接受路徑給 `null`（不是壞 payload）。 */
   spawnPoint?: SpawnPoint | null;
+  /** B12 附加欄位（format 4 **不變**）：四格盔甲；舊 payload 沒有這個欄位 →
+   *  接受路徑給四格空（不是壞 payload）。 */
+  armor?: ArmorSet;
 }
 
 export interface CloudBuildSource {
@@ -177,6 +181,9 @@ export interface CloudBuildSource {
   /** Live bed spawn point (B10) — deep-copied into the payload. **必填**
    *  （沒有重生點也要明寫 `null`）。 */
   spawnPoint: SpawnPoint | null;
+  /** Live four-slot armor (B12) — deep-copied into the payload. 選填、預設四格空
+   *  （main 一律明寫；測試的舊來源不必逐一補欄位）。 */
+  armor?: ArmorSet;
 }
 
 /** Snapshot live state into a fresh payload. Deep-copies every nested value
@@ -241,6 +248,9 @@ export function buildCloudData(src: CloudBuildSource): CloudData {
     blockEntities: serializeBlockEntities(src.blockEntities),
     // B10：重生點——合法值深拷貝、沒有／`null` → `null`。
     spawnPoint: src.spawnPoint ? { ...src.spawnPoint } : null,
+    // B12：盔甲——逐格清洗＋深拷貝（與本機存檔同一支 `normalizeArmorSet`）。
+    // 來源省略時寫入四格空（與 accept 路徑的「舊 payload → 空」同一語意）。
+    armor: normalizeArmorSet(src.armor ?? emptyArmorSet()),
   };
 }
 
@@ -309,6 +319,15 @@ export function validateCloudData(x: unknown): x is CloudData {
   ) {
     return false;
   }
+  // B12：附加欄位 `armor` 若存在，必須是**非陣列、非 null 的物件**；逐格的內容
+  // 交給 `normalizeArmorSet` 清洗（錯誤部位／髒耐久只丟那一格，不整包拒絕）。
+  // 缺欄位＝舊 payload，仍然合法。
+  if (
+    r.armor !== undefined &&
+    (typeof r.armor !== 'object' || r.armor === null || Array.isArray(r.armor))
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -371,6 +390,9 @@ export function acceptCloudData(x: unknown): CloudData | null {
     // B10：附加欄位 `spawnPoint` **一律回傳**（正規化後）——舊 payload 沒有
     // 這個鍵 → `null`（回世界出生點）；髒值已被 `validateCloudData` 整包拒收。
     spawnPoint: normalizeSpawnPoint(x.spawnPoint),
+    // B12：附加欄位 `armor` **一律回傳**（正規化後）——舊 payload 沒有這個鍵
+    // → 四格空；單格壞掉只丟那一格。
+    armor: normalizeArmorSet(x.armor),
   };
 }
 
@@ -461,6 +483,8 @@ export function mergeCloudData(local: CloudData, remote: CloudData): CloudData {
       ...(local.spawnPoint === undefined
         ? {}
         : { spawnPoint: local.spawnPoint ? { ...local.spawnPoint } : null }),
+      // B12（規則 1 的延伸）：盔甲是本機進度 → 合併時一律用本機，逐格清洗複製。
+      ...(local.armor === undefined ? {} : { armor: normalizeArmorSet(local.armor) }),
     };
   };
 

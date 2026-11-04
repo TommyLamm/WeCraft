@@ -1349,4 +1349,12 @@ describe('main.ts 接線（B11：TNT 與打火石）', () => {
     expect(mainSource).toContain('fallDamage(fall.distance)');
     expect(mainSource).toContain('tickVitals(v, dt)');
   });
+
+  it('B12: armor travels through both save paths and both restore paths', () => {
+    expect(functionBody('sessionSavePayload')).toContain('armor');
+    expect(functionBody('continueGame')).toContain('normalizeArmorSet(payload.player.armor)');
+    expect(functionBody('applyCloudData')).toContain('normalizeArmorSet(data.armor)');
+    expect(functionBody('saveCloudNow')).toContain('armor');
+    expect(mainSource).toContain('playerModel.setArmor(armor)');
+  });
 });

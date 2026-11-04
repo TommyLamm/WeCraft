@@ -21,6 +21,7 @@
 
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { INVENTORY_SLOTS, sanitizeSlots, type ItemStack } from '../core/items';
+import { normalizeArmorSet, type ArmorSet } from '../core/armor';
 import { normalizeModeStash, type ModeStash, type StashPayload } from '../core/mode-stash';
 import {
   emptyAdvancements,
@@ -124,6 +125,10 @@ export interface SavePayloadV6 extends Omit<SavePayloadV5, 'version'> {
 	 *  舊版讀到新存檔會忽略這個鍵（與 B3 的 `worldgenVersion`、B4 的
 	 *  `passiveMobs` 同一條規則）。 */
 	spawnPoint?: SpawnPoint | null;
+	/** B12 附加欄位（**不升版**）：四格盔甲；舊記錄缺這個鍵 → `loadGame` 給四格
+	 *  空（不是壞檔）。型別上選填、讀寫路徑（`SavePayloadWithPassiveMobs`）必填
+	 *  → 呼叫端不必寫「有沒有這個鍵」的分支。 */
+	player: SavePayloadV5['player'] & { armor?: ArmorSet };
 }
 
 /** The shape written to / read from the single local slot. */
@@ -144,6 +149,9 @@ export interface SavePayloadWithPassiveMobs extends SavePayloadV6 {
 	/** B10：`loadGame`／`collectSavePayload` **一律**帶這個鍵（沒有重生點也要
 	 *  明寫 `null`）→ 呼叫端不必寫「有沒有這個鍵」的分支。 */
 	spawnPoint: SpawnPoint | null;
+	/** B12：`loadGame`／`collectSavePayload` **一律**帶四格盔甲
+	 *  （沒有穿也要明寫四格 `null`）。 */
+	player: SavePayloadV6['player'] & { armor: ArmorSet };
 }
 
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
@@ -155,6 +163,8 @@ export interface SaveSources {
 		yaw: number;
 		mode: 'survival' | 'creative';
 		inventory: (ItemStack | null)[];
+		/** B12：live 四格盔甲（附加欄位；深拷貝＋清洗後寫入）。**必填**。 */
+		armor: ArmorSet;
 	};
 	vitals: Vitals | null;
 	clockT: number;
@@ -205,6 +215,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 			// B7 Task 2：`sanitizeStack` 同時把耐久物品的 `dur` 帶出來（合法值
 			// 原樣、缺漏／非法→滿耐久）→ 寫出的記錄「耐久物品必然帶明確 `dur`」。
 			inventory: sanitizeSlots(args.player.inventory, INVENTORY_SLOTS),
+			// B12：四格盔甲（附加欄位；清洗＋逐格深拷貝）。
+			armor: normalizeArmorSet(args.player.armor),
 		},
 		time: { t: args.clockT },
 		advancements: {
@@ -476,6 +488,14 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 			return {
 				...migratedClean,
 				...(worldgenVersion === undefined ? {} : { worldgenVersion }),
+				player: {
+					...migratedClean.player,
+					// B12：四格盔甲**一律回傳**（正規化後）——舊記錄沒有這個鍵 →
+					// 四格空（＝沒有穿），不是壞檔；錯誤部位／髒值逐格清洗。
+					armor: normalizeArmorSet(
+						(value as Partial<SavePayloadV6>).player?.armor,
+					),
+				},
 				passiveMobs: normalizePassiveMobs(rawPassiveMobs),
 				// B10：重生點**一律回傳**（正規化後）——舊記錄沒有這個鍵 → `null`
 				// （回世界出生點）；髒值剝成 `null`、不整包拒絕（與 `passiveMobs`

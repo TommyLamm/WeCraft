@@ -2611,6 +2611,7 @@ function sessionSavePayload(): SavePayload | null {
       yaw: player.yaw,
       mode: currentMode,
       inventory: [...slots],
+      armor, // B12：四格盔甲（附加欄位；清洗與深拷貝在 collectSavePayload）
     },
     vitals,
     clockT: clock.t,
@@ -2735,6 +2736,10 @@ function applyCloudData(data: CloudData): void {
   );
   // B10：床的重生點（附加欄位；舊 payload 沒有 → null＝回世界出生點）。
   bedSpawn = data.spawnPoint ? { ...data.spawnPoint } : null;
+  // B12：四格盔甲（附加欄位；舊 payload 沒有 → 四格空）。`normalizeArmorSet`
+  // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。
+  armor = normalizeArmorSet(data.armor);
+  refreshArmor();
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -2820,6 +2825,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       passiveMobs, // B4 Task 10: 被動生物隨雲端進度一起旅行
       blockEntities: [...blockEntities.values()], // B8 Task 5: 箱子內容＋熔爐狀態
       spawnPoint: bedSpawn, // B10：床的重生點（附加欄位；沒有＝null）
+      armor, // B12：四格盔甲（附加欄位；沒有穿也要明寫四格空）
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');
@@ -3209,6 +3215,9 @@ function continueGame(payload: SavePayload): void {
   );
   // B10：床的重生點（附加欄位；舊記錄沒有 → null＝回世界出生點）。
   bedSpawn = payload.spawnPoint ? { ...payload.spawnPoint } : null;
+  // B12：四格盔甲（附加欄位；`loadGame` 一律回傳正規化後的結果）。
+  armor = normalizeArmorSet(payload.player.armor);
+  refreshArmor();
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);

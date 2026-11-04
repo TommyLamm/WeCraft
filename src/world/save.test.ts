@@ -14,6 +14,7 @@ import {
   type SavePayloadV5,
 } from './save';
 import { createVitals } from '../player/survival';
+import { emptyArmorSet } from '../core/armor';
 import { emptyAdvancements } from '../core/advancements';
 import { createModeStash, type ModeStash } from '../core/mode-stash';
 import { starterSlots, INVENTORY_SLOTS, type ItemStack } from '../core/items';
@@ -69,6 +70,8 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
         null,
         { item: 'wooden_pickaxe', count: 1, dur: 59 },
       ),
+      // B12：附加欄位（版本仍 6）——四格盔甲；空 fixture 讓 deep-equal 成立。
+      armor: emptyArmorSet(),
     },
     time: { t: 0.42 },
     // non-empty, so the round-trip deep-equal actually exercises progress state
@@ -323,6 +326,8 @@ describe('saveGame / loadGame', () => {
         ...v1.player,
         // 舊的 9 格資料落在前 9 格（熱鍵列），其餘 27 格留空。
         inventory: slots({ item: 'stone', count: 32 }),
+        // B12：`loadGame` 一律回傳四格盔甲（舊記錄缺欄位 → 空）。
+        armor: emptyArmorSet(),
       },
       advancements: emptyAdvancements(),
       // no stash on the record → the survival side is derived from what it saved
@@ -358,6 +363,8 @@ describe('saveGame / loadGame', () => {
         ...v2.player,
         // 舊 9 格 → 熱鍵列（前 9 格），其餘留空。
         inventory: slots({ item: 'oak_planks', count: 12 }),
+        // B12：同上。
+        armor: emptyArmorSet(),
       },
       stash: {
         survival: slots(), // the mode the record was NOT in starts empty
@@ -458,6 +465,55 @@ describe('saveGame / loadGame', () => {
     await saveGame(p);
     const loaded = await loadGame();
     expect(loaded!.player.inventory[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 137 });
+  });
+
+  // ── B12：payload v6 附加欄位 `player.armor`（版本不升） ──────────────────
+  it('a v6 payload round-trips equipped armor through IndexedDB', async () => {
+    const p = makePayload({
+      player: {
+        ...makePayload().player,
+        armor: {
+          helmet: { item: 'iron_helmet', count: 1, dur: 165 },
+          chestplate: null,
+          leggings: { item: 'diamond_leggings', count: 1, dur: 400 },
+          boots: null,
+        },
+      },
+    });
+    await saveGame(p);
+    const loaded = await loadGame();
+    expect(loaded!.player.armor).toEqual(p.player.armor);
+  });
+
+  it('a v6 record without armor loads four empty slots', async () => {
+    const raw = makePayload() as Partial<SavePayload>;
+    const player = { ...makePayload().player } as Record<string, unknown>;
+    delete player.armor;
+    raw.player = player as SavePayload['player'];
+    await putRawRecord(raw);
+    expect((await loadGame())!.player.armor).toEqual(emptyArmorSet());
+  });
+
+  it('sanitizes wrong-slot and over-max armor on load', async () => {
+    await putRawRecord({
+      ...makePayload(),
+      player: {
+        ...makePayload().player,
+        armor: {
+          helmet: { item: 'stone', count: 1 },
+          chestplate: { item: 'iron_chestplate', count: 64, dur: 9999 },
+        },
+      },
+    });
+    const loaded = await loadGame();
+    expect(loaded!.player.armor.helmet).toBeNull();
+    expect(loaded!.player.armor.chestplate).toEqual({
+      item: 'iron_chestplate',
+      count: 1,
+      dur: 240,
+    });
+    expect(loaded!.player.armor.leggings).toBeNull();
+    expect(loaded!.player.armor.boots).toBeNull();
   });
 
   it('migrates a raw v4 record to v6 and gives an old tool full durability', async () => {
@@ -991,7 +1047,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [] },
+      player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0.42,
       advancements,
@@ -1024,7 +1080,7 @@ describe('collectSavePayload', () => {
   it('collectSavePayload stamps the current worldgen version', () => {
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1044,7 +1100,7 @@ describe('collectSavePayload', () => {
     const cow = { ...createPassiveMob('cow', { x: 1, y: 2, z: 3 }), hp: 7, yaw: 0.5 };
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1071,6 +1127,7 @@ describe('collectSavePayload', () => {
         yaw: 0,
         mode: 'survival',
         inventory: [{ item: 'diamond_sword', count: 1, dur: 900 }],
+        armor: emptyArmorSet(),
       },
       vitals: null,
       clockT: 0,
@@ -1097,7 +1154,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos, yaw: -1.25, mode: 'survival', inventory },
+      player: { pos, yaw: -1.25, mode: 'survival', inventory, armor: emptyArmorSet() },
       vitals,
       clockT: 0,
       advancements,
@@ -1138,7 +1195,7 @@ describe('collectSavePayload', () => {
     const before = Date.now();
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [] },
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0.1,
       advancements: emptyAdvancements(),
@@ -1168,7 +1225,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 0, 0], yaw: 0, mode: 'survival', inventory: [] },
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1215,7 +1272,7 @@ describe('collectSavePayload', () => {
     ];
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [] },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1253,6 +1310,7 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
       yaw: 0,
       mode: 'survival' as const,
       inventory: [] as Array<ItemStack | null>,
+      armor: emptyArmorSet(),
     },
     vitals: null,
     clockT: 0,
@@ -1331,6 +1389,7 @@ describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', 
         yaw: 0,
         mode: 'survival' as const,
         inventory: [] as Array<ItemStack | null>,
+        armor: emptyArmorSet(),
       },
       vitals: null,
       clockT: 0,

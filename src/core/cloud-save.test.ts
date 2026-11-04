@@ -11,9 +11,11 @@ import {
   acceptCloudData,
   shouldAllowSave,
   classifyCloudError,
+  mergeCloudData,
   type CloudData,
 } from './cloud-save';
 import { createVitals } from '../player/survival';
+import { emptyArmorSet, normalizeArmorSet } from './armor';
 import { starterSlots, INVENTORY_SLOTS, type ItemStack } from './items';
 import { emptyAdvancements } from './advancements';
 import { createModeStash, type ModeStash } from './mode-stash';
@@ -752,6 +754,7 @@ describe('cloud save spawnPoint (B10)', () => {
     passiveMobs: [],
     blockEntities: [],
     spawnPoint: null as { x: number; y: number; z: number } | null,
+    armor: emptyArmorSet(),
   });
 
   it('B10: buildCloudData deep-copies the spawn point (and writes null when absent)', () => {
@@ -787,5 +790,94 @@ describe('cloud save spawnPoint (B10)', () => {
   it('B10: the format pins do not move (still format 4, readable 1-4)', () => {
     expect(CLOUD_FORMAT_VERSION).toBe(4);
     expect(CLOUD_READABLE_FORMATS).toEqual([1, 2, 3, 4]);
+  });
+});
+
+// ---- B12：盔甲附加欄位（格式不升版）------------------------------------------
+describe('cloud save armor (B12)', () => {
+  const baseSrc = () => ({
+    seed: 42,
+    pos: [0, 64, 0] as [number, number, number],
+    yaw: 0,
+    vitals: null,
+    clockT: 0,
+    inventory: [],
+    advancements: emptyAdvancements(),
+    settings: validSettings(),
+    stash: createModeStash(),
+    passiveMobs: [],
+    blockEntities: [],
+    spawnPoint: null as { x: number; y: number; z: number } | null,
+    armor: emptyArmorSet(),
+  });
+
+  it('B12: the cloud format stays 4 and armor is additive', () => {
+    expect(CLOUD_FORMAT_VERSION).toBe(4);
+    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2, 3, 4]);
+    expect(acceptCloudData(rawValid())!.armor).toEqual(emptyArmorSet());
+  });
+
+  it('B12: build/accept round-trip armor and deep-copy it', () => {
+    const armor = normalizeArmorSet({
+      helmet: { item: 'golden_helmet', count: 1, dur: 70 },
+      chestplate: { item: 'diamond_chestplate', count: 1, dur: 500 },
+    });
+    const built = buildCloudData({ ...baseSrc(), armor });
+    expect(built.armor).toEqual(armor);
+    expect(built.armor).not.toBe(armor);
+    expect(built.armor?.helmet).not.toBe(armor.helmet);
+    // Mutating the live input after the build is invisible.
+    armor.helmet!.dur = 1;
+    expect(built.armor?.helmet?.dur).toBe(70);
+    expect(acceptCloudData(built)!.armor).toEqual({
+      helmet: { item: 'golden_helmet', count: 1, dur: 70 },
+      chestplate: { item: 'diamond_chestplate', count: 1, dur: 500 },
+      leggings: null,
+      boots: null,
+    });
+  });
+
+  it('B12: acceptCloudData sanitizes wrong-slot and over-max armor', () => {
+    const accepted = acceptCloudData({
+      ...rawValid(),
+      armor: {
+        helmet: { item: 'stone', count: 1 },
+        chestplate: { item: 'iron_chestplate', count: 64, dur: 9999 },
+        boots: { item: 'leather_boots', count: 1, dur: -1 },
+      },
+    })!;
+    expect(accepted.armor!.helmet).toBeNull();
+    expect(accepted.armor!.chestplate).toEqual({
+      item: 'iron_chestplate',
+      count: 1,
+      dur: 240,
+    });
+    expect(accepted.armor!.boots).toEqual({ item: 'leather_boots', count: 1, dur: 65 });
+    expect(accepted.armor!.leggings).toBeNull();
+  });
+
+  it('B12: validateCloudData rejects a non-object armor field', () => {
+    expect(validateCloudData({ ...rawValid(), armor: 'nope' })).toBe(false);
+    expect(validateCloudData({ ...rawValid(), armor: [] })).toBe(false);
+    expect(validateCloudData({ ...rawValid(), armor: null })).toBe(false);
+    expect(validateCloudData(rawValid())).toBe(true); // 缺欄位＝舊 payload，合法
+  });
+
+  it('B12: mergeCloudData keeps the LOCAL armor (rule 1)', () => {
+    const local = acceptCloudData({
+      ...rawValid(),
+      armor: { helmet: { item: 'iron_helmet', count: 1, dur: 100 } },
+    })!;
+    const remote = acceptCloudData({
+      ...rawValid(),
+      armor: { helmet: { item: 'diamond_helmet', count: 1, dur: 363 } },
+    })!;
+    const merged = mergeCloudData(local, remote);
+    expect(merged.armor).toEqual({
+      helmet: { item: 'iron_helmet', count: 1, dur: 100 },
+      chestplate: null,
+      leggings: null,
+      boots: null,
+    });
   });
 });
