@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 55 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(55);
+  it('holds exactly the 67 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(67);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -65,6 +65,13 @@ describe('recipe table', () => {
         'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
         'golden_helmet', 'golden_chestplate', 'golden_leggings', 'golden_boots',
         'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
+        // B13：5 把鋤（各正／鏡像）＋ 麵包 ＋ 骨粉
+        'wooden_hoe', 'wooden_hoe_mirrored',
+        'stone_hoe', 'stone_hoe_mirrored',
+        'iron_hoe', 'iron_hoe_mirrored',
+        'golden_hoe', 'golden_hoe_mirrored',
+        'diamond_hoe', 'diamond_hoe_mirrored',
+        'bread', 'bone_meal',
       ].sort(),
     );
   });
@@ -129,6 +136,58 @@ describe('recipe table', () => {
         );
       }
     }
+  });
+
+  // ---- B13：鋤／麵包／骨粉 ----
+
+  it('B13: hoes use the vanilla 2-material + 2-stick shape in both directions', () => {
+    const materials = {
+      wooden: 'oak_planks', // wooden 用 ANY_PLANKS，任一板材皆可
+      stone: 'cobblestone',
+      iron: 'iron_ingot',
+      golden: 'gold_ingot',
+      diamond: 'diamond',
+    } as const;
+    for (const [tier, material] of Object.entries(materials)) {
+      for (const mirrored of [false, true]) {
+        const id = mirrored ? `${tier}_hoe_mirrored` : `${tier}_hoe`;
+        const r = recipe(id);
+        expect(r.kind).toBe('shaped');
+        expect(r.result).toEqual({ item: `${tier}_hoe`, count: 1 });
+        if (r.kind !== 'shaped') continue;
+        const rows = r.pattern;
+        const expected: ReadonlyArray<ReadonlyArray<string | null>> = mirrored
+          ? [[null, material, material], [null, 'stick', null], [null, 'stick', null]]
+          : [[material, material, null], [null, 'stick', null], [null, 'stick', null]];
+        // wooden 的 material 格是 ANY_PLANKS 陣列，不是字串：逐格檢查可接受集合
+        for (let row = 0; row < 3; row++) {
+          for (let col = 0; col < 3; col++) {
+            const want = expected[row][col];
+            const cell = rows[row]?.[col] ?? null;
+            if (want === null) {
+              expect(cell).toBeNull();
+            } else if (tier === 'wooden' && want === material) {
+              expect(Array.isArray(cell)).toBe(true);
+              expect(cell as ReadonlyArray<string>).toContain('oak_planks');
+            } else {
+              expect(cell).toBe(want);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('B13: bread is 3 wheat in a row and bone meal is 1 bone → 3', () => {
+    const bread = recipe('bread');
+    expect(bread.kind).toBe('shaped');
+    expect(bread.result).toEqual({ item: 'bread', count: 1 });
+    if (bread.kind === 'shaped') expect(bread.pattern).toEqual([['wheat', 'wheat', 'wheat']]);
+
+    const meal = recipe('bone_meal');
+    if (meal.kind !== 'shapeless') throw new Error('bone_meal must be shapeless');
+    expect(meal.inputs).toEqual(['bone']);
+    expect(meal.result).toEqual({ item: 'bone_meal', count: 3 });
   });
 });
 

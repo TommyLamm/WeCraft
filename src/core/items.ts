@@ -64,7 +64,12 @@ export type ItemId =
   | 'leather_helmet' | 'leather_chestplate' | 'leather_leggings' | 'leather_boots'
   | 'iron_helmet' | 'iron_chestplate' | 'iron_leggings' | 'iron_boots'
   | 'golden_helmet' | 'golden_chestplate' | 'golden_leggings' | 'golden_boots'
-  | 'diamond_helmet' | 'diamond_chestplate' | 'diamond_leggings' | 'diamond_boots';
+  | 'diamond_helmet' | 'diamond_chestplate' | 'diamond_leggings' | 'diamond_boots'
+  // B13：農業循環的 4 個農產／材料——種子（短草 12.5% 掉落）、小麥（成熟作物）、
+  // 麵包（3 小麥；食物值 5／6）、骨粉（1 骨頭 → 3；右鍵小麥催熟）。都不是方塊。
+  | 'wheat_seeds' | 'wheat' | 'bread' | 'bone_meal'
+  // B13：五種鋤（右鍵泥土／草地墾地；耐久同材質工具）。
+  | 'wooden_hoe' | 'stone_hoe' | 'iron_hoe' | 'golden_hoe' | 'diamond_hoe';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -112,13 +117,17 @@ const ITEM_IDS: Record<ItemId, true> = {
   iron_helmet: true, iron_chestplate: true, iron_leggings: true, iron_boots: true,
   golden_helmet: true, golden_chestplate: true, golden_leggings: true, golden_boots: true,
   diamond_helmet: true, diamond_chestplate: true, diamond_leggings: true, diamond_boots: true,
+  // B13：4 個農產／材料 ＋ 5 把鋤
+  wheat_seeds: true, wheat: true, bread: true, bone_meal: true,
+  wooden_hoe: true, stone_hoe: true, iron_hoe: true, golden_hoe: true, diamond_hoe: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 97 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 106 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
  *  ＋ B9 Task 1 補的 3 個生物掉落材料 ＋ B10 補的 3 個（床／燧石／弓）
- *  ＋ B11 補的 2 個（TNT／打火石）＋ B12 補的 16 個盔甲）。 */
+ *  ＋ B11 補的 2 個（TNT／打火石）＋ B12 補的 16 個盔甲 ＋ B13 補的 9 個
+ *  （4 個農產／材料 ＋ 5 把鋤））。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {
@@ -200,6 +209,8 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots',
   'golden_helmet', 'golden_chestplate', 'golden_leggings', 'golden_boots',
   'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
+  // B13：五把鋤（耐久工具，堆疊 1）。
+  'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe',
 ]);
 
 export function maxStack(item: ItemId): number {

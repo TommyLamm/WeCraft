@@ -103,6 +103,19 @@ describe('icons', () => {
     }
   });
 
+  it('every B13 non-block item id has its own icon branch', () => {
+    const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
+    const B13_NEEDS_ART = [
+      'wheat_seeds', 'wheat', 'bread', 'bone_meal',
+      'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe',
+    ] as const;
+    expect(B13_NEEDS_ART).toHaveLength(9);
+    for (const id of B13_NEEDS_ART) {
+      expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
+      expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
+    }
+  });
+
   it('no item id falls through to the grey placeholder', () => {
     // 比 B4 的 12 個更廣的守門：**所有**沒有方塊物品形式的 id 都必須有專屬分支，
     // 否則 `itemIcon` 會掉進 `default:` 的灰色方塊（批次末驗收要求「每個新 id 都有圖示」）。

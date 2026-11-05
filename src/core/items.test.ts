@@ -89,6 +89,11 @@ const FOOD_ITEMS: ItemId[] = [
 const B5_MATERIAL_ITEMS: ItemId[] = ['raw_gold', 'gold_ingot', 'diamond'];
 /** B4 Task 1：材料（皮革／羽毛／骨頭）＋ B5 Task 2 的 3 個原料——不是食物、也不是工具。 */
 const MATERIAL_ITEMS: ItemId[] = ['leather', 'feather', 'bone', ...B5_MATERIAL_ITEMS];
+/** B13：4 個農產／材料（種子／小麥／麵包／骨粉）＋ 5 把鋤。 */
+const B13_ITEM_IDS: ItemId[] = [
+  'wheat_seeds', 'wheat', 'bread', 'bone_meal',
+  'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe',
+];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
@@ -98,6 +103,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...ARMOR_ITEMS,
   ...FOOD_ITEMS,
   ...MATERIAL_ITEMS,
+  ...B13_ITEM_IDS,
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
@@ -111,9 +117,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B10 Task 1 再補 1 個（床的物品形式，隨 BLOCK.BED = 34 一起落地）→ 77。
  *  B10 Task 2 再補 2 個（燧石與弓）→ 79。
  *  B11 Task 2 再補 2 個（TNT 的物品形式＋打火石）→ **81**。
- *  B12 再補 16 個（4 材質 × 4 部位盔甲）→ **97**。
+ *  B12 再補 16 個（4 材質 × 4 部位盔甲）→ 97。
+ *  B13 再補 9 個（4 個農產／材料 ＋ 5 把鋤）→ **106**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 97;
+const TOTAL_ITEM_COUNT = 106;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -250,6 +257,32 @@ describe('items', () => {
     }
     expect(stackName('golden_chestplate')).toBe('Golden Chestplate');
     expect(stackName('diamond_boots')).toBe('Diamond Boots');
+  });
+
+  // ---- B13：種子／小麥／麵包／骨粉與五種鋤 ----
+
+  it('B13: seeds, wheat, bread and bone meal are stackable non-block items', () => {
+    for (const id of ['wheat_seeds', 'wheat', 'bread', 'bone_meal'] as const) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(blockFromItem(id)).toBeNull();
+      expect(maxStack(id)).toBe(64);
+      expect(sanitizeStack({ item: id, count: 3 })).toEqual({ item: id, count: 3 });
+    }
+    expect(stackName('wheat_seeds')).toBe('Wheat Seeds');
+    expect(stackName('bone_meal')).toBe('Bone Meal');
+  });
+
+  it('B13: the five hoes are stack-one durable tools', () => {
+    const durability: Partial<Record<ItemId, number>> = {
+      wooden_hoe: 59, stone_hoe: 131, iron_hoe: 250, golden_hoe: 32, diamond_hoe: 1561,
+    };
+    for (const [id, max] of Object.entries(durability) as Array<[ItemId, number]>) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(blockFromItem(id)).toBeNull();
+      expect(maxStack(id)).toBe(1);
+      expect(maxDurability(id)).toBe(max);
+      expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1, dur: max });
+    }
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

@@ -35,6 +35,14 @@ describe('durability', () => {
     for (const [item, max] of cases) expect(maxDurability(item)).toBe(max);
   });
 
+  it('B13: hoes share the vanilla material durability', () => {
+    expect(maxDurability('wooden_hoe')).toBe(59);
+    expect(maxDurability('stone_hoe')).toBe(131);
+    expect(maxDurability('iron_hoe')).toBe(250);
+    expect(maxDurability('golden_hoe')).toBe(32);
+    expect(maxDurability('diamond_hoe')).toBe(1561);
+  });
+
   it('isDurableItem identifies tools and rejects ordinary items', () => {
     expect(isDurableItem('wooden_pickaxe')).toBe(true);
     expect(isDurableItem('diamond_sword')).toBe(true);

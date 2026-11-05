@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor: exactly 55) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming: exactly 67) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -68,6 +68,9 @@ const GUN: PatternCell = 'gunpowder';
 const SAN: PatternCell = 'sand';
 // B12：盔甲材質格（鐵／金／鑽沿用既有的 I／G／D；皮革另加）。
 const LEA: PatternCell = 'leather';
+// B13：農業的格常量（鋤頭的材質格沿用既有 P／C／I／G／D；小麥與骨頭另加）。
+const WHEAT: PatternCell = 'wheat';
+const BONE: PatternCell = 'bone';
 
 /** The settled recipe table — exactly 55 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
@@ -496,6 +499,121 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     kind: 'shaped',
     pattern: [[D, null, D], [D, null, D]],
     result: { item: 'diamond_boots', count: 1 },
+  },
+  // B13：五種鋤（原版形狀：2 材質＋2 木棍，左右鏡像皆可；高度 3 → 需工作台 3×3）。
+  {
+    id: 'wooden_hoe',
+    kind: 'shaped',
+    pattern: [
+      [P, P, null],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'wooden_hoe', count: 1 },
+  },
+  {
+    id: 'wooden_hoe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [null, P, P],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'wooden_hoe', count: 1 },
+  },
+  {
+    id: 'stone_hoe',
+    kind: 'shaped',
+    pattern: [
+      [C, C, null],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'stone_hoe', count: 1 },
+  },
+  {
+    id: 'stone_hoe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [null, C, C],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'stone_hoe', count: 1 },
+  },
+  {
+    id: 'iron_hoe',
+    kind: 'shaped',
+    pattern: [
+      [I, I, null],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'iron_hoe', count: 1 },
+  },
+  {
+    id: 'iron_hoe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [null, I, I],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'iron_hoe', count: 1 },
+  },
+  {
+    id: 'golden_hoe',
+    kind: 'shaped',
+    pattern: [
+      [G, G, null],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'golden_hoe', count: 1 },
+  },
+  {
+    id: 'golden_hoe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [null, G, G],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'golden_hoe', count: 1 },
+  },
+  {
+    id: 'diamond_hoe',
+    kind: 'shaped',
+    pattern: [
+      [D, D, null],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'diamond_hoe', count: 1 },
+  },
+  {
+    id: 'diamond_hoe_mirrored',
+    kind: 'shaped',
+    pattern: [
+      [null, D, D],
+      [null, S, null],
+      [null, S, null],
+    ],
+    result: { item: 'diamond_hoe', count: 1 },
+  },
+  // B13：麵包（原版 3 小麥橫排；寬度 3 → 需工作台 3×3）。
+  {
+    id: 'bread',
+    kind: 'shaped',
+    pattern: [[WHEAT, WHEAT, WHEAT]],
+    result: { item: 'bread', count: 1 },
+  },
+  // B13：骨粉（原版 shapeless：1 骨頭 → 3；2×2 背包也能合）。
+  {
+    id: 'bone_meal',
+    kind: 'shapeless',
+    inputs: ['bone'],
+    result: { item: 'bone_meal', count: 3 },
   },
 ];
 

@@ -618,6 +618,89 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       drawArmorArt(ctx, item);
       break;
     }
+    // ---- B13：五種鋤 ----
+    // 木柄斜握＋材質色的彎頭（橫刃＋短豎頸），與鏟（豎柄）／斧（寬刃）區隔。
+    case 'wooden_hoe':
+    case 'stone_hoe':
+    case 'iron_hoe':
+    case 'golden_hoe':
+    case 'diamond_hoe': {
+      const colors = toolColors(item);
+      line(ctx, 10, 24, 18, 12, WOOD, 4); // 柄（一律木色）
+      line(ctx, 13, 12, 24, 12, colors.head, 4); // 橫刃
+      line(ctx, 16, 14, 16, 9, colors.edge, 3); // 豎頸（連接刃與柄）
+      break;
+    }
+    case 'wheat_seeds': {
+      // 種子袋裡的幾顆種子：綠色未熟 ＋ 棕色成熟。
+      ctx.fillStyle = '#7fae4a';
+      ctx.beginPath();
+      ctx.arc(11, 12, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(20, 10, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#b8945f';
+      ctx.beginPath();
+      ctx.arc(15, 20, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(23, 19, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(8, 21, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'wheat': {
+      // 三根金黃麥稈＋麥粒（頂端兩點一穗）。
+      line(ctx, 12, 26, 12, 10, '#b8945f', 2);
+      line(ctx, 17, 26, 17, 8, '#b8945f', 2);
+      line(ctx, 22, 26, 22, 10, '#b8945f', 2);
+      ctx.fillStyle = '#e0c060';
+      ctx.fillRect(10, 4, 4, 6);
+      ctx.fillRect(15, 2, 4, 6);
+      ctx.fillRect(20, 4, 4, 6);
+      ctx.fillStyle = '#f0d890';
+      ctx.fillRect(11, 4, 2, 2);
+      ctx.fillRect(16, 2, 2, 2);
+      ctx.fillRect(21, 4, 2, 2);
+      break;
+    }
+    case 'bread': {
+      // 圓角麵包＋兩道淺色劃痕。
+      ctx.fillStyle = '#b4712f';
+      ctx.beginPath();
+      ctx.ellipse(16, 16, 11, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#d9a05f';
+      ctx.beginPath();
+      ctx.ellipse(16, 13, 9, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#8a5a2b';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(11, 15);
+      ctx.lineTo(15, 13);
+      ctx.moveTo(17, 16);
+      ctx.lineTo(21, 14);
+      ctx.stroke();
+      break;
+    }
+    case 'bone_meal': {
+      // 白色粉末堆＋幾點顆粒。
+      ctx.fillStyle = '#e8e8e0';
+      ctx.beginPath();
+      ctx.moveTo(6, 22);
+      ctx.quadraticCurveTo(16, 8, 26, 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(12, 14, 2, 2);
+      ctx.fillRect(18, 12, 2, 2);
+      ctx.fillRect(15, 18, 2, 2);
+      break;
+    }
     default: {
       // unknown/future item — neutral placeholder until it gets real art
       ctx.fillStyle = '#7a7a7a';
