@@ -1069,13 +1069,14 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
     expect(countOf("audio.play('place', 'grass'")).toBe(1);
   });
 
-  it('all six play call sites stay wired (place / step / break / dig / eat-thud / tool-break)', () => {
-    // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud、工具損壞共 6 處）——
-    // 防止未來重構時**靜默刪掉**任何一條音效路徑。
+  it('all seven play call sites stay wired (place / step / break / dig / eat-thud / tool-break / farming)', () => {
+    // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud、工具損壞、農業
+    // 共用泥土聲共 7 處）——防止未來重構時**靜默刪掉**任何一條音效路徑。
     // B7 Task 5：新增工具損壞音（`damageHeldTool` 內的
-    // `audio.play('tool_break', …)`）→ 5 → 6 同步；這條釘的是「路徑被刪」，
+    // `audio.play('tool_break', …)`）→ 5 → 6；B13 新增 `playFarmingSound`
+    // （一個呼叫點、三種農業動作共用）→ 6 → 7；這條釘的是「路徑被刪」，
     // 新增（本批）本來就會轉紅一次 → 已依實測同步。
-    expect(countOf('audio.play(')).toBe(6);
+    expect(countOf('audio.play(')).toBe(7);
   });
 });
 
@@ -1084,13 +1085,56 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
 // 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
 // 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
 describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
-  it('all seven damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow / flint-and-steel)', () => {
+  it('all eight damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow / flint-and-steel / till)', () => {
     // 實測：敵對生物命中、苦力怕命中（B9）、蜘蛛命中（B9）、被動生物命中、
     // 挖完方塊、射箭（B10）、點燃 TNT（B11）各一處；`function damageHeldTool(`
     // 的定義不是呼叫點。
     // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 5；B10 新增弓 → 6；
-    // B11 新增打火石點燃 → 7。
-    expect(countOf('damageHeldTool(1)')).toBe(7);
+    // B11 新增打火石點燃 → 7；B13 新增鋤地 → 8。
+    expect(countOf('damageHeldTool(1)')).toBe(8);
+  });
+});
+
+// ---- B13：農業接線（右鍵分流、成長 tick、耐久與消耗） ------------------------
+describe('main.ts 接線（B13：農業）', () => {
+  it('the farming action runs before generic placement on a hit', () => {
+    const body = blockAfter('if (wantPlace) {');
+    expect(body).toContain('tryFarmingAction(hit)');
+    expect(body).toContain('if (!tryFarmingAction(hit)) tryPlaceBlock(hit)');
+    expect(body.indexOf('tryFarmingAction(hit)')).toBeLessThan(body.indexOf('tryPlaceBlock(hit)'));
+  });
+
+  it('farming never preempts block use, bow or eating', () => {
+    const body = blockAfter('if (wantPlace) {');
+    const farmingAt = body.indexOf('tryFarmingAction(hit)');
+    for (const marker of [
+      'hitBlock === BLOCK.CRAFTING_TABLE',
+      'hitBlock === BLOCK.FURNACE',
+      'hitBlock === BLOCK.CHEST',
+      'hitBlock === BLOCK.BED',
+      'hitBlock === BLOCK.TNT',
+      'heldIsBow()',
+      'heldIsFood()',
+    ]) {
+      expect(body.indexOf(marker), `${marker} must run before farming`).toBeLessThan(farmingAt);
+    }
+  });
+
+  it('the wheat growth tick runs once from the playing loop', () => {
+    expect(countOf('growWheatBatch(')).toBe(1);
+    const playing = playingBranchBody();
+    expect(playing).toContain('WHEAT_GROWTH_INTERVAL_SEC');
+    expect(playing).toContain('world.setBlock(u.x, u.y, u.z, u.to)');
+  });
+
+  it('the farming action owns one till durability and two one-item spends', () => {
+    const body = functionBody('tryFarmingAction');
+    expect(body).toContain('canTill(');
+    expect(body).toContain('canPlantWheat(');
+    expect(body).toContain('boneMealWheat(');
+    expect(body.match(/spendFromSlot\(selected, 1\)/g) ?? []).toHaveLength(2);
+    expect(body).toContain('damageHeldTool(1)');
+    expect(functionBody('playFarmingSound')).toContain("audio.play('dig', 'dirt'");
   });
 });
 
@@ -1160,7 +1204,7 @@ describe('main.ts 接線（B10：弓與玩家箭）', () => {
   it('B10: the bow is wired through charge -> spawnPlayerArrow -> durability', () => {
     expect(countOf('spawnPlayerArrow(')).toBe(1);
     expect(countOf('bowShotFor(')).toBe(1);
-    expect(countOf('damageHeldTool(1)')).toBe(7); // B7 的 5 處 ＋ 弓（B10）＋ 打火石（B11）
+    expect(countOf('damageHeldTool(1)')).toBe(8); // B7 的 5 處 ＋ 弓（B10）＋ 打火石（B11）＋ 鋤地（B13）
     expect(playingBranchBody()).toContain('heldIsBow()');
     expect(playingBranchBody()).toContain('viewmodel.setDraw(');
   });

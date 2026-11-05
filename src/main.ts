@@ -95,6 +95,15 @@ import {
   hitMobId,
   attackMob,
 } from './player/interact';
+// B13：農業純邏輯（階段／濕潤／成長／收成在 world/farming.ts；main 只接線）。
+import {
+  WHEAT_GROWTH_INTERVAL_SEC,
+  boneMealWheat,
+  canPlantWheat,
+  canTill,
+  growWheatBatch,
+  isHoeItem,
+} from './world/farming';
 // B4 Task 9：進食 —— 規則（按住右鍵 1.6 秒、食物值表、扣物品）都在
 // `player/eat.ts` 的純邏輯裡；vitals／音效／成就留在 main 這層組裝根。
 // **食用的食物值一律來自 `foodFor()`**（食物值表的單一真值）→ 不寫死蘋果。
@@ -968,6 +977,63 @@ function tryPlaceBlock(target: RayHit): void {
   });
 }
 
+/** B13：三種農業動作共用一個柔和的泥土聲（不新增 MaterialGroup）。
+ *  傳入的是**方塊角**（x,y,z）→ 這裡補 0.5 對齊方塊中心（與其他音效一致）。 */
+function playFarmingSound(x: number, y: number, z: number): void {
+  audio.play('dig', 'dirt', { pos: { x: x + 0.5, y: y + 0.5, z: z + 0.5 } });
+}
+
+/** B13：鋤地／播種／骨粉的右鍵入口；回傳 true ＝ 這次右鍵已被農業消費。
+ *
+ *  規則本體在 `world/farming.ts`（`canTill`／`canPlantWheat`／`boneMealWheat`）；
+ *  這裡只負責「執行」：寫世界 → 消耗／扣耐久 → 音效 → 刷新熱鍵欄。
+ *  回傳 false 時呼叫端落回 `tryPlaceBlock`（鋤頭／種子／骨粉沒有方塊形式 →
+ *  no-op；不能吞掉右鍵）。
+ *
+ *  **順序＝行為**：
+ *  - 鋤地**先落地再扣耐久**——最後一次使用仍完成鋤地（與 B10 弓「先射箭再扣」
+ *    同一條；創造模式由 `damageHeldTool` 內守門）。
+ *  - 播種／骨粉**先扣物品再寫世界**——`spendFromSlot` 拒絕時不寫世界
+ *    （no pay, no place；創造的 spend 是免費 true）。
+ *
+ *  播種寫的是**上方格**（耕地上的作物格），其餘動作寫被點擊的那一格。 */
+function tryFarmingAction(hit: RayHit): boolean {
+  const held = slots[selected];
+  if (!held) return false;
+  const targetId = world.getBlock(hit.x, hit.y, hit.z);
+  const aboveId = world.getBlock(hit.x, hit.y + 1, hit.z);
+
+  if (isHoeItem(held.item)) {
+    if (!canTill(held.item, targetId, aboveId)) return false;
+    world.setBlock(hit.x, hit.y, hit.z, BLOCK.FARMLAND);
+    damageHeldTool(1); // 先落地再扣耐久：最後一次使用仍完成鋤地
+    playFarmingSound(hit.x, hit.y, hit.z);
+    hud.setHotbar(slots, selected);
+    return true;
+  }
+
+  if (held.item === 'wheat_seeds') {
+    if (!canPlantWheat(held.item, targetId, aboveId)) return false;
+    if (!inventory.spendFromSlot(selected, 1)) return false;
+    world.setBlock(hit.x, hit.y + 1, hit.z, BLOCK.WHEAT_0);
+    playFarmingSound(hit.x, hit.y + 1, hit.z);
+    hud.setHotbar(slots, selected);
+    return true;
+  }
+
+  if (held.item === 'bone_meal') {
+    const next = boneMealWheat(held.item, targetId);
+    if (next === null) return false;
+    if (!inventory.spendFromSlot(selected, 1)) return false;
+    world.setBlock(hit.x, hit.y, hit.z, next);
+    playFarmingSound(hit.x, hit.y, hit.z);
+    hud.setHotbar(slots, selected);
+    return true;
+  }
+
+  return false;
+}
+
 /** B4 Task 9：手上拿的是不是**食物**（＝食物值表裡有值的物品）。
  *
  *  判準一律走 `foodFor()`（食物值表的單一真值）→ 不認得的食物就是「不是食物」
@@ -1195,6 +1261,12 @@ let stepAcc = 0;
 // Clock only advances while playing; sky/light refresh every frame (cheap math),
 // `time-changed` emits ONLY on a day↔night flip (HUD/mobs consume it later).
 let clock: Clock = createClock(settings.dayLengthSec);
+
+// ---- B13 農業 ----
+// 成長節拍（累積 dt，滿 WHEAT_GROWTH_INTERVAL_SEC 掃一批）與批間游標
+// （超過 64 株時輪替起點，不讓前 64 株永遠壟斷——見 growWheatBatch）。
+let farmAcc = 0;
+let farmCursor = 0;
 
 // ---- 生物群系（Phase 3 Task 6）----
 // Biome under the player — drives the fog/background tint and the F3 Biome
@@ -3074,6 +3146,9 @@ function resetSessionEntities(): void {
   passiveMobs = []; // B4 Task 10：清空後由 continueGame／applyCloudData 從存檔還原
   drops = [];
   arrows = [];
+  // B13：農業節拍與游標不跨場——新局／讀檔從第一個 modified 項目重新輪替。
+  farmAcc = 0;
+  farmCursor = 0;
 }
 
 /** New Game = a FRESH world (plan 14.3 "new → fresh state"): sessions within
@@ -3769,6 +3844,26 @@ gs.renderer.setAnimationLoop(() => {
       // Task 12: phase events feed first_night (day after a seen night).
       applyAdvancement({ type: 'phase', phase });
       audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
+    }
+
+    // ---- B13 小麥成長：每 5 秒掃 modified overlay，最多 64 株 ----
+    // 規則本體在 world/farming.ts 的 growWheatBatch（光照 ≥9、下方耕地、
+    // 水源 4 格內濕潤 25%／乾燥 10%）；這裡只餵世界查詢與真實光照，並把
+    // 回傳的更新寫回世界（setBlock 會記 modified → 下一批繼續接著長）。
+    farmAcc += dt;
+    if (farmAcc >= WHEAT_GROWTH_INTERVAL_SEC) {
+      farmAcc = 0;
+      const grown = growWheatBatch({
+        entries: [...world.modified.entries()],
+        cursor: farmCursor,
+        getBlock: (x, y, z) => world.getBlock(x, y, z),
+        lightAt: (x, y, z) => {
+          const l = spawnLightAt(world, x, y, z, clock.t);
+          return l.lit ? Math.max(l.internalSky, l.block) : -1;
+        },
+      });
+      farmCursor = grown.nextCursor;
+      for (const u of grown.updates) world.setBlock(u.x, u.y, u.z, u.to);
     }
 
     // ---- B2.1 疾跑狀態機（Task 9 接線）----
@@ -4613,10 +4708,12 @@ gs.renderer.setAnimationLoop(() => {
           //  等於沒有「按住 1.6 秒」這條規則。）
           eatProgress.reset();
         } else if (hit) {
-          viewmodel.startSwing(); // Phase 3 Task 8: any right-click place attempt swings
+          viewmodel.startSwing(); // Phase 3 Task 8: any right-click use swings
           // B2.2（Task 10）：「放方塊」已抽成 tryPlaceBlock() —— 首次使用路徑與
           // 連放路徑共用同一份實作（見下方連放段）。
-          tryPlaceBlock(hit);
+          // B13：農業動作（鋤地／播種／骨粉）優先於放置——手上沒有農業工具或
+          // 目標不成立時回 false，照舊走一般放置（不能吞掉右鍵）。
+          if (!tryFarmingAction(hit)) tryPlaceBlock(hit);
         }
       }
 

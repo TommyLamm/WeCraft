@@ -68,9 +68,9 @@ const GUN: PatternCell = 'gunpowder';
 const SAN: PatternCell = 'sand';
 // B12：盔甲材質格（鐵／金／鑽沿用既有的 I／G／D；皮革另加）。
 const LEA: PatternCell = 'leather';
-// B13：農業的格常量（鋤頭的材質格沿用既有 P／C／I／G／D；小麥與骨頭另加）。
+// B13：農業的格常量（鋤頭的材質格沿用既有 P／C／I／G／D；麵包用小麥）。
+// 骨粉是 shapeless（`inputs` 吃 ItemId 字面值）→ 不需要 PatternCell 常量。
 const WHEAT: PatternCell = 'wheat';
-const BONE: PatternCell = 'bone';
 
 /** The settled recipe table — exactly 55 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
