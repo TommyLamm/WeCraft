@@ -1,6 +1,8 @@
 import { itemFromBlock, type ItemId } from '../core/items';
 import type { InventoryModel } from '../core/inventory';
 import { BLOCK } from './blocks';
+// B13：小麥階段與短草種子機率的單一真值在 farming.ts（純邏輯，無循環依賴）。
+import { seedsFromShortGrass, wheatStageOf } from './farming';
 
 // ---- Tuning constants (Task 7) ----
 
@@ -107,6 +109,12 @@ export function dropItemFor(blockId: number): ItemId | null {
     return null;
   }
   // 原木走既有的 itemFromBlock fallback → 掉自身（'spruce_log'／'birch_log'）
+  // B13：耕地挖掉掉 dirt（狀態方塊沒有物品形式，不能走 fallback）；
+  // 小麥照原版：成熟掉 1 wheat、未成熟掉 1 wheat_seeds（手動收成的 0–3 種子
+  // 加成只走 spawnBlockDrop——爆炸掉落維持單一物品的簡化）。
+  if (blockId === BLOCK.FARMLAND) return 'dirt';
+  const wheatStage = wheatStageOf(blockId);
+  if (wheatStage !== null) return wheatStage === 3 ? 'wheat' : 'wheat_seeds';
   return itemFromBlock(blockId);
 }
 
@@ -126,7 +134,8 @@ export const LEAF_APPLE_CHANCE = 0.005;
 /**
  * 方塊的**機率掉落**：擲一次 rng，落在門檻內就回該物品，否則回 null。
  *
- * 目前**橡木葉與白樺葉**有機率掉落（0.5% 蘋果；spec §B4.3 的名單）。
+ * 目前**橡木葉與白樺葉**有機率掉落（0.5% 蘋果；spec §B4.3 的名單），短草自 B13
+ * 起有 12.5% 機率掉小麥種子（`seedsFromShortGrass`）。
  * **雲杉葉刻意未納入**——spec §B4.3 只列橡木／白樺；要加的話把
  * `BLOCK.SPRUCE_LEAVES` 加進下面這個條件即可，規則不用改（雲杉葉本體同樣不掉）。
  *
@@ -139,6 +148,11 @@ export function chanceDropFor(
   blockId: number,
   rng: () => number = Math.random,
 ): ItemId | null {
+  // B13：短草 12.5% 掉 1 顆小麥種子（原版機制）；短草本體照舊由 `dropItemFor`
+  // fallback 掉自身（B3 起的刻意偏離，讓裝飾可再生）。
+  if (blockId === BLOCK.SHORT_GRASS) {
+    return seedsFromShortGrass(rng) === 1 ? 'wheat_seeds' : null;
+  }
   if (blockId !== BLOCK.LEAVES && blockId !== BLOCK.BIRCH_LEAVES) return null;
   return rng() < LEAF_APPLE_CHANCE ? 'apple' : null;
 }

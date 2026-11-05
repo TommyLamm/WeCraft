@@ -551,6 +551,29 @@ describe('spawnBlockDrop (Task 7 + Task 6 harvest gate)', () => {
     expect(second[0]).toBe(first[0]); // existing entities kept as-is
     expect(second[1].id).not.toBe(second[0].id);
   });
+
+  // ---- B13：小麥收成／耕地／短草種子 ----
+
+  it('B13: mature wheat drops wheat plus 0..3 seeds in survival', () => {
+    const drops = spawnBlockDrop([], 'survival', BLOCK.WHEAT_3, at, null, () => 0.5);
+    expect(drops.map((d) => [d.item, d.count])).toEqual([['wheat', 1], ['wheat_seeds', 2]]);
+  });
+
+  it('B13: immature wheat drops one seed and creative drops nothing', () => {
+    const immature = spawnBlockDrop([], 'survival', BLOCK.WHEAT_1, at, null, () => 0.99);
+    expect(immature.map((d) => [d.item, d.count])).toEqual([['wheat_seeds', 1]]);
+    const existing = spawnBlockDrop([], 'survival', BLOCK.WHEAT_1, at, null, () => 0.99);
+    expect(spawnBlockDrop(existing, 'creative', BLOCK.WHEAT_3, at, null, () => 0.5)).toBe(existing);
+    expect(existing).toHaveLength(1); // input left intact
+  });
+
+  it('B13: farmland drops dirt and short grass keeps itself plus a 12.5% seed', () => {
+    expect(spawnBlockDrop([], 'survival', BLOCK.FARMLAND, at, null).map((d) => d.item)).toEqual(['dirt']);
+    const lucky = spawnBlockDrop([], 'survival', BLOCK.SHORT_GRASS, at, null, () => 0.1);
+    expect(lucky.map((d) => d.item)).toEqual(['wheat_seeds', 'short_grass']);
+    const unlucky = spawnBlockDrop([], 'survival', BLOCK.SHORT_GRASS, at, null, () => 0.9);
+    expect(unlucky.map((d) => d.item)).toEqual(['short_grass']);
+  });
 });
 
 // ---- B4 Task 4：機率掉落（樹葉 0.5% 蘋果） ------------------------------

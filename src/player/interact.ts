@@ -11,6 +11,8 @@ import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import { spawnDrop, dropItemFor, chanceDropFor, gravelDropFor, type DropEntity } from '../world/drops';
+// B13：小麥的階段與收成規則在 farming.ts（純邏輯；這裡只組裝掉落）。
+import { wheatHarvestFor, wheatStageOf } from '../world/farming';
 import { damageMob, MOB_HALF_WIDTH, MOB_HITBOX_HEIGHT, type Mob } from '../world/mobs';
 
 /** Block broken (Task 7) → spawn a world drop at `pos` (block centre) instead
@@ -42,6 +44,17 @@ export function spawnBlockDrop(
   // 且在機率掉落之前早退（礫石沒有樹葉那種「本體不掉、只有機率掉落」的情形）。
   const gravel = gravelDropFor(blockId, rng);
   if (gravel !== null) return spawnDrop(drops, gravel, 1, pos);
+  // **B13：小麥的收成早退**——成熟掉 1 wheat ＋ 0–3 seeds、未成熟掉 1 seed
+  //（`wheatHarvestFor` 是單一真值）；不會與樹葉的機率掉落重疊（小麥沒有
+  // 機率掉落），所以放在 `chanceDropFor` 之前不會吃掉任何掉落。
+  const wheatStage = wheatStageOf(blockId);
+  if (wheatStage !== null) {
+    const harvest = wheatHarvestFor(wheatStage, rng);
+    let out = drops;
+    if (harvest.wheat > 0) out = spawnDrop(out, 'wheat', harvest.wheat, pos);
+    if (harvest.seeds > 0) out = spawnDrop(out, 'wheat_seeds', harvest.seeds, pos);
+    return out;
+  }
   // **機率掉落先算**：樹葉的 `dropItemFor` 回 null，若把這段排在下面的
   // `if (!item) return …` 之後，樹葉的 0.5% 蘋果**永遠不會發生**（那一格
   // 永遠先被 return 截走）→ 順序是這裡最容易做錯的地方。

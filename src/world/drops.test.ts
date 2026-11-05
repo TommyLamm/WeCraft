@@ -481,6 +481,22 @@ describe('dropItemFor (block → drop mapping, vanilla parity)', () => {
     expect(dropItemFor(BLOCK.DIRT)).toBe('dirt');
   });
 
+  // ---- B13：耕地與小麥 ----
+
+  it('B13: farmland drops dirt and wheat stages map to their harvest items', () => {
+    expect(dropItemFor(BLOCK.FARMLAND)).toBe('dirt');
+    expect(dropItemFor(BLOCK.WHEAT_0)).toBe('wheat_seeds');
+    expect(dropItemFor(BLOCK.WHEAT_1)).toBe('wheat_seeds');
+    expect(dropItemFor(BLOCK.WHEAT_2)).toBe('wheat_seeds');
+    expect(dropItemFor(BLOCK.WHEAT_3)).toBe('wheat');
+  });
+
+  it('B13: short grass has a 12.5% seed chance', () => {
+    expect(chanceDropFor(BLOCK.SHORT_GRASS, () => 0.124)).toBe('wheat_seeds');
+    expect(chanceDropFor(BLOCK.SHORT_GRASS, () => 0.125)).toBeNull();
+    expect(chanceDropFor(BLOCK.SHORT_GRASS, () => 0.99)).toBeNull();
+  });
+
   it('blocks without an item form drop nothing (air, water)', () => {
     expect(dropItemFor(BLOCK.AIR)).toBeNull();
     expect(dropItemFor(BLOCK.WATER)).toBeNull();
