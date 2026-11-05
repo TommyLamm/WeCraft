@@ -94,7 +94,15 @@ describe('food table', () => {
       raw_beef: { food: 3, saturation: 1.8 },
       steak: { food: 8, saturation: 12.8 },
       rotten_flesh: { food: 4, saturation: 0.8 },
+      // B13：麵包（原版 5 飢餓／6 飽食度）
+      bread: { food: 5, saturation: 6 },
     });
+  });
+
+  it('B13: bread restores 5 hunger and 6 saturation', () => {
+    expect(foodFor('bread')).toEqual({ food: 5, saturation: 6 });
+    expect(canEat({ ...createVitals(), hunger: 10 }, 'bread')).toBe(true);
+    expect(canEat({ ...createVitals(), hunger: 20 }, 'bread')).toBe(false);
   });
 
   it('the apple constants stay in sync with the food table', () => {

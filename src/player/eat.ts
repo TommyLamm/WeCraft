@@ -43,6 +43,8 @@ export const FOOD_VALUES: Readonly<Partial<Record<ItemId, FoodDef>>> = {
   raw_beef: { food: 3, saturation: 1.8 },
   steak: { food: 8, saturation: 12.8 },
   rotten_flesh: { food: 4, saturation: 0.8 },
+  // B13：麵包（原版 Bread：5 飢餓／6 飽食度）——農業循環的終點食物。
+  bread: { food: 5, saturation: 6 },
 };
 
 /** 蘋果的食物值 —— **與 `FOOD_VALUES.apple` 相同**（值 4／2.4，同一個來源）。

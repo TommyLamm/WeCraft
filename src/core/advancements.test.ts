@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ADVANCEMENTS,
   checkAdvancements,
   emptyAdvancements,
   sanitizeAdvancements,
@@ -61,6 +62,8 @@ const TRIGGERS: ReadonlyArray<
       [{ type: 'obtain', item: 'wool', mode: 'survival' }],
     ],
   ],
+  ['farmer', [[{ type: 'obtain', item: 'wheat', mode: 'survival' }]]],
+  ['baker', [[{ type: 'obtain', item: 'bread', mode: 'survival' }]]],
   [
     'first_night',
     [[{ type: 'phase', phase: 'night' }, { type: 'phase', phase: 'day' }]],
@@ -97,6 +100,14 @@ describe('checkAdvancements', () => {
       expect(r.state).toBe(state); // unchanged — literally the same state
     }
     expect(state.done).toEqual({});
+  });
+
+  // ---- B13：小麥農夫／麵包師 ----
+
+  it('B13: the advancement table has 19 entries with farmer and baker', () => {
+    expect(ADVANCEMENTS).toHaveLength(19);
+    expect(ADVANCEMENTS.find((a) => a.id === 'farmer')?.icon).toBe('wheat');
+    expect(ADVANCEMENTS.find((a) => a.id === 'baker')?.icon).toBe('bread');
   });
 
   // ---- B4 Task 1：牧場（pasture）進度 ----

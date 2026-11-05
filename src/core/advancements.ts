@@ -21,6 +21,8 @@ export type AdvancementId =
   | 'diamond_tool'
   | 'hot_stuff'
   | 'pasture'
+  | 'farmer'
+  | 'baker'
   | 'tasty'
   | 'monster_hunter'
   | 'first_night';
@@ -49,6 +51,9 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   { id: 'diamond_tool', title: '鑽製工具', description: '合成一把鑽製工具', icon: 'diamond_pickaxe' },
   { id: 'hot_stuff', title: '燃燒吧', description: '從熔爐取出冶煉成品', icon: 'furnace' },
   { id: 'pasture', title: '牧場', description: '取得生肉或羊毛', icon: 'raw_beef' },
+  // B13：農業循環的兩個進度（取得小麥 → 農夫；取得麵包 → 麵包師）。
+  { id: 'farmer', title: '小麥農夫', description: '收成第一株小麥', icon: 'wheat' },
+  { id: 'baker', title: '麵包師', description: '取得麵包', icon: 'bread' },
   { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
   { id: 'monster_hunter', title: '怪物獵人', description: '擊殺一隻怪物', icon: 'stone_sword' },
   { id: 'first_night', title: '度過第一夜', description: '活著看見黎明', icon: 'grass' },
@@ -115,6 +120,9 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   raw_mutton: 'pasture',
   raw_beef: 'pasture',
   wool: 'pasture',
+  // B13：農業——取得小麥（收成或撿起）→ 農夫；取得麵包（合成）→ 麵包師。
+  wheat: 'farmer',
+  bread: 'baker',
 };
 
 /** Apply one game event to the progress state. PURE: the input state is never
