@@ -418,6 +418,47 @@ export function drawAtlas(): AtlasImage {
     return [clamp255(c[0] + edge), clamp255(c[1] + edge), clamp255(c[2] + edge), 255];
   }); // tnt top
 
+  // ---- B13：耕地與小麥四階段（tile 45–49）----
+  // 耕地上表面：不透明泥土底 ＋ 每 4 列一道深色犁溝（固定圖樣；無濕潤變化）。
+  put(T.FARMLAND_TOP, (x, y, r) => {
+    const furrow = y % 4 === 0 ? -30 : 0;
+    const speck = (x * 5 + y * 3) % 11 === 0 ? -12 : 0;
+    const c = vary([134, 96, 67, 255], r, 24);
+    const d = furrow + speck;
+    return [clamp255(c[0] + d), clamp255(c[1] + d), clamp255(c[2] + d), 255];
+  }); // farmland_top
+  // 小麥：莖固定在 x = 5／8／11；階段越高莖越長、頂端越金黃，背景保持透明
+  // （cross pass 的 alphaTest 需要）。
+  put(T.WHEAT_0, (x, y) => {
+    const stem = (x === 5 || x === 8 || x === 11) && y >= 12;
+    return stem ? [92, 160, 62, 255] : [0, 0, 0, 0];
+  }); // wheat stage 0
+  put(T.WHEAT_1, (x, y) => {
+    const stem = (x === 5 || x === 8 || x === 11) && y >= 8;
+    const leaf = (x === 4 || x === 9 || x === 12) && y >= 12 && y <= 13;
+    if (leaf) return [96, 150, 60, 255];
+    return stem ? [92, 160, 62, 255] : [0, 0, 0, 0];
+  }); // wheat stage 1
+  put(T.WHEAT_2, (x, y) => {
+    const stem = (x === 5 || x === 8 || x === 11) && y >= 5;
+    const tip = stem && y <= 7;
+    const leaf = (x === 4 || x === 6 || x === 9 || x === 11) && y >= 10 && y <= 11;
+    if (tip) return [176, 180, 70, 255];
+    if (leaf) return [104, 156, 62, 255];
+    return stem ? [92, 160, 62, 255] : [0, 0, 0, 0];
+  }); // wheat stage 2
+  put(T.WHEAT_3, (x, y) => {
+    const stem = (x === 5 || x === 8 || x === 11) && y >= 3;
+    const grain = stem && y <= 6;
+    const sideGrain =
+      (x === 4 || x === 6 || x === 7 || x === 9 || x === 10 || x === 12) && y >= 2 && y <= 5;
+    const leaf = (x === 4 || x === 6 || x === 9 || x === 11) && y >= 9 && y <= 10;
+    if (grain) return [220, 190, 80, 255];
+    if (sideGrain) return [204, 174, 74, 255];
+    if (leaf) return [104, 156, 62, 255];
+    return stem ? [92, 160, 62, 255] : [0, 0, 0, 0];
+  }); // wheat stage 3
+
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
 }

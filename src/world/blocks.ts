@@ -54,6 +54,14 @@ export const BLOCK = {
   // B11 Task 1：TNT（跨批編號表：本批 = 35；只能往後追加）。舊版（0.13.0）遇到
   // 未知 id 35 時 `getBlockDef(35)` fallback 空氣、不崩（存檔格式不動）。
   TNT: 35,
+  // B13：耕地與小麥四階段（跨批編號表：本批 = 36–40；只能往後追加）。
+  // 兩者都是**狀態方塊、沒有物品形式**（耕地由鋤頭產生、小麥由播種與成長產生）
+  // → 舊版（0.15.0）遇到未知 id 36–40 時 fallback 空氣、不崩（存檔格式不動）。
+  FARMLAND: 36,
+  WHEAT_0: 37,
+  WHEAT_1: 38,
+  WHEAT_2: 39,
+  WHEAT_3: 40,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -131,12 +139,17 @@ export const T = {
   // B11 Task 1：TNT 的兩張 tile（top／side；底面沿用 top——簡化）。
   // 跨批編號：本批 = 43、44 → TILE_COUNT = 45（< ARRAY_LAYERS = 64）。
   TNT_TOP: 43, TNT_SIDE: 44,
+  // B13：耕地上表面與小麥四階段的五張 tile。
+  // 跨批編號：本批 = 45–49 → TILE_COUNT = 50（< ARRAY_LAYERS = 64）；
+  // 耕地側面／底面沿用泥土 tile。
+  FARMLAND_TOP: 45,
+  WHEAT_0: 46, WHEAT_1: 47, WHEAT_2: 48, WHEAT_3: 49,
 } as const;
 
 /** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
- *  (currently `T.TNT_SIDE`), so appending a tile and pointing `TILE_COUNT` at it
+ *  (currently `T.WHEAT_3`), so appending a tile and pointing `TILE_COUNT` at it
  *  is the only change needed to grow the atlas. */
-export const TILE_COUNT = T.TNT_SIDE + 1;
+export const TILE_COUNT = T.WHEAT_3 + 1;
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -217,6 +230,16 @@ const DEFS: Record<number, BlockDef> = {
   // B11 Task 1：TNT（minecraft.wiki/TNT，2026-11-03）：硬度 0、爆炸抗性 0、
   // 任何工具都能瞬破、掉自身、六面紅底白帶貼圖（top／side 兩張，底面沿用 top）。
   35: { id: 35, name: 'tnt', hardness: 0, blastResistance: 0, solid: true, transparent: false, shape: 'cube', top: T.TNT_TOP, side: T.TNT_SIDE, bottom: T.TNT_TOP, requiredTool: null, fastTool: null },
+  // B13：耕地（minecraft.wiki/Farmland，2026-11-05）：硬度 0.6、爆炸抗性 0.6、
+  // 徒手可挖（鏟加速）、上表面是犁溝貼圖、側面／底面沿用泥土；滿格方塊是明示簡化
+  // （原版是 15/16 高）。挖掉掉 dirt（見 drops.ts 的 override）。
+  36: { id: 36, name: 'farmland', hardness: 0.6, blastResistance: 0.6, solid: true, transparent: false, shape: 'cube', top: T.FARMLAND_TOP, side: T.DIRT, bottom: T.DIRT, requiredTool: null, fastTool: 'shovel' },
+  // B13：小麥四階段（cross 型、無碰撞、瞬破、不遮光；沒有物品形式）。
+  // 四個 id 共用名稱 'wheat'，差別只在階段 tile——與 mesher 的 cross pass 相容。
+  37: { id: 37, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_0, side: T.WHEAT_0, bottom: T.WHEAT_0, requiredTool: null, fastTool: null },
+  38: { id: 38, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_1, side: T.WHEAT_1, bottom: T.WHEAT_1, requiredTool: null, fastTool: null },
+  39: { id: 39, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_2, side: T.WHEAT_2, bottom: T.WHEAT_2, requiredTool: null, fastTool: null },
+  40: { id: 40, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_3, side: T.WHEAT_3, bottom: T.WHEAT_3, requiredTool: null, fastTool: null },
 };
 
 export function getBlockDef(id: number): BlockDef {

@@ -513,7 +513,7 @@ describe('buildTextureArray', () => {
     // (alphaTest-proof)
     // 洋紅除錯色只存在於「未畫」的層；用 TILE_COUNT 起算，不要寫死層號
     // （B3 Task 3 的唯一修復點：之後 TILE_COUNT 變化都自動適應）
-    for (const layer of [TILE_COUNT, TILE_COUNT + 1, 47, 63]) {
+    for (const layer of [TILE_COUNT, TILE_COUNT + 1, TILE_COUNT + 2, 63]) {
       for (const [x, y] of [[0, 0], [8, 8], [15, 15]] as const) {
         expect(layerPixel(tex, layer, x, y), `layer ${layer} px ${x},${y}`).toEqual(MAGENTA);
       }
@@ -564,6 +564,36 @@ describe('buildTextureArray', () => {
       expect(opaque, `bed tile ${tile} opaque`).toBe(TILE_PX * TILE_PX);
       expect(magenta, `bed tile ${tile} magenta`).toBeLessThan(TILE_PX * TILE_PX);
     }
+  });
+
+  it('B13: farmland is opaque and each wheat stage is a distinct transparent tile', () => {
+    const atlas = drawAtlas();
+    let farmOpaque = 0;
+    for (let y = 0; y < TILE_PX; y++) {
+      for (let x = 0; x < TILE_PX; x++) {
+        if (tilePixel(atlas, T.FARMLAND_TOP, x, y)[3] === 255) farmOpaque++;
+      }
+    }
+    expect(farmOpaque).toBe(TILE_PX * TILE_PX);
+
+    const signatures: string[] = [];
+    for (const tile of [T.WHEAT_0, T.WHEAT_1, T.WHEAT_2, T.WHEAT_3]) {
+      let transparent = 0;
+      let green = 0;
+      const pixels: number[] = [];
+      for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+          const [r, g, b, a] = tilePixel(atlas, tile, x, y);
+          if (a === 0) transparent++;
+          if (a > 0 && g > r && g > b) green++;
+          pixels.push(r, g, b, a);
+        }
+      }
+      expect(transparent).toBeGreaterThan(0);
+      expect(green).toBeGreaterThan(0);
+      signatures.push(pixels.join(','));
+    }
+    expect(new Set(signatures).size).toBe(4); // 四階段不是同一張圖
   });
 });
 

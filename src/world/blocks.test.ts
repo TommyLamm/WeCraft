@@ -75,6 +75,12 @@ describe('blocks', () => {
       [BLOCK.CHEST, 2.5],
       // B11 Task 1 新增：TNT 硬度 0（原版「can be broken instantly with any tool」）
       [BLOCK.TNT, 0],
+      // B13 新增：耕地 0.6（原版 farmland）、小麥四階段 0（原版作物徒手瞬破）
+      [BLOCK.FARMLAND, 0.6],
+      [BLOCK.WHEAT_0, 0],
+      [BLOCK.WHEAT_1, 0],
+      [BLOCK.WHEAT_2, 0],
+      [BLOCK.WHEAT_3, 0],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -129,6 +135,12 @@ describe('blocks', () => {
       [BLOCK.BED, null, null],
       // B11 Task 1 新增：TNT 任何工具都能瞬破（無門檻、無加速工具）
       [BLOCK.TNT, null, null],
+      // B13 新增：耕地徒手可挖（鏟加速）、小麥四階段徒手瞬破（無門檻、無加速工具）
+      [BLOCK.FARMLAND, null, 'shovel'],
+      [BLOCK.WHEAT_0, null, null],
+      [BLOCK.WHEAT_1, null, null],
+      [BLOCK.WHEAT_2, null, null],
+      [BLOCK.WHEAT_3, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -428,9 +440,9 @@ describe('blocks', () => {
     expect(getBlockDef(BLOCK.DIAMOND_ORE).top).toBe(36);
     expect(getBlockDef(BLOCK.SPRUCE_PLANKS).top).toBe(37);
     expect(getBlockDef(BLOCK.BIRCH_PLANKS).top).toBe(38);
-    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。B11 的 TNT side tile 接在床後面成為
-    // 新的最高 → 絕對值 45；由「the tnt side tile is the last declared tile」把關。
-    expect(TILE_COUNT).toBe(getBlockDef(BLOCK.TNT).side + 1);
+    // TILE_COUNT ＝ 最高 tile ＋ 1（不變式）。精確值由「the wheat stage 3 tile is
+    // the last declared tile」把關（B13 起最高 tile 是 T.WHEAT_3）。
+    expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.TNT).side);
     expect(TILE_COUNT).toBeGreaterThan(getBlockDef(BLOCK.BIRCH_PLANKS).top);
   });
 
@@ -505,10 +517,13 @@ describe('blocks', () => {
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
   });
 
-  it('the tnt side tile is the last declared tile', () => {
-    // 不綁死數字：上游 tile 表變動不會誤報；T.TNT_SIDE 的絕對值（44）由跨批編號表
-    // 與下面的撞號檢查一起把關。兩張 TNT tile 是最後兩個、床緊接在 TNT top 之前。
-    expect(T.TNT_SIDE).toBe(TILE_COUNT - 1);
+  it('the wheat stage 3 tile is the last declared tile', () => {
+    // 不綁死數字：上游 tile 表變動不會誤報；B13 起最高 tile 是 T.WHEAT_3（49），
+    // TILE_COUNT = 50。跨批撞號由各批自己的相鄰檢查把關。
+    expect(T.WHEAT_3).toBe(TILE_COUNT - 1);
+    expect(T.WHEAT_0).toBe(T.WHEAT_3 - 3);
+    expect(T.FARMLAND_TOP).toBe(T.WHEAT_0 - 1);
+    expect(T.TNT_SIDE).toBe(T.FARMLAND_TOP - 1);
     expect(T.BED_SIDE).toBe(T.TNT_TOP - 1);
     expect(T.CHEST).toBe(T.BED_TOP - 1);
     expect(TILE_COUNT).toBeLessThanOrEqual(64); // 紋理陣列 64 層
@@ -536,6 +551,69 @@ describe('blocks', () => {
     // 可放置（合成物、不進 HOTBAR_DEFAULT）
     expect(PLACEABLE).toContain(BLOCK.TNT);
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TNT);
+  });
+
+  // ---- B13：耕地與小麥四階段 ----
+
+  it('B13: farmland and the four wheat stages use appended ids and tiles', () => {
+    expect(BLOCK.FARMLAND).toBe(36);
+    expect(BLOCK.WHEAT_0).toBe(37);
+    expect(BLOCK.WHEAT_1).toBe(38);
+    expect(BLOCK.WHEAT_2).toBe(39);
+    expect(BLOCK.WHEAT_3).toBe(40);
+    expect(T.FARMLAND_TOP).toBe(45);
+    expect(T.WHEAT_0).toBe(46);
+    expect(T.WHEAT_1).toBe(47);
+    expect(T.WHEAT_2).toBe(48);
+    expect(T.WHEAT_3).toBe(49);
+    expect(TILE_COUNT).toBe(50);
+  });
+
+  it('B13: farmland is a full cube and wheat stages are cross plants', () => {
+    const farm = getBlockDef(BLOCK.FARMLAND);
+    expect(farm).toMatchObject({
+      name: 'farmland',
+      hardness: 0.6,
+      blastResistance: 0.6,
+      solid: true,
+      transparent: false,
+      shape: 'cube',
+      top: T.FARMLAND_TOP,
+      side: T.DIRT,
+      bottom: T.DIRT,
+      requiredTool: null,
+      fastTool: 'shovel',
+    });
+    const stages: ReadonlyArray<readonly [number, number]> = [
+      [BLOCK.WHEAT_0, T.WHEAT_0],
+      [BLOCK.WHEAT_1, T.WHEAT_1],
+      [BLOCK.WHEAT_2, T.WHEAT_2],
+      [BLOCK.WHEAT_3, T.WHEAT_3],
+    ];
+    for (const [id, tile] of stages) {
+      const def = getBlockDef(id);
+      expect(def).toMatchObject({
+        name: 'wheat',
+        hardness: 0,
+        blastResistance: 0,
+        solid: false,
+        transparent: true,
+        shape: 'cross',
+        top: tile,
+        side: tile,
+        bottom: tile,
+        requiredTool: null,
+        fastTool: null,
+      });
+      expect(isCross(id)).toBe(true);
+      expect(isTargetable(id)).toBe(true);
+    }
+  });
+
+  it('B13: farmland and wheat have no item form and are not placeable', () => {
+    for (const id of [BLOCK.FARMLAND, BLOCK.WHEAT_0, BLOCK.WHEAT_1, BLOCK.WHEAT_2, BLOCK.WHEAT_3]) {
+      expect(PLACEABLE).not.toContain(id);
+    }
   });
 
   it('the torch tile does not collide with the chest tile', () => {

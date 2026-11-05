@@ -56,6 +56,12 @@ describe('materialGroup', () => {
       [BLOCK.BED]: 'wood',
       // B11 Task 1：TNT 的 sound type 是 grass（minecraft.wiki/TNT infobox）
       [BLOCK.TNT]: 'grass',
+      // B13：耕地是泥土聲；小麥是草的聲音（原版 crops 也是 grass sound type）
+      [BLOCK.FARMLAND]: 'dirt',
+      [BLOCK.WHEAT_0]: 'grass',
+      [BLOCK.WHEAT_1]: 'grass',
+      [BLOCK.WHEAT_2]: 'grass',
+      [BLOCK.WHEAT_3]: 'grass',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

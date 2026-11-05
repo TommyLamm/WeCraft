@@ -76,6 +76,12 @@ const GROUP_BY_BLOCK: Record<number, MaterialGroup> = {
   [BLOCK.BED]: 'wood',
   // B11 Task 1：TNT → 原版 TNT 的 sound type 就是 grass（minecraft.wiki/TNT infobox）。
   [BLOCK.TNT]: 'grass',
+  // B13：耕地是泥土聲；小麥四階段是草的聲音（原版 crops 的 sound type 也是 grass）。
+  [BLOCK.FARMLAND]: 'dirt',
+  [BLOCK.WHEAT_0]: 'grass',
+  [BLOCK.WHEAT_1]: 'grass',
+  [BLOCK.WHEAT_2]: 'grass',
+  [BLOCK.WHEAT_3]: 'grass',
 };
 
 export function materialGroup(blockId: number): MaterialGroup {

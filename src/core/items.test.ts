@@ -40,6 +40,15 @@ const BLOCK_ITEMS: ItemId[] = [
   // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）
   'tnt',
 ];
+/** B13：耕地與小麥四階段是狀態方塊，刻意沒有物品形式。 */
+const BLOCK_ONLY_STATES: ReadonlySet<number> = new Set([
+  BLOCK.FARMLAND,
+  BLOCK.WHEAT_0,
+  BLOCK.WHEAT_1,
+  BLOCK.WHEAT_2,
+  BLOCK.WHEAT_3,
+]);
+
 /** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
 const B5_TOOL_ITEMS: ItemId[] = [
   'wooden_shovel', 'stone_shovel', 'iron_shovel',
@@ -123,11 +132,16 @@ describe('items', () => {
     // 總數 54（36 既有 ＋ B3 Task 4 的 5 ＋ B4 Task 1 的 13）—— TOTAL_ITEM_COUNT 是單一真相
     expect(ALL_ITEMS.length).toBe(TOTAL_ITEM_COUNT);
     expect(new Set(ALL_ITEMS).size).toBe(ALL_ITEMS.length);
-    // real guard: every block except air and block-only water maps to an item
+    // real guard: every block except air, block-only water and the B13 state
+    // blocks (farmland/wheat have no item form by design) maps to an item
     for (const id of Object.values(BLOCK)) {
-      if (id === BLOCK.AIR || id === BLOCK.WATER) continue;
+      if (id === BLOCK.AIR || id === BLOCK.WATER || BLOCK_ONLY_STATES.has(id)) continue;
       expect(itemFromBlock(id), `block ${id} has no item`).not.toBeNull();
     }
+  });
+
+  it('B13: the farming state blocks deliberately have no item form', () => {
+    for (const id of BLOCK_ONLY_STATES) expect(itemFromBlock(id)).toBeNull();
   });
 
   it('ALL_ITEM_IDS is the canonical list: no dupes, same set as the union', () => {
