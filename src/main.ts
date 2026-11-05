@@ -1013,6 +1013,11 @@ function tryFarmingAction(hit: RayHit): boolean {
   }
 
   if (held.item === 'wheat_seeds') {
+    // 世界頂層（耕地疊到 y=255）的上方格在體外：`getBlock` 越界回空氣 →
+    // `canPlantWheat` 會誤過，但 `setBlock(x, 256, …)` 必拒絕。先擋在**扣款
+    // 之前**，否則種子會先被扣掉卻寫不進世界（no pay, no place 的逆向）；
+    // 回 false 讓呼叫端落回放置（種子沒有方塊形式 → no-op，不吞右鍵）。
+    if (hit.y + 1 >= CHUNK_HEIGHT) return false;
     if (!canPlantWheat(held.item, targetId, aboveId)) return false;
     if (!inventory.spendFromSlot(selected, 1)) return false;
     world.setBlock(hit.x, hit.y + 1, hit.z, BLOCK.WHEAT_0);

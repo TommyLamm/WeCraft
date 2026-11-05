@@ -1136,6 +1136,18 @@ describe('main.ts 接線（B13：農業）', () => {
     expect(body).toContain('damageHeldTool(1)');
     expect(functionBody('playFarmingSound')).toContain("audio.play('dig', 'dirt'");
   });
+
+  it('planting refuses out-of-bounds above cells before spending the seed', () => {
+    // 批末審查（I-1）：世界頂層（耕地疊到 y=255）的作物格超過世界高度——
+    // getBlock 越界回空氣會讓 canPlantWheat 誤過，但 setBlock 必拒絕。
+    // 守衛必須存在、且**在扣款之前**，否則種子先被扣掉卻寫不進世界。
+    const body = functionBody('tryFarmingAction');
+    const guardAt = body.indexOf('hit.y + 1 >= CHUNK_HEIGHT');
+    const spendAt = body.indexOf('spendFromSlot(selected, 1)');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(spendAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(spendAt);
+  });
 });
 
 // ---- B9 最終審查修復：組裝根的行為釘子 ---------------------------------------

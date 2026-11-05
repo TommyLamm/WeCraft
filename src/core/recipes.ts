@@ -72,7 +72,7 @@ const LEA: PatternCell = 'leather';
 // 骨粉是 shapeless（`inputs` 吃 ItemId 字面值）→ 不需要 PatternCell 常量。
 const WHEAT: PatternCell = 'wheat';
 
-/** The settled recipe table — exactly 55 entries, checked by tests. */
+/** The settled recipe table — exactly 67 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },

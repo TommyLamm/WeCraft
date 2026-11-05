@@ -623,7 +623,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 1964 tests / 99 files 全綠（效能檔另跑，見下）
+npm test           # vitest run — 1965 tests / 99 files 全綠（效能檔另跑，見下）
 npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
@@ -747,7 +747,7 @@ npm run lint       # eslint .
   36–40 是 append-only → 回退到 0.15.0 時耕地與小麥顯示為空氣、新物品 id 會被舊版
   清洗掉）。已知簡化（滿格耕地、無濕潤貼圖、無踩踏退化、骨粉只催小麥、爆炸小麥只掉
   單一物品、無村莊／堆肥桶）見上方〈0.16.0（B13 農業與骨粉）新增的簡化〉。
-  驗證：**1964 tests / 99 files**、typecheck／lint／build 全綠、perf 過、pinned 工具
+  驗證：**1965 tests / 99 files**、typecheck／lint／build 全綠、perf 過、pinned 工具
   pack＋validate 通過；完整驗證與已知簡化見 `docs/releases/v0.16.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
