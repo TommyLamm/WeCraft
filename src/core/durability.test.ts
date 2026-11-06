@@ -35,6 +35,10 @@ describe('durability', () => {
     for (const [item, max] of cases) expect(maxDurability(item)).toBe(max);
   });
 
+  it('B14: the fishing rod has 64 uses', () => {
+    expect(maxDurability('fishing_rod')).toBe(64);
+  });
+
   it('B13: hoes share the vanilla material durability', () => {
     expect(maxDurability('wooden_hoe')).toBe(59);
     expect(maxDurability('stone_hoe')).toBe(131);

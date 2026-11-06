@@ -69,7 +69,11 @@ export type ItemId =
   // 麵包（3 小麥；食物值 5／6）、骨粉（1 骨頭 → 3；右鍵小麥催熟）。都不是方塊。
   | 'wheat_seeds' | 'wheat' | 'bread' | 'bone_meal'
   // B13：五種鋤（右鍵泥土／草地墾地；耐久同材質工具）。
-  | 'wooden_hoe' | 'stone_hoe' | 'iron_hoe' | 'golden_hoe' | 'diamond_hoe';
+  | 'wooden_hoe' | 'stone_hoe' | 'iron_hoe' | 'golden_hoe' | 'diamond_hoe'
+  // B14：釣魚竿（耐久 64、堆疊 1）＋ 六種魚（生／熟鱸魚與鮭魚、河豚、熱帶魚）。
+  // 魚是「釣魚」玩法的產出（`world/fishing.ts` 的戰利品表），不是方塊。
+  | 'fishing_rod' | 'raw_cod' | 'cooked_cod' | 'raw_salmon'
+  | 'cooked_salmon' | 'pufferfish' | 'tropical_fish';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -120,14 +124,18 @@ const ITEM_IDS: Record<ItemId, true> = {
   // B13：4 個農產／材料 ＋ 5 把鋤
   wheat_seeds: true, wheat: true, bread: true, bone_meal: true,
   wooden_hoe: true, stone_hoe: true, iron_hoe: true, golden_hoe: true, diamond_hoe: true,
+  // B14：釣魚竿 ＋ 6 種魚
+  fishing_rod: true,
+  raw_cod: true, cooked_cod: true, raw_salmon: true,
+  cooked_salmon: true, pufferfish: true, tropical_fish: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 106 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 113 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
  *  ＋ B9 Task 1 補的 3 個生物掉落材料 ＋ B10 補的 3 個（床／燧石／弓）
  *  ＋ B11 補的 2 個（TNT／打火石）＋ B12 補的 16 個盔甲 ＋ B13 補的 9 個
- *  （4 個農產／材料 ＋ 5 把鋤））。 */
+ *  （4 個農產／材料 ＋ 5 把鋤）＋ B14 補的 7 個（釣魚竿 ＋ 6 種魚））。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {
@@ -211,6 +219,8 @@ const STACK_ONE: ReadonlySet<ItemId> = new Set([
   'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots',
   // B13：五把鋤（耐久工具，堆疊 1）。
   'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe',
+  // B14：釣魚竿是耐久工具（64），原版堆疊 1（wiki：Stackable No）。六種魚可堆疊 64。
+  'fishing_rod',
 ]);
 
 export function maxStack(item: ItemId): number {

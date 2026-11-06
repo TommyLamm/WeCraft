@@ -94,6 +94,11 @@ const B13_ITEM_IDS: ItemId[] = [
   'wheat_seeds', 'wheat', 'bread', 'bone_meal',
   'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe',
 ];
+/** B14：釣魚竿（耐久工具）＋ 6 種魚（食用材料；生／熟各兩種 ＋ 河豚 ＋ 熱帶魚）。 */
+const B14_ITEM_IDS: ItemId[] = [
+  'fishing_rod', 'raw_cod', 'cooked_cod', 'raw_salmon',
+  'cooked_salmon', 'pufferfish', 'tropical_fish',
+];
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
@@ -104,6 +109,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...FOOD_ITEMS,
   ...MATERIAL_ITEMS,
   ...B13_ITEM_IDS,
+  ...B14_ITEM_IDS,
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
@@ -118,9 +124,10 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B10 Task 2 再補 2 個（燧石與弓）→ 79。
  *  B11 Task 2 再補 2 個（TNT 的物品形式＋打火石）→ **81**。
  *  B12 再補 16 個（4 材質 × 4 部位盔甲）→ 97。
- *  B13 再補 9 個（4 個農產／材料 ＋ 5 把鋤）→ **106**。
+ *  B13 再補 9 個（4 個農產／材料 ＋ 5 把鋤）→ 106。
+ *  B14 再補 7 個（釣魚竿 ＋ 6 種魚）→ **113**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 106;
+const TOTAL_ITEM_COUNT = 113;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -283,6 +290,26 @@ describe('items', () => {
       expect(maxDurability(id)).toBe(max);
       expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1, dur: max });
     }
+  });
+
+  // ---- B14：釣魚竿與六種魚 ----
+
+  it('B14: fish stack to 64 and the fishing rod is stack-one with 64 durability', () => {
+    for (const id of ['raw_cod', 'cooked_cod', 'raw_salmon', 'cooked_salmon', 'pufferfish', 'tropical_fish'] as const) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(blockFromItem(id)).toBeNull();
+      expect(maxStack(id)).toBe(64);
+      expect(maxDurability(id)).toBe(0);
+    }
+    expect(ALL_ITEM_IDS).toContain('fishing_rod');
+    expect(blockFromItem('fishing_rod')).toBeNull();
+    expect(maxStack('fishing_rod')).toBe(1);
+    expect(maxDurability('fishing_rod')).toBe(64);
+    expect(sanitizeStack({ item: 'fishing_rod', count: 1 })).toEqual({
+      item: 'fishing_rod', count: 1, dur: 64,
+    });
+    expect(stackName('raw_cod')).toBe('Raw Cod');
+    expect(stackName('tropical_fish')).toBe('Tropical Fish');
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

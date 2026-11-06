@@ -21,6 +21,8 @@ export const TOOL_MAX_DURABILITY: Readonly<Partial<Record<ItemId, number>>> = {
   diamond_helmet: 363, diamond_chestplate: 528, diamond_leggings: 495, diamond_boots: 429,
   // B13：五種鋤（與鎬／斧／鏟／劍同一套材質耐久表）。
   wooden_hoe: 59, stone_hoe: 131, iron_hoe: 250, golden_hoe: 32, diamond_hoe: 1561,
+  // B14：釣魚竿（wiki `Fishing Rod`：JE 64；本作每成功收線一次扣 1）。
+  fishing_rod: 64,
 };
 
 export function maxDurability(item: string): number {

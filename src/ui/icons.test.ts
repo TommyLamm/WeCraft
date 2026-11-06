@@ -116,6 +116,19 @@ describe('icons', () => {
     }
   });
 
+  it('every B14 non-block item id has its own icon branch', () => {
+    const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
+    const B14_NEEDS_ART = [
+      'fishing_rod', 'raw_cod', 'cooked_cod', 'raw_salmon',
+      'cooked_salmon', 'pufferfish', 'tropical_fish',
+    ] as const;
+    expect(B14_NEEDS_ART).toHaveLength(7);
+    for (const id of B14_NEEDS_ART) {
+      expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
+      expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
+    }
+  });
+
   it('no item id falls through to the grey placeholder', () => {
     // 比 B4 的 12 個更廣的守門：**所有**沒有方塊物品形式的 id 都必須有專屬分支，
     // 否則 `itemIcon` 會掉進 `default:` 的灰色方塊（批次末驗收要求「每個新 id 都有圖示」）。

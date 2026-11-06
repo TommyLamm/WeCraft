@@ -192,6 +192,47 @@ function drawArmorArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
   ctx.fillRect(17, 7, 8, 2);
 }
 
+/** B14：魚形圖示（cod／salmon 共用）：橢圓魚身 ＋ 尾鰭 ＋ 背鰭 ＋ 眼睛。
+ *  `cooked` 版本多畫幾條淺色烤痕；`width` 讓 salmon 比 cod 寬一點。 */
+function drawFishArt(
+  ctx: CanvasRenderingContext2D,
+  body: string,
+  fin: string,
+  cooked: boolean,
+  width = 9,
+): void {
+  // 尾鰭
+  ctx.fillStyle = fin;
+  ctx.beginPath();
+  ctx.moveTo(8, 16);
+  ctx.lineTo(2, 10);
+  ctx.lineTo(2, 22);
+  ctx.closePath();
+  ctx.fill();
+  // 背鰭
+  ctx.beginPath();
+  ctx.moveTo(13, 11);
+  ctx.lineTo(17, 6);
+  ctx.lineTo(20, 11);
+  ctx.closePath();
+  ctx.fill();
+  // 魚身
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(17, 16, width, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#202020';
+  ctx.beginPath();
+  ctx.arc(23, 14, 1.6, 0, Math.PI * 2);
+  ctx.fill();
+  if (cooked) {
+    ctx.fillStyle = '#7a4a22';
+    ctx.fillRect(11, 13, 4, 1.5);
+    ctx.fillRect(16, 18, 4, 1.5);
+  }
+}
+
 function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
   switch (item) {
     case 'stick': {
@@ -699,6 +740,92 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fillRect(12, 14, 2, 2);
       ctx.fillRect(18, 12, 2, 2);
       ctx.fillRect(15, 18, 2, 2);
+      break;
+    }
+    // ---- B14：釣魚竿與六種魚 ----
+    case 'fishing_rod': {
+      // 木色斜竿 ＋ 白色釣線 ＋ 小圓捲線器。
+      line(ctx, 7, 27, 21, 8, WOOD, 3);
+      line(ctx, 21, 8, 26, 23, '#f2f2f2', 1.5);
+      ctx.fillStyle = '#5a5a5a';
+      ctx.beginPath();
+      ctx.arc(13, 18, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#c9ccd4';
+      ctx.beginPath();
+      ctx.arc(13, 18, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'raw_cod': {
+      // 生鱸魚：灰藍魚身 ＋ 深藍尾鰭。
+      drawFishArt(ctx, '#8ea3b5', '#6d8299', false);
+      break;
+    }
+    case 'cooked_cod': {
+      // 烤鱸魚：棕褐魚身 ＋ 深色尾鰭 ＋ 烤痕。
+      drawFishArt(ctx, '#b5713c', '#8a5227', true);
+      break;
+    }
+    case 'raw_salmon': {
+      // 生鮭魚：橘紅魚身（比 cod 寬）＋ 紅尾鰭。
+      drawFishArt(ctx, '#d9683f', '#b04b2a', false, 11);
+      break;
+    }
+    case 'cooked_salmon': {
+      // 烤鮭魚：深橘褐魚身 ＋ 烤痕。
+      drawFishArt(ctx, '#c97a3a', '#96552a', true, 11);
+      break;
+    }
+    case 'pufferfish': {
+      // 河豚：圓形黃綠身體 ＋ 周圍短刺 ＋ 小尾。
+      ctx.fillStyle = '#c8d24a';
+      ctx.beginPath();
+      ctx.arc(16, 17, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#8f9a2e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const cx = 16 + Math.cos(a) * 8;
+        const cy = 17 + Math.sin(a) * 8;
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(16 + Math.cos(a) * 10.5, 17 + Math.sin(a) * 10.5);
+      }
+      ctx.stroke();
+      ctx.fillStyle = '#c8d24a';
+      ctx.beginPath();
+      ctx.moveTo(8, 17);
+      ctx.lineTo(3, 13);
+      ctx.lineTo(3, 21);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#202020';
+      ctx.beginPath();
+      ctx.arc(20, 14, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'tropical_fish': {
+      // 熱帶魚：小三角身體 ＋ 黃藍直條紋。
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(4, 16);
+      ctx.lineTo(27, 7);
+      ctx.lineTo(27, 25);
+      ctx.closePath();
+      ctx.fillStyle = '#f0c83c';
+      ctx.fill();
+      ctx.clip();
+      ctx.fillStyle = '#4f8fd6';
+      ctx.fillRect(12, 4, 4, 24);
+      ctx.fillRect(19, 4, 3, 24);
+      ctx.restore();
+      ctx.fillStyle = '#202020';
+      ctx.beginPath();
+      ctx.arc(24, 12, 1.5, 0, Math.PI * 2);
+      ctx.fill();
       break;
     }
     default: {

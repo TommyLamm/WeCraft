@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming: exactly 67) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming + B14 fishing rod: exactly 68) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -71,8 +71,12 @@ const LEA: PatternCell = 'leather';
 // B13：農業的格常量（鋤頭的材質格沿用既有 P／C／I／G／D；麵包用小麥）。
 // 骨粉是 shapeless（`inputs` 吃 ItemId 字面值）→ 不需要 PatternCell 常量。
 const WHEAT: PatternCell = 'wheat';
+// B14：釣魚竿（3 木棍＋2 線，原版斜向形狀）。`S`（木棍）與 `STR`（線）已存在，
+// 不重複宣告——這裡只是把「哪些格要什麼」講清楚。
+const ROD_STICK: PatternCell = 'stick';
+const ROD_STRING: PatternCell = 'string';
 
-/** The settled recipe table — exactly 67 entries, checked by tests. */
+/** The settled recipe table — exactly 68 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -614,6 +618,17 @@ export const RECIPES: ReadonlyArray<Recipe> = [
     kind: 'shapeless',
     inputs: ['bone'],
     result: { item: 'bone_meal', count: 3 },
+  },
+  // B14：釣魚竿（原版 3×3 斜向形狀：3 木棍＋2 線；高度 3 → 需工作台 3×3）。
+  {
+    id: 'fishing_rod',
+    kind: 'shaped',
+    pattern: [
+      [null, null, ROD_STICK],
+      [null, ROD_STICK, ROD_STRING],
+      [ROD_STICK, null, ROD_STRING],
+    ],
+    result: { item: 'fishing_rod', count: 1 },
   },
 ];
 

@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 55). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 68). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 67 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(67);
+  it('holds exactly the 68 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(68);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -72,6 +72,8 @@ describe('recipe table', () => {
         'golden_hoe', 'golden_hoe_mirrored',
         'diamond_hoe', 'diamond_hoe_mirrored',
         'bread', 'bone_meal',
+        // B14：釣魚竿
+        'fishing_rod',
       ].sort(),
     );
   });
@@ -188,6 +190,21 @@ describe('recipe table', () => {
     if (meal.kind !== 'shapeless') throw new Error('bone_meal must be shapeless');
     expect(meal.inputs).toEqual(['bone']);
     expect(meal.result).toEqual({ item: 'bone_meal', count: 3 });
+  });
+
+  // ---- B14：釣魚竿 ----
+
+  it('B14: the fishing rod is 3 sticks and 2 string in the vanilla diagonal', () => {
+    const r = recipe('fishing_rod');
+    expect(r.kind).toBe('shaped');
+    expect(r.result).toEqual({ item: 'fishing_rod', count: 1 });
+    if (r.kind === 'shaped') {
+      expect(r.pattern).toEqual([
+        [null, null, 'stick'],
+        [null, 'stick', 'string'],
+        ['stick', null, 'string'],
+      ]);
+    }
   });
 });
 
