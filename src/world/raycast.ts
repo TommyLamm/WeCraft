@@ -1,5 +1,6 @@
 import type { World } from './world';
 import type { GameMode } from '../core/inventory';
+import { BLOCK } from './blocks';
 
 export interface RayHit {
   x: number;
@@ -38,6 +39,14 @@ export interface RaycastOptions {
    *  - `t` 仍從**原點**起算 → reach 預算不因跳過而改變。
    *  - 原點格之外沒有任何可命中方塊 → 回傳 `null`（不會退回去命中原點格）。 */
   skipOriginBlock?: boolean;
+  /** **B14：把水也算成可命中**（釣魚拋線專用；預設 `false` ＝ 既有行為，
+   *  射線照原樣穿過水面）。
+   *
+   *  **為什麼需要**：水面在 `World.isTargetable` 裡不可命中（挖掘／放置都該
+   *  穿過水看到水底），但釣魚竿需要「瞄到水的那一格」才能拋線。與其改
+   *  `World.isTargetable`（會污染所有互動系統），不如在射線層開一個**只給
+   *  釣魚用**的選項：其他呼叫端完全不傳這個選項 → 行為一字不變。 */
+  includeWater?: boolean;
 }
 
 /** Parametric ray vs AABB (slab method): entry `t` of the first intersection
@@ -82,7 +91,8 @@ export function rayAabbEntry(
  *  必須能被瞄準、挖掘（硬度 0 → 瞬破，見 `interact.ts`）。水與空氣**不可命中**
  *  ——射線直接穿過水面。
  *
- *  `options.skipOriginBlock`：跳過原點所在的那一格（見 `RaycastOptions`）。 */
+ *  `options.skipOriginBlock`：跳過原點所在的那一格（見 `RaycastOptions`）。
+ *  `options.includeWater`：把水也算成可命中（**釣魚拋線專用**，見 `RaycastOptions`）。 */
 export function raycast(
   world: World,
   origin: { x: number; y: number; z: number },
@@ -96,6 +106,14 @@ export function raycast(
   const dy = dir.y / len;
   const dz = dir.z / len;
   const skipOriginBlock = options?.skipOriginBlock === true;
+  // B14：只有明確傳入 `includeWater: true` 才把水當成可命中 —— 預設路徑
+  // （挖掘／放置／生物瞄準）完全不變，射線照原樣穿過水面。
+  const includeWater = options?.includeWater === true;
+
+  /** 這一格算不算命中：可命中方塊（實心 ＋ cross 植被），加上（釣魚專用）
+   *  水。**不要**改成改 `World.isTargetable` —— 那會讓所有互動都能挖水。 */
+  const isHit = (x: number, y: number, z: number): boolean =>
+    world.isTargetable(x, y, z) || (includeWater && world.getBlock(x, y, z) === BLOCK.WATER);
 
   let x = Math.floor(origin.x);
   let y = Math.floor(origin.y);
@@ -136,7 +154,7 @@ export function raycast(
   // 唯一會把原點格放進花叢的是**第三身相機**，而那條路徑 `skipOriginBlock`
   // 本就跳過原點格 → **兩種起點分支（`isSolid`／`isTargetable`）在實機上等價**，
   // 保持現狀即可（改回去不會改變任何玩家可見的行為，只會造成多餘 diff）。
-  if (world.isTargetable(x, y, z) && !skipOriginBlock) {
+  if (isHit(x, y, z) && !skipOriginBlock) {
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
     const az = Math.abs(dz);
@@ -169,8 +187,9 @@ export function raycast(
       nz = -stepZ;
     }
     if (t > maxDist) break;
-    if (world.isTargetable(x, y, z)) {
+    if (isHit(x, y, z)) {
       // 可命中 ＝ 實心方塊 ＋ cross 植被；水／空氣不可命中（射線穿過水面）
+      // —— 但 B14 的 `includeWater: true` 會把水也算進來（釣魚拋線專用）。
       return { x, y, z, nx, ny, nz, t };
     }
   }

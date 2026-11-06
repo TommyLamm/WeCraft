@@ -42,6 +42,31 @@ describe('raycast', () => {
     expect(hit).toBeNull();
   });
 
+  // ---- B14：釣魚專用的水面命中 ----
+
+  it('B14: includeWater makes the ray stop at the water surface (default stays null)', () => {
+    const w = setup();
+    w.setBlock(0, 64, -2, BLOCK.WATER);
+    const origin = { x: 0.5, y: 64.5, z: 0.5 };
+    const dir = { x: 0, y: 0, z: -1 };
+    expect(raycast(w, origin, dir, 10)).toBeNull();
+    const hit = raycast(w, origin, dir, 10, { includeWater: true });
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBe(-2);
+    expect(hit!.nz).toBe(1);
+  });
+
+  it('B14: includeWater still stops at an earlier solid block', () => {
+    const w = setup();
+    w.setBlock(0, 64, -2, BLOCK.STONE);
+    w.setBlock(0, 64, -4, BLOCK.WATER);
+    const hit = raycast(
+      w, { x: 0.5, y: 64.5, z: 0.5 }, { x: 0, y: 0, z: -1 }, 10,
+      { includeWater: true },
+    );
+    expect(hit!.z).toBe(-2);
+  });
+
   it('hits glass (solid)', () => {
     const w = setup();
     w.setBlock(0, 64, -2, BLOCK.GLASS);
