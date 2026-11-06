@@ -1085,13 +1085,13 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
 // 計數 → 刪掉任何一處扣損接線（挖完方塊／敵對命中／被動命中）都不會被定位。
 // 同一套 `countOf`（剔除註解後比對）→ 把接線「註解掉」也躲不過。
 describe('main.ts 接線（B7：耐久扣損呼叫點）', () => {
-  it('all eight damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow / flint-and-steel / till)', () => {
+  it('all nine damageHeldTool(1) call sites stay wired (dig / zombie-skeleton / creeper / spider / passive / bow / flint-and-steel / till / fishing catch)', () => {
     // 實測：敵對生物命中、苦力怕命中（B9）、蜘蛛命中（B9）、被動生物命中、
     // 挖完方塊、射箭（B10）、點燃 TNT（B11）各一處；`function damageHeldTool(`
     // 的定義不是呼叫點。
     // B7 當時是 3 處；B9 新增苦力怕／蜘蛛兩條攻擊分支 → 5；B10 新增弓 → 6；
-    // B11 新增打火石點燃 → 7；B13 新增鋤地 → 8。
-    expect(countOf('damageHeldTool(1)')).toBe(8);
+    // B11 新增打火石點燃 → 7；B13 新增鋤地 → 8；B14 新增釣魚成功收線 → 9。
+    expect(countOf('damageHeldTool(1)')).toBe(9);
   });
 });
 
@@ -1216,7 +1216,7 @@ describe('main.ts 接線（B10：弓與玩家箭）', () => {
   it('B10: the bow is wired through charge -> spawnPlayerArrow -> durability', () => {
     expect(countOf('spawnPlayerArrow(')).toBe(1);
     expect(countOf('bowShotFor(')).toBe(1);
-    expect(countOf('damageHeldTool(1)')).toBe(8); // B7 的 5 處 ＋ 弓（B10）＋ 打火石（B11）＋ 鋤地（B13）
+    expect(countOf('damageHeldTool(1)')).toBe(9); // B7 的 5 處 ＋ 弓（B10）＋ 打火石（B11）＋ 鋤地（B13）＋ 釣魚收線（B14）
     expect(playingBranchBody()).toContain('heldIsBow()');
     expect(playingBranchBody()).toContain('viewmodel.setDraw(');
   });
@@ -1412,5 +1412,74 @@ describe('main.ts 接線（B11：TNT 與打火石）', () => {
     expect(functionBody('applyCloudData')).toContain('normalizeArmorSet(data.armor)');
     expect(functionBody('saveCloudNow')).toContain('armor');
     expect(mainSource).toContain('playerModel.setArmor(armor)');
+  });
+});
+
+// ---- B14：釣魚的接線（右鍵分流、每幀推進、發獎與渲染） ------------------------
+describe('main.ts 接線（B14：釣魚）', () => {
+  it('the rod branch is after block use / before bow / food / placement', () => {
+    const body = blockAfter('if (wantPlace) {');
+    const fishingAt = body.indexOf('heldIsFishingRod()');
+    expect(fishingAt).toBeGreaterThan(-1);
+    for (const marker of [
+      'hitBlock === BLOCK.CRAFTING_TABLE',
+      'hitBlock === BLOCK.FURNACE',
+      'hitBlock === BLOCK.CHEST',
+      'hitBlock === BLOCK.BED',
+      'hitBlock === BLOCK.TNT',
+    ]) {
+      expect(body.indexOf(marker), `${marker} must run before the rod`).toBeLessThan(fishingAt);
+    }
+    expect(fishingAt).toBeLessThan(body.indexOf('heldIsBow()'));
+    expect(fishingAt).toBeLessThan(body.indexOf('heldIsFood()'));
+  });
+
+  it('an active line reels before every block interaction, even with no hit', () => {
+    const body = blockAfter('if (wantPlace) {');
+    const reelAt = body.indexOf('tryReelFishing()');
+    expect(reelAt).toBeGreaterThanOrEqual(0);
+    expect(reelAt).toBeLessThan(body.indexOf('hitBlock === BLOCK.CRAFTING_TABLE'));
+    expect(body).toContain('if (fishing)');
+  });
+
+  it('the cast ray is water-only within the fishing range', () => {
+    const body = functionBody('tryCastFishing');
+    expect(body).toContain('includeWater: true');
+    expect(body).toContain('FISHING_CAST_RANGE');
+    expect(body).toContain('BLOCK.WATER');
+    expect(body).toContain('beginFishing(');
+    expect(body).toContain('rollFishingWait(');
+  });
+
+  it('the catch path gives the item, spawns overflow, and only then damages the rod', () => {
+    const body = functionBody('tryReelFishing');
+    const giveAt = body.indexOf('giveItem(');
+    const overflowAt = body.indexOf('spawnDrop(');
+    const durAt = body.indexOf('damageHeldTool(1)');
+    expect(giveAt).toBeGreaterThanOrEqual(0);
+    expect(overflowAt).toBeGreaterThan(giveAt);
+    expect(durAt).toBeGreaterThan(overflowAt);
+    expect(body).toContain('reelFishing(');
+  });
+
+  it('the playing loop steps the line once and cancels on slot / distance / water loss', () => {
+    const playing = playingBranchBody();
+    expect(countOf('stepFishing(')).toBe(1);
+    expect(playing).toContain('selected !== fishing.slot');
+    expect(playing).toContain('FISHING_CAST_RANGE');
+    expect(playing).toContain('BLOCK.WATER');
+    expect(playing).toContain('tryReelFishing');
+  });
+
+  it('the fishing line is rendered every frame and only while playing', () => {
+    expect(countOf('fishingRenderer.sync(')).toBe(1);
+    expect(mainSource).toContain("state === 'playing' && fishing");
+    expect(mainSource).toContain('fishingRenderer.sync(');
+  });
+
+  it('leaving playing and resetting a session both drop the line', () => {
+    const setStateBody = functionBody('setState');
+    expect(setStateBody).toContain('fishing = null');
+    expect(functionBody('resetSessionEntities')).toContain('fishing = null');
   });
 });

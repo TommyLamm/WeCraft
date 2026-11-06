@@ -9,6 +9,8 @@ import { createPassiveMobRenderer } from './render/passive-mobs';
 import { createB9MobRenderer } from './render/b9-mobs';
 // B11 Task 7：引信 TNT 的貼圖方塊渲染（0.5 秒閃爍；材質在 render/tnt.ts）。
 import { createTntRenderer } from './render/tnt';
+// B14：釣魚線＋浮標（暫態；不跨存檔）。
+import { createFishingRenderer } from './render/fishing';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
@@ -22,6 +24,15 @@ import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from './world/chunk';
 import { computeChunkLight, computeChunkLightOnly, computeChunkTopY, markLightDirty, popUnsupportedCrosses, popUnsupportedTorches, skyLightScale, sortLightQueueByDistance, spawnLightAt, takeLightBudget } from './world/lighting';
 import { TerrainWorkerClient } from './world/worker-client';
 import { raycast, reachFor, type RayHit } from './world/raycast';
+// B14：釣魚的純邏輯（等待／魚訊／戰利品；規則本體在 world/fishing.ts）。
+import {
+  FISHING_CAST_RANGE,
+  beginFishing,
+  reelFishing,
+  rollFishingWait,
+  stepFishing,
+  type FishingState,
+} from './world/fishing';
 import { BLOCK } from './world/blocks';
 import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
@@ -450,6 +461,8 @@ const passiveRenderer = createPassiveMobRenderer(gs.scene);
 const b9Renderer = createB9MobRenderer(gs.scene);
 // B11 Task 7：引信 TNT 的貼圖方塊（0.5 秒閃爍；材質與 DataTexture 在 render/tnt.ts）
 const tntRenderer = createTntRenderer(gs.scene);
+// B14：釣魚線＋浮標（暫態；不跨存檔——離開遊戲就沒有線）。
+const fishingRenderer = createFishingRenderer(gs.scene);
 // Task 4: break/dig debris — billboard quads over the shared block texture array
 const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
@@ -1059,6 +1072,72 @@ function heldIsFlintAndSteel(): boolean {
   return slots[selected]?.item === 'flint_and_steel';
 }
 
+/** B14：手上拿的是不是釣魚竿。 */
+function heldIsFishingRod(): boolean {
+  return slots[selected]?.item === 'fishing_rod';
+}
+
+/** B14：對**水面**拋線。
+ *
+ *  水面用 `includeWater` 專用射線——一般挖掘／放置仍穿過水（`raycast` 的預設
+ *  行為一字不變）。只有真的打到水格才拋線；射線中途先撞到實心方塊 → 不拋。
+ *  射程 16 格（`FISHING_CAST_RANGE`）；等待秒數由純邏輯擲出（5–30 秒）。 */
+function tryCastFishing(
+  from: { x: number; y: number; z: number },
+  aim: { x: number; y: number; z: number },
+): void {
+  if (fishing) return; // 已經有一條線 → 右鍵是收線，不是再拋一條
+  const waterHit = raycast(world, from, aim, FISHING_CAST_RANGE, { includeWater: true });
+  if (!waterHit) return;
+  if (world.getBlock(waterHit.x, waterHit.y, waterHit.z) !== BLOCK.WATER) return;
+  const bobber = {
+    x: waterHit.x + 0.5,
+    y: waterHit.y + 0.9, // 水面格的上緣（方塊格高 1 → 0.9 讓浮標浮在水上）
+    z: waterHit.z + 0.5,
+  };
+  fishing = {
+    state: beginFishing(rollFishingWait()),
+    bobber,
+    slot: selected,
+  };
+  viewmodel.startSwing();
+  audio.playFishingSplash({ pos: bobber, listener: player.position });
+  hudHint.show('魚線已拋出');
+}
+
+/** B14：右鍵收線。**魚訊窗口內**才有漁獲；其他時候只是把線收回來。
+ *
+ *  **順序＝行為**：先發獎（進背包／溢出掉在腳邊）、**最後才扣 1 耐久** ——
+ *  最後一次使用把竿用壞時，魚仍然拿到手（與 B10 弓箭「先射箭再扣耐久」、
+ *  B11 打火石「先點燃再扣耐久」同一條規則）。空收線與錯過魚訊都不扣。 */
+function tryReelFishing(): void {
+  if (!fishing) return;
+  const caught = reelFishing(fishing.state, Math.random);
+  const bobber = fishing.bobber;
+  fishing = null;
+  viewmodel.startSwing();
+  if (!caught) {
+    audio.playFishingSplash({ pos: bobber, listener: player.position });
+    hudHint.show('沒有魚上鉤');
+    return;
+  }
+  const overflow = giveItem(caught.item, caught.count);
+  if (overflow > 0) {
+    drops = spawnDrop(drops, caught.item, overflow, {
+      x: player.position.x,
+      y: player.position.y + 0.5,
+      z: player.position.z,
+    });
+    bus.emit('drops-changed', {});
+    hudHint.show('背包滿了，漁獲掉在腳邊');
+  } else {
+    hudHint.show(`釣到了 ${stackName(caught.item)} ×${caught.count}`);
+  }
+  audio.playFishingSplash({ pos: bobber, listener: player.position });
+  damageHeldTool(1); // 先發獎、再扣耐久：最後一次使用仍拿到魚
+  hud.setHotbar(slots, selected);
+}
+
 /** B11：手持打火石右鍵 TNT → **點燃**（原版：方塊被換成 primed TNT 實體，
  *  引信 80 tick＝4 秒）。規則本體在 `world/tnt.ts`；這裡是組裝根。
  *
@@ -1216,6 +1295,14 @@ let arrows: Arrow[] = [];
 const playerArrowKills = new Set<number>();
 /** B10：拉弓中的蓄力狀態（slot ＝開始拉弓時的選取格；換格即取消）。 */
 let bowDraw: { charge: number; slot: number } | null = null;
+/** B14：拋出的釣魚線。`slot` ＝拋線時的選取格；換格即取消。
+ *  **不跨存檔**（浮標與魚訊是暫態；重開遊戲不得留下幽靈釣魚線）。 */
+interface ActiveFishing {
+  state: FishingState;
+  bobber: { x: number; y: number; z: number };
+  slot: number;
+}
+let fishing: ActiveFishing | null = null;
 /** B10：床設定的重生點（方塊座標）；`null`＝回世界出生點。 */
 let bedSpawn: SpawnPoint | null = null;
 /** B10：睡眠已經過的秒數（進入 'sleeping' 時歸零；累積到 SLEEP_DURATION_SEC 醒來）。 */
@@ -2352,6 +2439,9 @@ function setState(next: GameState): void {
     // B10：離開 playing 收掉拉弓狀態（不發射——暫停／死亡不該送出一發）。
     bowDraw = null;
     viewmodel.setDraw(null);
+    // B14：離開 playing → 收掉釣魚線（浮標與魚訊都是暫態；離開遊戲不該留下
+    // 幽靈釣魚線，回到遊戲也不會自動繼續等魚）。
+    fishing = null;
   }
   state = next;
   menus.hideAll();
@@ -3154,6 +3244,8 @@ function resetSessionEntities(): void {
   // B13：農業節拍與游標不跨場——新局／讀檔從第一個 modified 項目重新輪替。
   farmAcc = 0;
   farmCursor = 0;
+  // B14：釣魚線不跨場（與引信 TNT 同一級：暫態實體不進存檔）。
+  fishing = null;
 }
 
 /** New Game = a FRESH world (plan 14.3 "new → fresh state"): sessions within
@@ -4677,7 +4769,11 @@ gs.renderer.setAnimationLoop(() => {
         // and the click falls through to the normal place path (place AGAINST
         // the table when holding a block, otherwise nothing).
         const hitBlock = hit ? world.getBlock(hit.x, hit.y, hit.z) : null;
-        if (
+        if (fishing) {
+          // B14：線已拋出 → 右鍵**一律收線**（即使沒瞄到方塊、瞄的是空氣或
+          // 方塊都一样）——不得重新拋線、開介面或放置方塊。
+          tryReelFishing();
+        } else if (
           currentMode === 'survival' &&
           hit &&
           hitBlock === BLOCK.CRAFTING_TABLE
@@ -4700,6 +4796,10 @@ gs.renderer.setAnimationLoop(() => {
           // B11：手持打火石右鍵 TNT → 點燃（沒拿打火石時落在下面的一般放置路徑
           // ——TNT 是方塊，可以被疊放）。
           tryIgniteTnt(hit.x, hit.y, hit.z);
+        } else if (heldIsFishingRod()) {
+          // B14：手持釣魚竿右鍵水面 → 拋線（不是放置）。**排在方塊使用之後**
+          // ——工作台／熔爐／箱子／床／TNT 的使用仍優先。
+          tryCastFishing(rayOrigin, dir);
         } else if (heldIsBow()) {
           // B10：右鍵按住 = 拉弓（放開才發射）——這裡只記錄開始蓄力，
           // 真正的每幀推進與發射在下面（連放／進食之前）。
@@ -4734,6 +4834,37 @@ gs.renderer.setAnimationLoop(() => {
         } else {
           bowDraw = { ...bowDraw, charge: stepBowCharge(bowDraw.charge, dt) };
           viewmodel.setDraw(bowDraw.charge);
+        }
+      }
+
+      // ---- B14 釣魚：等待 → 魚訊 → 錯過；換格／離線／水面消失即取消 ----
+      if (fishing) {
+        if (selected !== fishing.slot || slots[selected]?.item !== 'fishing_rod') {
+          fishing = null; // 換格或竿不見了 → 收線（不通知）
+        } else {
+          const dx = player.position.x - fishing.bobber.x;
+          const dy = player.position.y - fishing.bobber.y;
+          const dz = player.position.z - fishing.bobber.z;
+          const waterGone =
+            world.getBlock(fishing.bobber.x, fishing.bobber.y - 0.1, fishing.bobber.z) !==
+            BLOCK.WATER;
+          if (
+            dx * dx + dy * dy + dz * dz > FISHING_CAST_RANGE * FISHING_CAST_RANGE ||
+            waterGone
+          ) {
+            fishing = null; // 離太遠或水不見了 → 取消
+          } else {
+            const tick = stepFishing(fishing.state, dt);
+            fishing = { ...fishing, state: tick.state };
+            if (tick.bite) {
+              audio.playFishingBite({ pos: fishing.bobber, listener: player.position });
+              hudHint.show('有東西上鉤了！右鍵收線');
+            }
+            if (tick.escaped) {
+              hudHint.show('魚跑掉了');
+              fishing = null;
+            }
+          }
         }
       }
 
@@ -4941,6 +5072,13 @@ gs.renderer.setAnimationLoop(() => {
   // B11 Task 7：引信 TNT（引信步進本身只在 playing 分支；這裡只同步外觀——
   // 爆炸後實體已從清單移除 → 這一幀 mesh 跟著消失）。
   tntRenderer.syncTnts(primedTnts, state === 'playing' ? dt : 0);
+  // B14：釣魚線只在 playing 顯示；暫停／背包／死亡一律隱藏（線是暫態的）。
+  fishingRenderer.sync(
+    state === 'playing' && fishing
+      ? { bobber: fishing.bobber, biting: fishing.state.phase === 'biting' }
+      : null,
+    gs.camera,
+  );
   // Task 3: cracks belong to the dig loop only — the playing branch above
   // drives set(digTarget, dig.progress); every other state (title/paused/
   // inventory/crafting/dead) clears any quad left hanging on the frozen view.
