@@ -36,6 +36,9 @@ describe('furnace tables', () => {
       raw_porkchop: 'cooked_porkchop',
       raw_mutton: 'cooked_mutton',
       raw_beef: 'steak',
+      // B14：生魚可烤（鱸魚／鮭魚）
+      raw_cod: 'cooked_cod',
+      raw_salmon: 'cooked_salmon',
     });
     expect(SMELT_RECIPES['coal_ore' as keyof typeof SMELT_RECIPES]).toBeUndefined();
     expect(FUEL_VALUES).toEqual({
@@ -48,6 +51,11 @@ describe('furnace tables', () => {
       spruce_planks: 1.5,
       birch_planks: 1.5,
     });
+  });
+
+  it('B14: raw cod and salmon smelt into their cooked forms', () => {
+    expect(SMELT_RECIPES.raw_cod).toBe('cooked_cod');
+    expect(SMELT_RECIPES.raw_salmon).toBe('cooked_salmon');
   });
 
   it('raw gold and gold ore smelt into a gold ingot', () => {

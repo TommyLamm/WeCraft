@@ -65,6 +65,15 @@ const TRIGGERS: ReadonlyArray<
   ['farmer', [[{ type: 'obtain', item: 'wheat', mode: 'survival' }]]],
   ['baker', [[{ type: 'obtain', item: 'bread', mode: 'survival' }]]],
   [
+    'angler',
+    [
+      [{ type: 'obtain', item: 'raw_cod', mode: 'survival' }],
+      [{ type: 'obtain', item: 'raw_salmon', mode: 'survival' }],
+      [{ type: 'obtain', item: 'pufferfish', mode: 'survival' }],
+      [{ type: 'obtain', item: 'tropical_fish', mode: 'survival' }],
+    ],
+  ],
+  [
     'first_night',
     [[{ type: 'phase', phase: 'night' }, { type: 'phase', phase: 'day' }]],
   ],
@@ -104,10 +113,20 @@ describe('checkAdvancements', () => {
 
   // ---- B13：小麥農夫／麵包師 ----
 
-  it('B13: the advancement table has 19 entries with farmer and baker', () => {
-    expect(ADVANCEMENTS).toHaveLength(19);
+  it('B13: farmer and baker are in the advancement table', () => {
+    // **進度表總數不在這條釘** —— 每批加一項就會讓舊的數字過時；總數由最新
+    // 一批的測試（B14 那條「20 entries」）把關，這裡只守 B13 自己的兩項。
     expect(ADVANCEMENTS.find((a) => a.id === 'farmer')?.icon).toBe('wheat');
     expect(ADVANCEMENTS.find((a) => a.id === 'baker')?.icon).toBe('bread');
+  });
+
+  // ---- B14：釣魚翁 ----
+
+  it('B14: the advancement table has 20 entries with angler', () => {
+    expect(ADVANCEMENTS).toHaveLength(20);
+    const angler = ADVANCEMENTS.find((a) => a.id === 'angler');
+    expect(angler?.icon).toBe('raw_cod');
+    expect(angler?.title).toBe('釣魚翁');
   });
 
   // ---- B4 Task 1：牧場（pasture）進度 ----

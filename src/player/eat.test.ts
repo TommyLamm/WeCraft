@@ -96,7 +96,21 @@ describe('food table', () => {
       rotten_flesh: { food: 4, saturation: 0.8 },
       // B13：麵包（原版 5 飢餓／6 飽食度）
       bread: { food: 5, saturation: 6 },
+      // B14：六種魚（原版 wiki 的飢餓值／飽食度）
+      raw_cod: { food: 2, saturation: 0.4 },
+      cooked_cod: { food: 5, saturation: 6 },
+      raw_salmon: { food: 2, saturation: 0.4 },
+      cooked_salmon: { food: 6, saturation: 9.6 },
+      pufferfish: { food: 1, saturation: 0.2 },
+      tropical_fish: { food: 1, saturation: 0.2 },
     });
+  });
+
+  it('B14: all six fish are edible and cooked fish restore more', () => {
+    expect(foodFor('cooked_cod')).toEqual({ food: 5, saturation: 6 });
+    expect(foodFor('cooked_salmon')).toEqual({ food: 6, saturation: 9.6 });
+    expect(canEat({ ...createVitals(), hunger: 10 }, 'cooked_salmon')).toBe(true);
+    expect(canEat({ ...createVitals(), hunger: 20 }, 'cooked_salmon')).toBe(false);
   });
 
   it('B13: bread restores 5 hunger and 6 saturation', () => {

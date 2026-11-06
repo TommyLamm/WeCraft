@@ -45,6 +45,15 @@ export const FOOD_VALUES: Readonly<Partial<Record<ItemId, FoodDef>>> = {
   rotten_flesh: { food: 4, saturation: 0.8 },
   // B13：麵包（原版 Bread：5 飢餓／6 飽食度）——農業循環的終點食物。
   bread: { food: 5, saturation: 6 },
+  // B14：六種魚（數值照原版 wiki 的 Food 欄位）。
+  // **本作沒有狀態效果系統** → 原版河豚的「中毒」、生魚的「飢餓」效果都不實作，
+  // 河豚只給食物值（已在 README〈與原版的差異〉揭露）。
+  raw_cod: { food: 2, saturation: 0.4 },
+  cooked_cod: { food: 5, saturation: 6 },
+  raw_salmon: { food: 2, saturation: 0.4 },
+  cooked_salmon: { food: 6, saturation: 9.6 },
+  pufferfish: { food: 1, saturation: 0.2 },
+  tropical_fish: { food: 1, saturation: 0.2 },
 };
 
 /** 蘋果的食物值 —— **與 `FOOD_VALUES.apple` 相同**（值 4／2.4，同一個來源）。

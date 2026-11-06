@@ -37,6 +37,9 @@ export const SMELT_RECIPES: Readonly<Record<string, ItemId>> = {
   raw_porkchop: 'cooked_porkchop',
   raw_mutton: 'cooked_mutton',
   raw_beef: 'steak',
+  // B14：生魚也能烤（鱸魚→烤鱸魚、鮭魚→烤鮭魚；河豚與熱帶魚沒有熟版本）。
+  raw_cod: 'cooked_cod',
+  raw_salmon: 'cooked_salmon',
 };
 
 /** Burnable fuel item → smelts completable per 1 item ignited. **可為小數**：

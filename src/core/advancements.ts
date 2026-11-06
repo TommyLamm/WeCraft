@@ -23,6 +23,7 @@ export type AdvancementId =
   | 'pasture'
   | 'farmer'
   | 'baker'
+  | 'angler'
   | 'tasty'
   | 'monster_hunter'
   | 'first_night';
@@ -54,6 +55,8 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   // B13：農業循環的兩個進度（取得小麥 → 農夫；取得麵包 → 麵包師）。
   { id: 'farmer', title: '小麥農夫', description: '收成第一株小麥', icon: 'wheat' },
   { id: 'baker', title: '麵包師', description: '取得麵包', icon: 'bread' },
+  // B14：釣魚循環的進度（釣到第一條生魚 → 釣魚翁）。
+  { id: 'angler', title: '釣魚翁', description: '釣到第一條魚', icon: 'raw_cod' },
   { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
   { id: 'monster_hunter', title: '怪物獵人', description: '擊殺一隻怪物', icon: 'stone_sword' },
   { id: 'first_night', title: '度過第一夜', description: '活著看見黎明', icon: 'grass' },
@@ -77,14 +80,15 @@ export type AdvancementEvent =
   | { type: 'ate'; item: ItemId; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
-/** Obtain → advancement map (Task 11 brief ＋ B4 Task 1 ＋ B5 Task 5)：33 個 item
- *  觸發、13 個進度 id。wood/stone/iron tools share one id per tier; the B5
- *  golden/diamond tools do the same. `stone_sword` only triggers stone_tool
- *  here — monster_hunter needs the kill event. Both iron inputs map to
- *  iron_age: raw_iron is what iron_ore blocks drop now (Task 6); iron_ore
- *  stays for legacy saves/creative. Likewise raw_gold/gold_ingot → gold_age
- *  and diamond → diamond_age; spruce/birch logs extend getting_wood.
- *  B4 Task 1：加 5 個觸發（生肉／羊毛 → pasture，見下）。 */
+/** Obtain → advancement map（Task 11 brief ＋ B4 Task 1 ＋ B5 Task 5 ＋ B13 ＋ B14）：
+ * 39 個 item 觸發（其中 16 個進度 id 由「取得物品」解鎖；其餘 4 個進度由
+ * 冶煉／進食／擊殺／夜晚事件解鎖 → 進度表共 20 項）。wood/stone/iron tools
+ * share one id per tier; the B5 golden/diamond tools do the same. `stone_sword`
+ * only triggers stone_tool here — monster_hunter needs the kill event. Both
+ * iron inputs map to iron_age: raw_iron is what iron_ore blocks drop now
+ * (Task 6); iron_ore stays for legacy saves/creative. Likewise raw_gold/
+ * gold_ingot → gold_age and diamond → diamond_age; spruce/birch logs extend
+ * getting_wood. B4 Task 1：加 5 個觸發（生肉／羊毛 → pasture，見下）。 */
 const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   oak_log: 'getting_wood',
   spruce_log: 'getting_wood',
@@ -123,6 +127,11 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
   // B13：農業——取得小麥（收成或撿起）→ 農夫；取得麵包（合成）→ 麵包師。
   wheat: 'farmer',
   bread: 'baker',
+  // B14：釣魚——取得任一種生魚 → 釣魚翁（熟魚不解鎖：那是烤魚的成果）。
+  raw_cod: 'angler',
+  raw_salmon: 'angler',
+  pufferfish: 'angler',
+  tropical_fish: 'angler',
 };
 
 /** Apply one game event to the progress state. PURE: the input state is never
