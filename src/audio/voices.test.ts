@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { FakeAudioBuffer, FakeAudioContext } from './testing';
 import type { SynthParams } from './sounds';
-import { chirp, createNoiseBuffer, cricket, phaseCue, playOneShot, startWind } from './voices';
+import { chirp, createNoiseBuffer, cricket, fishingBite, fishingSplash, phaseCue, playOneShot, startWind } from './voices';
 
 const asCtx = (fake: FakeAudioContext): BaseAudioContext => fake as unknown as BaseAudioContext;
 const asNode = (node: unknown): AudioNode => node as AudioNode;
@@ -128,5 +128,30 @@ describe('voices', () => {
     expect(cueFilter.frequency.ramps[0].time).toBeCloseTo(0.8);
     expect(cueSource.startCalls).toHaveLength(1);
     expect(cueSource.stopCalls[0].when).toBeCloseTo(0.8);
+  });
+
+  // ---- B14：釣魚的潑水聲與魚訊聲 ----
+  it('B14: fishing splash is a short low-passed noise burst', () => {
+    const fake = new FakeAudioContext();
+    const noise = new FakeAudioBuffer(1, fake.sampleRate, fake.sampleRate);
+    fishingSplash(asCtx(fake), asNode(fake.destination), asBuffer(noise), 0.5);
+    const source = fake.bufferSources[0];
+    const filter = fake.biquads[0];
+    expect(source.buffer).toBe(noise);
+    expect(filter.type).toBe('lowpass');
+    expect(source.stopCalls[0].when).toBeCloseTo(0.22, 5);
+    const gain = fake.gains[0];
+    expect(gain.gain.peak).toBeGreaterThan(0);
+  });
+
+  it('B14: fishing bite is a short two-pip sine', () => {
+    const fake = new FakeAudioContext();
+    fishingBite(asCtx(fake), asNode(fake.destination), 0.5);
+    expect(fake.oscillators).toHaveLength(1);
+    const osc = fake.oscillators[0];
+    expect(osc.type).toBe('sine');
+    expect(osc.frequency.sets.length).toBeGreaterThanOrEqual(2);
+    expect(osc.stopCalls[0].when).toBeCloseTo(0.18, 5);
+    expect(fake.gains[0].gain.peak).toBeGreaterThan(0);
   });
 });

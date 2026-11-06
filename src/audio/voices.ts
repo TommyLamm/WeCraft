@@ -331,6 +331,80 @@ export function explosionBoom(
   osc.stop(now + EXPLOSION_SEC);
 }
 
+/** 潑水聲（B14）：0.22 秒的**低通白噪音**（600 Hz、Q 0.7）——近似原版
+ *  `entity.fishing.bobber.splash` 的短促「噗通」（原版是取樣；本作程序合成）。
+ *  `volume` 已含距離衰減（`index.ts` 用 `gainForDistance` 算好再傳進來）。 */
+export const FISHING_SPLASH_LPF_HZ = 600;
+const FISHING_SPLASH_Q = 0.7;
+const FISHING_SPLASH_SEC = 0.22;
+const FISHING_SPLASH_GAIN = 0.45;
+
+export function fishingSplash(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * FISHING_SPLASH_GAIN;
+
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = FISHING_SPLASH_LPF_HZ;
+  filter.Q.value = FISHING_SPLASH_Q;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.01);
+  gain.gain.linearRampToValueAtTime(0, now + FISHING_SPLASH_SEC);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+  source.stop(now + FISHING_SPLASH_SEC);
+}
+
+/** 魚訊聲（B14）：**兩聲**短促的正弦「嘟」（700 → 950 Hz）——
+ *  近似原版浮標被咬時的提示音（原版是取樣；本作程序合成，刻意做成兩聲
+ *  好讓玩家知道「要收線了」）。`volume` 已含距離衰減。 */
+export const FISHING_BITE_FROM_HZ = 700;
+export const FISHING_BITE_TO_HZ = 950;
+const FISHING_BITE_SEC = 0.18;
+const FISHING_BITE_GAIN = 0.25;
+
+export function fishingBite(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * FISHING_BITE_GAIN;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  // 第一聲：now → now+0.07 上滑；第二聲：now+0.09 → now+0.16 再上滑。
+  osc.frequency.setValueAtTime(FISHING_BITE_FROM_HZ, now);
+  osc.frequency.linearRampToValueAtTime(FISHING_BITE_TO_HZ, now + 0.07);
+  osc.frequency.setValueAtTime(FISHING_BITE_FROM_HZ, now + 0.09);
+  osc.frequency.linearRampToValueAtTime(FISHING_BITE_TO_HZ, now + 0.16);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.01);
+  gain.gain.linearRampToValueAtTime(peak * 0.25, now + 0.085);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.095);
+  gain.gain.linearRampToValueAtTime(0, now + FISHING_BITE_SEC);
+
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start();
+  osc.stop(now + FISHING_BITE_SEC);
+}
+
 /** 箭的命中聲（B10 Task 9，加分項）：0.08 秒**低通噪音**＋ 220 Hz 短正弦衰減
  *  ——木頭「咚」（近似原版命中方塊／生物的悶響；程序合成，無取樣）。 */
 export const ARROW_HIT_LPF_HZ = 500;

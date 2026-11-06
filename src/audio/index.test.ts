@@ -211,6 +211,35 @@ describe('createGameAudio', () => {
     expect(fresh.created).toHaveLength(0);
   });
 
+  // ---- B14：釣魚的潑水聲與魚訊聲 ----
+  it('playFishingSplash and playFishingBite route through the master bus', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playFishingSplash();
+    audio.playFishingBite();
+
+    expect(fake.bufferSources).toHaveLength(1);
+    expect(fake.oscillators).toHaveLength(1);
+    for (const g of fake.gains.slice(1)) expect(g.outputs).toContain(master);
+  });
+
+  it('the fishing sounds are silent beyond the audible distance and inert before start', () => {
+    const far = { pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } };
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.playFishingSplash(far);
+    audio.playFishingBite(far);
+    for (const g of fake.gains.slice(1)) expect(g.gain.peak).toBe(0);
+
+    const fresh = new FakeAudioContext();
+    const inert = createGameAudio({ createContext: () => fresh as unknown as AudioContext });
+    inert.playFishingSplash();
+    inert.playFishingBite();
+    expect(fresh.created).toHaveLength(0);
+  });
+
   it('handleVisibility suspends when hidden and resumes when visible', () => {
     const { fake, audio } = setup();
     audio.ensureStarted(); // initial suspended state → resume

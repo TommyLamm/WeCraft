@@ -8,6 +8,8 @@ import {
   cricket,
   createNoiseBuffer,
   explosionBoom,
+  fishingBite,
+  fishingSplash,
   phaseCue,
   playOneShot,
   startWind,
@@ -59,6 +61,10 @@ export interface GameAudio {
   playTntFuse(opts?: PlayOptions): void;
   /** B11：爆炸聲（低通噪音＋低頻下滑正弦）——TNT 與苦力怕共用。 */
   playExplosion(opts?: PlayOptions): void;
+  /** B14：拋線／收線的潑水聲（低通噪音；距離衰減與其他音效一致）。 */
+  playFishingSplash(opts?: PlayOptions): void;
+  /** B14：魚訊聲（兩聲短正弦；距離衰減與其他音效一致）。 */
+  playFishingBite(opts?: PlayOptions): void;
   /** 最近播放的紀錄（facade 層的 play-call 紀錄，與 `audio/testing.ts` 的節點
    *  紀錄是兩層）；上限 64、新的擠掉最舊的。唯讀視圖——測試用來問「剛剛播了
    *  什麼」。 */
@@ -231,6 +237,36 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     explosionBoom(ctx, dest, noiseBuffer(ctx), volume);
   }
 
+  /** B14：釣魚的潑水聲（拋線入水／收線）。距離衰減走同一條 `gainForDistance`。 */
+  function playFishingSplash(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    fishingSplash(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
+  /** B14：魚訊聲（浮標被咬）。距離衰減同上。 */
+  function playFishingBite(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    fishingBite(ctx, dest, volume);
+  }
+
   function startAmbience(): void {
     const ctx = engine.context;
     const dest = engine.master;
@@ -282,6 +318,8 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     playCreeperHiss,
     playTntFuse,
     playExplosion,
+    playFishingSplash,
+    playFishingBite,
     played: () => played,
     startAmbience,
     stopAmbience,
