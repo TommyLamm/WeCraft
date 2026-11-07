@@ -3561,6 +3561,10 @@ function continueFromCloud(): void {
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
+  // B15（批末審查）：這裡才是雲端接關的**實際進場點**（開機的 applyCloudData
+  // 只把雲端進度先套進狀態）→ 與其他三個入口一致重建天氣，不把標題畫面期間
+  // 或上一場的天氣／雨聲帶進新場次（`?weather=` 鎖定值則維持鎖定）。
+  resetWeather();
   // B3 Task 8：**進場的這一刻**才跳「地形已改變」的**非模態 toast**（舊存檔才跳）。
   // 開機時的 `applyCloudData` 只排隊不跳（那時玩家還在標題畫面，看不到）。
   flushWorldgenNotice();

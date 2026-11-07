@@ -1520,11 +1520,17 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(countOf('audio.play(')).toBe(7);
   });
 
-  it('the sky colours carry the weather tint', () => {
+  it('the sky colours carry the weather tint (both consumers, full statements)', () => {
     const playing = playingBranchBody();
-    expect(playing).toContain('applyWeatherTint(');
-    expect(playing).toContain('weatherMode');
-    // 兩個消費者：天穹（原始天色）與霧／背景（群系色）——各自套一次天氣色。
+    // 天穹吃**原始**天色的天氣色（保留既有色階）；霧／背景吃**群系色再吃**天氣
+    // 色——`fog` 與 `sky` 兩個欄位都要經過 `applyBiomeTint`。逐句釘住：批末審查
+    // 指出只數 `applyWeatherTint(` 的次數擋不住「拿掉 sky 的群系色」這類改動。
+    expect(playing).toContain('const domeColors = applyWeatherTint(c, weatherMode, weatherFlash);');
+    expect(playing).toContain('fog: applyBiomeTint(c.fog, biomeNow),');
+    expect(playing).toContain('sky: applyBiomeTint(c.sky, biomeNow),');
+    // 兩個消費者：光照／背景吃 `tinted`，天穹吃 `domeColors`（horizon 用天氣後的 sky）。
+    expect(playing).toContain('gs.setDayNight(sunDir, tinted);');
+    expect(playing).toContain('{ zenith: domeColors.zenith, horizon: domeColors.sky },');
     expect(countOf('applyWeatherTint(')).toBe(2);
   });
 
@@ -1570,6 +1576,9 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(functionBody('startGame')).toContain('resetWeather()');
     expect(functionBody('continueGame')).toContain('resetWeather()');
     expect(functionBody('applyCloudData')).toContain('resetWeather()');
+    // 批末審查：`continueFromCloud` 是**第四個場次入口**（雲端接關的實際進場點，
+    // 開機的 applyCloudData 只是把雲端進度先套進狀態）→ 也要重建天氣。
+    expect(functionBody('continueFromCloud')).toContain('resetWeather()');
     // 天氣不進存檔（暫態）→ payload 裡不得出現天氣欄位。
     expect(functionBody('sessionSavePayload')).not.toContain('weather');
   });
