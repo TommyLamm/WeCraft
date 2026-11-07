@@ -9,6 +9,9 @@
  * `internalSkyLight(15, clockT) <= 11`——本作 `dayFactor` 曲線下的窗口約
  * t 0.488–1.0（跨午夜），比原版略寬；**不讀床所在格的光**（屋頂不影響判定，
  * 原版白天在暗處也不能睡，時間窗口才是主判準）。
+ *
+ * **B15 天氣效果**：雷雨時（`thunder: true`）跳過這個時間窗 → 白天也能睡
+ * （原版雷雨天可以睡）；距離規則與怪物阻擋完全不變。
  */
 
 import { internalSkyLight } from './lighting';
@@ -42,6 +45,7 @@ interface BlockPos {
  * 1. 距離（眼睛 → 床方塊中心）> 3 → `'too-far'`（呼叫端連重生點都不設）；
  * 2. 睡眠時間窗（`internalSkyLight(15, clockT) > 11`）→ `'set-spawn-only'`
  *    （白天或有怪物時**仍設定重生點**，只是不能睡——與原版一致）；
+ *    **B15**：雷雨（`thunder: true`）時這道時間窗失效 → 白天也能睡；
  * 3. 能睡時才掃怪物（水平 ≤ 8、垂直 ≤ 5）→ `'monsters'` 或 `'sleep'`。
  */
 export function bedUse(ctx: {
@@ -49,13 +53,19 @@ export function bedUse(ctx: {
   bed: BlockPos; // 方塊座標
   clockT: number;
   monsters: ReadonlyArray<{ pos: { x: number; y: number; z: number } }>;
+  /** B15 天氣效果：雷雨時白天也能睡（天空夠暗）。省略／false ＝ 晴天，
+   *  行為與 0.17.0 完全相同。 */
+  thunder?: boolean;
 }): BedUse {
   const cx = ctx.bed.x + 0.5;
   const cy = ctx.bed.y + 0.5;
   const cz = ctx.bed.z + 0.5;
   const distance = Math.hypot(ctx.eye.x - cx, ctx.eye.y - cy, ctx.eye.z - cz);
   if (!(distance <= BED_USE_DISTANCE)) return 'too-far';
-  if (internalSkyLight(15, ctx.clockT) > SLEEP_MAX_INTERNAL_SKY_LIGHT) return 'set-spawn-only';
+  // B15：雷雨時跳過「白天不能睡」的時間窗（原版雷雨天可以睡），怪物阻擋仍在。
+  if (internalSkyLight(15, ctx.clockT) > SLEEP_MAX_INTERNAL_SKY_LIGHT && ctx.thunder !== true) {
+    return 'set-spawn-only';
+  }
   for (const m of ctx.monsters) {
     const horizontal = Math.hypot(m.pos.x - cx, m.pos.z - cz);
     const vertical = Math.abs(m.pos.y - cy);

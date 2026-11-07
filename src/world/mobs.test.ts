@@ -64,9 +64,10 @@ const ctxOf = (
   isSolidAt: (x: number, y: number, z: number) => boolean = flatGround,
 ) => ({ playerPos, isSolidAt, dt });
 
-/** 白天燃燒的上下文（**獨立於 `MobCtx`**）：預設「露天 + 日光 + dt = 1」。 */
+/** 白天燃燒的上下文（**獨立於 `MobCtx`**）：預設「露天 + 日光 + 晴天 + dt = 1」。 */
 const sunCtxOf = (over: Partial<SunBurnCtx> = {}): SunBurnCtx => ({
   isDaylight: true,
+  isRaining: false, // B15：預設晴天（既有呼叫端的行為）
   isSolidAt: () => false, // 頭頂無實心方塊 → 露天
   isWaterAt: () => false, // 腳下不是水
   dt: 1,
@@ -826,6 +827,21 @@ describe('stepSunBurn — 白天燃燒', () => {
     expect(out.burn).toBe(SUN_BURN_SEC);
     expect(out.hp).toBe(19); // 1 秒燃燒 = 1 點血
     expect(out.burnAcc).toBe(0); // 整秒已結算，餘數歸零
+  });
+
+  it('B15: rain stops an undead mob from burning in daylight', () => {
+    const out = stepSunBurn(mob(), sunCtxOf({ isDaylight: true, isRaining: true, dt: 1 }));
+    expect(out.burn).toBe(0);
+    expect(out.hp).toBe(20); // 不再掉血
+  });
+
+  it('B15: a mob already burning stops taking damage once the rain starts', () => {
+    const lit = stepSunBurn(mob(), sunCtxOf({ dt: 1 }));
+    expect(lit.burn).toBe(SUN_BURN_SEC);
+    expect(lit.hp).toBe(19);
+    const rained = stepSunBurn(lit, sunCtxOf({ isRaining: true, dt: 1 }));
+    expect(rained.burn).toBe(SUN_BURN_SEC - 1); // 熄火中：旗標遞減
+    expect(rained.hp).toBe(19); // 不再扣血
   });
 
   it('a zombie under a solid roof does not burn', () => {

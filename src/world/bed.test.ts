@@ -36,6 +36,18 @@ describe('bedUse', () => {
     expect(bedUse(ctx({ clockT: 0.5 }))).toBe('sleep'); // 黃昏 → 10
   });
 
+  it('B15: thunder lets you sleep in the daytime (monsters still block it)', () => {
+    // 白天 + 雷雨 → 可以睡（雷雨時天空夠暗）。
+    expect(bedUse(ctx({ clockT: 0.25, thunder: true }))).toBe('sleep');
+    // 白天 + 不雷雨 → 仍然只能設重生點（既有行為不變）。
+    expect(bedUse(ctx({ clockT: 0.25, thunder: false }))).toBe('set-spawn-only');
+    // 雷雨 + 怪物 → 怪物照樣阻擋睡眠。
+    const monsters = [{ pos: { x: 10.5, y: 64.5, z: 10.5 } }];
+    expect(bedUse(ctx({ clockT: 0.25, thunder: true, monsters }))).toBe('monsters');
+    // 距離規則不變：太遠 → 不論是否雷雨都是 too-far。
+    expect(bedUse(ctx({ clockT: 0.25, thunder: true, eye: { x: 10.5, y: 66, z: 13.51 } }))).toBe('too-far');
+  });
+
   it('B10: monsters block sleep at 8 blocks horizontal / 5 vertical (inclusive)', () => {
     expect(bedUse(ctx({ monsters: [{ pos: { x: 18.5, y: 64.5, z: 10.5 } }] }))).toBe('monsters');
     expect(bedUse(ctx({ monsters: [{ pos: { x: 18.51, y: 64.5, z: 10.5 } }] }))).toBe('sleep');

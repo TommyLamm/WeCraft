@@ -4,7 +4,8 @@
  *
  *  規則出處與明示簡化（README〈與原版的差異〉）：小麥 4 階段、光照 ≥9、
  *  濕潤 25%／乾燥 10%（原版是隨機 tick；本作每 5 秒一批）、骨粉一次 +2、
- *  耕地滿格且無濕潤貼圖、無踩踏退化。 */
+ *  耕地滿格且無濕潤貼圖、無踩踏退化。**B15 起**下雨時耕地視為濕潤（與水源
+ *  同一條 25% 門檻）——原版雨天作物不會枯死，本作沿用同一條濕潤機率。 */
 
 import { BLOCK, type BlockId } from './blocks';
 import type { ItemId } from '../core/items';
@@ -120,6 +121,9 @@ export interface WheatGrowthOptions {
   cursor?: number;
   /** 本批最多推進幾株；預設 WHEAT_MAX_GROWTH_PER_TICK。 */
   maxGrow?: number;
+  /** B15 天氣效果：下雨時耕地視為濕潤（與水源同一條 25% 成長機率）。
+   *  省略／false ＝ 晴天，行為與 0.17.0 完全相同。 */
+  raining?: boolean;
 }
 
 const clampCursor = (cursor: number | undefined, len: number): number => {
@@ -158,7 +162,8 @@ export function growWheatBatch(opts: WheatGrowthOptions): WheatGrowthResult {
     if (getBlock(x, y - 1, z) !== BLOCK.FARMLAND) continue;
     const light = lightAt(x, y, z);
     if (!(light >= WHEAT_MIN_LIGHT)) continue;
-    const wet = wasFarmlandHydrated(getBlock, x, y - 1, z);
+    // B15：下雨 → 耕地視為濕潤（25%，與水源同一條門檻）；晴天維持原本的水源判定。
+    const wet = opts.raining === true || wasFarmlandHydrated(getBlock, x, y - 1, z);
     const r = rng();
     const roll = Number.isFinite(r) ? r : 1;
     if (roll >= (wet ? WHEAT_WET_GROWTH_CHANCE : WHEAT_DRY_GROWTH_CHANCE)) continue;

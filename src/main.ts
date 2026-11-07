@@ -4163,6 +4163,9 @@ gs.renderer.setAnimationLoop(() => {
     // 水裡就不會；夜晚也不會。`stepSunBurn` 是純函式 → 回傳新的 mob 陣列。
     const sunCtx = {
       isDaylight: isDaylight(clock.t),
+      // B15：下雨 → 不死系不會在露天被曬傷。天氣接線在 B15 Task 6 補上
+      // （這裡先維持晴天行為，與 0.17.0 相同）。
+      isRaining: false,
       isSolidAt,
       isWaterAt,
       dt,

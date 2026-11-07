@@ -239,6 +239,8 @@ export interface MobCtx {
 export interface SunBurnCtx {
   /** 此刻是白天嗎（`spawn-rules.isDaylight(clock.t)`）。 */
   isDaylight: boolean;
+  /** B15 天氣效果：此刻是否下雨。下雨時日光直射被雨擋住 → 不死系不會著火。 */
+  isRaining: boolean;
   /** 該格是不是實心方塊（判斷頭頂有沒有屋簷）。 */
   isSolidAt: (x: number, y: number, z: number) => boolean;
   /** 該格是不是水（站在水裡就不會被曬傷）。 */
@@ -531,7 +533,7 @@ export function stepMobs(
  *    (a) **頭格**（生物自己的頭格，殭屍腳底 0 時是 y=1）有實心方塊 → 不燃
  *        （那代表生物**卡在方塊裡**，不該被點燃）；
  *    (b) **頭頂正上方那一格**（腳底 +2 = y=2，屋簷／樹冠葉片的位置）是實心方塊 → 不燃。
- *    腳下格是水 → 不燃；**不判斷天氣、不判斷頭盔**。
+ *    腳下格是水 → 不燃；**B15 起**下雨也不燃（`isRaining`）；不判斷頭盔。
  *  - `burn` 是「正在燃燒」的旗標（仍在日光下就每幀重設為 {@link SUN_BURN_SEC}），
  *    真正的死亡時間由 1 HP/s × 20 HP ≈ 20 秒決定；`burnAcc` 只在燃燒中累積，
  *    每滿 1 秒扣 {@link SUN_BURN_DPS} 點血，熄火時歸零。 */
@@ -552,7 +554,8 @@ export function stepSunBurn(m: Mob, ctx: SunBurnCtx): Mob {
   const roofed = ctx.isSolidAt(x, head, z) || ctx.isSolidAt(x, head + 1, z);
   const inWater = ctx.isWaterAt(x, Math.floor(m.pos.y), z);
   const burning = m.kind === 'zombie' || m.kind === 'skeleton';
-  const exposed = ctx.isDaylight && !roofed && !inWater;
+  // B15：下雨 → 日光直射被雨擋住 → 不死系不會著火（原本只判日光／屋簷／水）。
+  const exposed = ctx.isDaylight && !ctx.isRaining && !roofed && !inWater;
 
   const burn = exposed ? SUN_BURN_SEC : Math.max(0, m.burn - step);
   let hp = m.hp;

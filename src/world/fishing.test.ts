@@ -4,6 +4,9 @@ import {
   FISHING_WAIT_MAX_SEC,
   FISHING_BITE_WINDOW_SEC,
   FISHING_CAST_RANGE,
+  FISHING_RAIN_WAIT_MULTIPLIER,
+  FISHING_RAIN_WAIT_MIN_SEC,
+  FISHING_RAIN_WAIT_MAX_SEC,
   rollFishingWait,
   beginFishing,
   stepFishing,
@@ -31,6 +34,28 @@ describe('fishing tuning and wait roll', () => {
     expect(rollFishingWait(() => Number.NaN)).toBe(5);
     expect(rollFishingWait(() => -1)).toBe(5);
     expect(rollFishingWait(() => 2)).toBe(30);
+  });
+
+  it('B15: rain shortens the wait (×0.8) but never below 4 seconds', () => {
+    // 端點必須正好是晴天等待 × 0.8（5 → 4、30 → 24），中間值等比例（17.5 → 14）。
+    expect(FISHING_RAIN_WAIT_MULTIPLIER).toBe(0.8);
+    expect(FISHING_RAIN_WAIT_MIN_SEC).toBe(4);
+    expect(FISHING_RAIN_WAIT_MAX_SEC).toBe(24);
+    expect(FISHING_RAIN_WAIT_MIN_SEC).toBe(FISHING_WAIT_MIN_SEC * FISHING_RAIN_WAIT_MULTIPLIER);
+    expect(FISHING_RAIN_WAIT_MAX_SEC).toBe(FISHING_WAIT_MAX_SEC * FISHING_RAIN_WAIT_MULTIPLIER);
+
+    expect(rollFishingWait(() => 0, true)).toBe(4);
+    expect(rollFishingWait(() => 0.5, true)).toBe(14);
+    expect(rollFishingWait(() => 1, true)).toBe(24);
+    expect(rollFishingWait(() => Number.NaN, true)).toBe(4); // 壞 rng 當最小值
+  });
+
+  it('B15: clear weather keeps the 5–30 second wait unchanged', () => {
+    expect(rollFishingWait(() => 0, false)).toBe(5);
+    expect(rollFishingWait(() => 0.5, false)).toBe(17.5);
+    expect(rollFishingWait(() => 1, false)).toBe(30);
+    // 省略 raining（既有呼叫端）＝ 晴天，行為不變。
+    expect(rollFishingWait(() => 0.5)).toBe(17.5);
   });
 
   it('beginFishing clamps the wait and starts waiting', () => {

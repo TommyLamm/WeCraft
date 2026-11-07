@@ -118,6 +118,18 @@ describe('growWheatBatch', () => {
       .toEqual([]);
   });
 
+  it('B15: rain hydrates dry farmland (25%, same as a water source)', () => {
+    // 雨天 → 乾燥耕地視為濕潤：擲 0.2 < 0.25 → 成長。
+    expect(growWheatBatch({ entries, getBlock: dryWorld, lightAt: () => 9, rng: () => 0.2, raining: true }).updates)
+      .toEqual([{ x: 0, y: 64, z: 0, from: BLOCK.WHEAT_0, to: BLOCK.WHEAT_1 }]);
+    // 同樣的擲值但不下雨 → 乾燥門檻 10% → 不成長（晴天行為不變）。
+    expect(growWheatBatch({ entries, getBlock: dryWorld, lightAt: () => 9, rng: () => 0.2, raining: false }).updates)
+      .toEqual([]);
+    // 水源判定照舊（雨天不得改變既有濕潤邏輯）。
+    expect(growWheatBatch({ entries, getBlock: wetWorld, lightAt: () => 9, rng: () => 0.24, raining: true }).updates)
+      .toHaveLength(1);
+  });
+
   it('requires light 9, farmland below, and a non-mature stage', () => {
     expect(growWheatBatch({ entries, getBlock: wetWorld, lightAt: () => 8, rng: () => 0 }).updates).toEqual([]);
     expect(growWheatBatch({ entries, getBlock: dryWorld, lightAt: () => -1, rng: () => 0 }).updates).toEqual([]);

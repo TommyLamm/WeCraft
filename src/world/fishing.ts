@@ -3,8 +3,10 @@
  *  轉成音效與提示，並在成功收線時發獎、扣耐久。
  *
  *  規則出處與明示簡化（README〈與原版的差異〉）：本作沒有原版「開放水域
- *  5×4×5」判定、沒有天氣／幸運加成、沒有餌釣與海洋祝福附魔；等待 5–30 秒與
+ *  5×4×5」判定、沒有幸運加成、沒有餌釣與海洋祝福附魔；等待 5–30 秒與
  *  魚訊窗口 2 秒是自訂簡化值（原版等待時間與戰利品表由遊戲難度／附魔調整）。
+ *  **B15 起**雨天等待縮到 80%（`[4, 24]` 秒）——本作自訂的天氣效果，不是原版
+ *  的雨天魚種機率（那一項仍然沒有實作）。
  *  垃圾與寶物也只使用本作既有物品池的簡化表。 */
 
 import type { ItemId } from '../core/items';
@@ -17,6 +19,14 @@ export const FISHING_WAIT_MAX_SEC = 30;
 export const FISHING_BITE_WINDOW_SEC = 2;
 /** 拋線射程（格）。 */
 export const FISHING_CAST_RANGE = 16;
+/** B15 雨天等待倍率：雨天的魚訊來得快 20%（等待 × 0.8）。 */
+export const FISHING_RAIN_WAIT_MULTIPLIER = 0.8;
+/** B15 雨天等待下限（秒）：晴天最短 5 秒 × 0.8 = 4 秒。 */
+export const FISHING_RAIN_WAIT_MIN_SEC = 4;
+/** B15 雨天等待上限（秒）：晴天最長 30 秒 × 0.8 = 24 秒。
+ *  端點寫死（而不是執行期才乘 0.8）→ 5×0.8=4、30×0.8=24 在 IEEE-754 下**剛好**
+ *  可表示，中點 14 秒也不會出現 14.000000000000002 這種雜訊。 */
+export const FISHING_RAIN_WAIT_MAX_SEC = 24;
 
 export type FishingPhase = 'waiting' | 'biting' | 'escaped';
 export type FishingLootCategory = 'fish' | 'junk' | 'treasure';
@@ -97,9 +107,17 @@ function pickWeighted(table: readonly LootEntry[], roll: number): LootEntry {
   return table[table.length - 1];
 }
 
-/** 拋線等待秒數：`[5, 30]`，壞 rng 當最小值。 */
-export function rollFishingWait(rng: () => number = Math.random): number {
-  return FISHING_WAIT_MIN_SEC + nextRoll(rng) * (FISHING_WAIT_MAX_SEC - FISHING_WAIT_MIN_SEC);
+/** 拋線等待秒數：晴天 `[5, 30]`，壞 rng 當最小值。
+ *
+ *  B15 天氣效果：`raining` 為真時把等待整體縮到 80%（`[4, 24]`）——雨天魚訊來得
+ *  比較快。呼叫端（`main.ts`）在拋線當下把當前天氣傳進來；省略＝晴天，行為與
+ *  0.17.0 完全相同。 */
+export function rollFishingWait(rng: () => number = Math.random, raining = false): number {
+  const roll = nextRoll(rng);
+  if (!raining) {
+    return FISHING_WAIT_MIN_SEC + roll * (FISHING_WAIT_MAX_SEC - FISHING_WAIT_MIN_SEC);
+  }
+  return FISHING_RAIN_WAIT_MIN_SEC + roll * (FISHING_RAIN_WAIT_MAX_SEC - FISHING_RAIN_WAIT_MIN_SEC);
 }
 
 /** 開始等待。非有限值當最小值，其餘夾到 `[0, 30]`（0 代表下一次 step 立刻魚訊）。 */
