@@ -17,13 +17,15 @@ export interface DebugLinesParams {
   mode: GameMode;
   flying: boolean;
   triangles: number;
+  /** B15：目前天氣（`clear` / `rain` / `thunder`）——純字串，由 main.ts 決定。 */
+  weather: string;
 }
 
 /** Build the F3 debug lines (pure — main.ts reads the frame, hud renders it).
  *  Line formats are byte-for-byte stable (the walkthrough diffs them); the
- *  biome sits after Seed and the triangle count after it, so the greedy-
- *  mesher's per-frame cost can be read off against the memory baseline in the
- *  browser. */
+ *  biome sits after Seed, the weather (B15) after the biome, and the triangle
+ *  count after it, so the greedy-mesher's per-frame cost can be read off
+ *  against the memory baseline in the browser. */
 export function formatDebugLines(p: DebugLinesParams): string[] {
   return [
     `WeCraft (dev)  ${p.fps} fps`,
@@ -32,6 +34,7 @@ export function formatDebugLines(p: DebugLinesParams): string[] {
     `Chunks: ${p.chunks}`,
     `Seed: ${p.seed}`,
     `Biome: ${p.biome}`,
+    `Weather: ${p.weather}`,
     `Triangles: ${p.triangles}`,
     `Mode: ${p.mode}${p.flying ? ' (flying)' : ''}`,
   ];

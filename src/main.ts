@@ -4990,6 +4990,8 @@ gs.renderer.setAnimationLoop(() => {
             mode: currentMode,
             flying: player.flying,
             triangles: gs.renderer.info.render.triangles,
+            // B15：天氣接線在 B15 Task 6 補上（這裡先固定晴天，行為與 0.17.0 相同）。
+            weather: 'clear',
           }),
         );
       } else {

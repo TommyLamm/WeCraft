@@ -357,6 +357,7 @@ describe('formatDebugLines', () => {
     mode: 'survival' as const,
     flying: false,
     triangles: 42,
+    weather: 'rain',
   };
 
   it('reports the triangle count on its own line (F3 baseline check)', () => {
@@ -367,7 +368,14 @@ describe('formatDebugLines', () => {
   it('renders the Biome line between Seed and Triangles (Phase 3 Task 6)', () => {
     const lines = formatDebugLines(base);
     expect(lines.indexOf('Biome: plains')).toBe(lines.indexOf('Seed: 1337') + 1);
-    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Biome: plains') + 1);
+    // B15：Weather 列插在 Biome 與 Triangles 之間 → Triangles 仍在 Biome 之下。
+    expect(lines.indexOf('Triangles: 42')).toBeGreaterThan(lines.indexOf('Biome: plains'));
+  });
+
+  it('renders the Weather line between Biome and Triangles (B15)', () => {
+    const lines = formatDebugLines(base);
+    expect(lines.indexOf('Weather: rain')).toBe(lines.indexOf('Biome: plains') + 1);
+    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Weather: rain') + 1);
   });
 
   it('keeps the fps and XYZ line formats byte-for-byte', () => {
@@ -391,6 +399,7 @@ describe('formatDebugLines', () => {
       'Chunks: 12',
       'Seed: 1337',
       'Biome: plains',
+      'Weather: rain',
       'Triangles: 42',
       'Mode: survival',
     ]);
