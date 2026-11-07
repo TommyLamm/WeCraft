@@ -304,7 +304,9 @@ npm run dev        # 開啟 http://localhost:5173
 **0.18.0（B15 天氣與雷雨）新增的簡化**
 
 - **雨絲只跟相機、不逐格遮蔽**：沒有原版的逐格降雨判定與遮蔽（雨不會真的擋住視線
-  或方塊光照）；玩家在**室內／洞穴／水下時整片隱藏**（**不會從窗戶看到外面的雨**）
+  或方塊光照）；玩家在**室內／洞穴／水下時整片隱藏**（**不會從窗戶看到外面的雨**；
+  判準是相機格天空光 **15＝頭頂整柱無不透明方塊**，樹葉／玻璃是透明的 → 下方仍
+  看得到雨絲，與本作「透明方塊不過濾天空光」的既有簡化一致）
 - **雷電只有閃光與雷聲**：**不會打中生物、不會起火、不會破壞方塊**；沒有降雨粒子濺射、
   沒有積水、沒有雪
 - **雷聲與閃光同時播放**：沒有原版依距離而來的雷聲延遲（本作的雷聲永遠在頭頂正上方）
@@ -689,7 +691,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 2049 tests / 103 files 全綠（效能檔另跑，見下）
+npm test           # vitest run — 2052 tests / 103 files 全綠（效能檔另跑，見下）
 npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
@@ -840,7 +842,11 @@ npm run lint       # eslint .
   format 4、`cloudSave` 一字未動；存檔與雲端都沒有天氣欄位）。已知簡化（雨絲不逐格
   遮蔽、雷電不會打中生物／起火／破壞方塊、雷聲無距離延遲、雨聲為合成近似音、無
   天氣預報 UI、玩法效果為自訂規則、`?weather=` 僅供驗收）見上方
-  〈0.18.0（B15 天氣與雷雨）新增的簡化〉。驗證見 `docs/releases/v0.18.0.md`。
+  〈0.18.0（B15 天氣與雷雨）新增的簡化〉。驗證：**2052 tests / 103 files**、
+  typecheck／lint／build／perf 全綠、pinned 工具 pack＋validate 通過、**批末真實
+  瀏覽器 smoke 35 項全過**（F3 三態、雨絲細直劃計數、雷雨閃電峰值 1.000、
+  **室內挖井封頂 → 雨絲整片隱藏**、雨聲床的 WebAudio 節點證據；0 console/page
+  error）；完整驗證與未驗證清單見 `docs/releases/v0.18.0.md`。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`
 - Phase 2 執行計畫（17 任務 + 走查證據）：`docs/superpowers/plans/2026-09-24-wecraft-phase2.md`
 - Phase 4 執行計畫（10 任務）：`docs/superpowers/plans/2026-10-11-wecraft-phase4.md`

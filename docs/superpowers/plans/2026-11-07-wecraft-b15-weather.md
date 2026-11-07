@@ -524,7 +524,7 @@ git commit -m "docs(b15): 0.18.0 version, README, spec and release notes"
 - Modify: `README.md`、`docs/releases/v0.18.0.md`、this plan（填入實際數字）
 - No production code changes unless a gate fails.
 
-- [ ] **Step 1: 全套門檻**
+- [x] **Step 1: 全套門檻**
 
 ```bash
 npm run typecheck
@@ -536,7 +536,7 @@ npm run test:perf
 
 Expected：全綠；記下 test files／tests 數、build 產物與大小、perf 數字。
 
-- [ ] **Step 2: 固定工具 pack＋validate**
+- [x] **Step 2: 固定工具 pack＋validate**
 
 ```bash
 rm -rf /tmp/opencode/wecraft-b15-tools && mkdir -p /tmp/opencode/wecraft-b15-tools
@@ -548,7 +548,7 @@ node validate-game.mjs /tmp/opencode/wecraft-b15-game.zip
 
 Expected：`Packed wecraft v0.18.0`／`Valid: wecraft v0.18.0 (tools 1.2.0)`；記下 ZIP bytes 與 SHA-256，並確認 lock 的 SHA-256 與 ZIP 檔相符。
 
-- [ ] **Step 3: 真實瀏覽器 smoke（靜態伺服 `dist/`、playwright-core、`xvfb-run` 有頭 Chromium）**
+- [x] **Step 3: 真實瀏覽器 smoke（靜態伺服 `dist/`、playwright-core、`xvfb-run` 有頭 Chromium）**
 
 探針腳本放 `/tmp/opencode`，不進 repo。至少：
 - 一般載入：title、canvas、單人遊戲、熱鍵欄、0 console/page error。
@@ -557,14 +557,17 @@ Expected：`Packed wecraft v0.18.0`／`Valid: wecraft v0.18.0 (tools 1.2.0)`；�
 - `?weather=clear`：`weather==='clear'`、無雨絲。
 - 暫停／回標題後雨絲隱藏、雨聲停止（聽覺不可自動驗證時列為未驗證；以音訊節點／狀態測試為證據）。
 - 室內隱藏雨絲：若導航成本過高，列為未驗證，不宣稱通過。
+  **（實際結果：已驗證——探針以合成滑鼠事件（Playwright `mouse.move` 在 pointer
+  lock 下會送 `movementX/Y`）挖直井＋在頭頂蓋一格 → 雨絲痕跡 2,055 → 0 且天氣仍
+  為 `rain`；見下方執行結果。）**
 
-- [ ] **Step 4: 把實際數字填回 README／release notes／本計畫**
+- [x] **Step 4: 把實際數字填回 README／release notes／本計畫**
 
 - README 的 tests/files、build 產物、perf、ZIP 數字。
 - `docs/releases/v0.18.0.md` 的驗證段與未驗證清單。
 - 本計畫的 Task 8 執行結果。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md docs/releases/v0.18.0.md docs/superpowers/plans/2026-11-07-wecraft-b15-weather.md
@@ -603,5 +606,41 @@ git commit -m "docs(b15): record weather verification evidence"
   （天穹吃原始天色、霧／背景吃群系色）→ 晴天與 0.17.0 一致。
 - **Task 7**：版本 0.18.0（`package.json`／`game.json`，`cloudSave` 一字未動）、
   README／規格／`docs/releases/v0.18.0.md`（驗證數字待 Task 8 填）。
-- **Task 8**：完整門檻、pinned pack＋validate、批末瀏覽器 smoke → 見下方 Task 8
-  的執行結果（由 Task 8 補入）。
+- **Task 8** `e80633f`＋本檔（見下）：完整門檻、pinned pack＋validate、批末瀏覽器
+  smoke。
+
+## 執行結果（Task 8）
+
+- **Step 1 全套門檻（全綠）**：typecheck PASS；`npm test` **103 files / 2052 tests
+  PASS**；lint PASS；build PASS（Vite 5.4.21、108 modules；
+  `dist/assets/index-D718IrnJ.js` **745.82 kB**／gzip **208.05 kB**、
+  `index-DFxnV2cx.css` 9.58 kB、`worker-DKytLE9P.js` 10.08 kB）；
+  `npm run test:perf` PASS（3×3 群組 best **48.6 ms → 5.4 ms/chunk**；
+  edit→relight→mesh best **28.1 ms**）。
+- **Step 2 pinned 工具**：lock SHA-256（`24a2fd36…`）與 ZIP 相符；
+  **Packed wecraft v0.18.0**／**Valid: wecraft v0.18.0 (tools 1.2.0)**；
+  ZIP **368,997 bytes**、SHA-256
+  `9d43eb54935c768f5781cee5084185d418225465e4d18d8ee13f096e66910bcb`。
+- **Step 3 批末瀏覽器 smoke**（探針 `/tmp/opencode/wecraft-b15-smoke.mjs`；靜態伺服
+  `dist/`＋pin 住的 `playwright-core`＋`xvfb-run` 有頭 Chromium）：**35 PASS／
+  0 FAIL／0 console-page error**；關鍵證據：
+  - F3 三態（clear／rain／thunder）與 `__wecraft.weather()` 一致；`weatherRemaining
+    > 0`（鎖定不倒數）。
+  - 雨絲以「**細垂直短劃**」變動像素計數：rain **2,176**、thunder **2,107**、
+    clear **0**（原始畫面變動量在晴／雨之間會重疊——區塊串流與太陽位移——故改用
+    幾何特徵）。
+  - 雷雨至少一次閃電（`weatherFlash()` 峰值 **1.000**）。
+  - 非 playing（背包覆蓋層）雨絲整片隱藏（變動 **0.00301 → 0.00000**）。
+  - **室內隱藏雨絲（真實驗收）**：挖直井（y **68 → 63**）＋在頭頂蓋一格 →
+    雨絲痕跡 **2,055 → 0**，天氣仍是 `rain`。
+  - 雨聲生命週期（WebAudio 節點證據）：晴天 1 個 loop 來源（風聲床）、雨天 2 個
+    （＋雨聲床）；暫停選單中照常；回到標題後全部 `stop()`。
+- **驗證期間發現並修正的缺陷**（`e80633f`）：plan 原釘的曝露判準
+  `camLight.sky >= 8` 會讓屋簷下（本引擎天空光 **14**）照常顯示雨絲 → 違反
+  Review Focus #2 與 README／spec 的「室內整片隱藏」→ 判準移入 `world/weather.ts`
+  的 `isSkyExposed`（門檻 **15＝原版 canSeeSky**），新增 3 個單元測試（含以真光照
+  引擎釘「屋簷 14 → 隱藏、開闊柱 15 → 顯示」）＋接線釘子（`isSkyExposed(` 走線、
+  不得再出現 `sky >= 8`）；spec／plan snippet／README／release notes 同步。
+- **未驗證（誠實列管）**：聽覺本身（人耳）與雷聲／閃光的聽感同步（以 WebAudio
+  節點與單元測試為證據）；**未執行**：tag／Release／平台發布 API（未獲授權）、
+  平台上架（平台管理員的人工步驟）。
