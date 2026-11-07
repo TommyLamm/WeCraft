@@ -1052,7 +1052,10 @@ describe('main.ts 接線（B6 Task 4：每幀更新天空比例 uniform）', () 
   it('the playing branch feeds skyLightScale(clock.t) into the chunk renderer every frame', () => {
     const playing = playingBranchBody();
     // 呼叫必須在 playing 分支的晝夜區塊內、吃的是**當幀**的 clock.t。
-    expect(playing).toContain('chunkRenderer.setSkyScale(skyLightScale(clock.t))');
+    // B15：再乘上天氣比例（雨天／雷雨讓地表變暗、閃光時提亮）。
+    expect(playing).toContain(
+      'chunkRenderer.setSkyScale(skyLightScale(clock.t) * weatherLightScale(weatherMode, weatherFlash))',
+    );
     // 全檔唯一呼叫點（每幀一次；寫死數值或只在開局呼叫都會紅）。
     expect(countOf('setSkyScale(')).toBe(1);
     expect(countOf('skyLightScale(')).toBe(1);
@@ -1481,5 +1484,95 @@ describe('main.ts 接線（B14：釣魚）', () => {
     const setStateBody = functionBody('setState');
     expect(setStateBody).toContain('fishing = null');
     expect(functionBody('resetSessionEntities')).toContain('fishing = null');
+  });
+});
+
+// ---- B15：天氣接線（狀態機、天色、雨絲、音效、玩法效果、暫態重置） ----------
+// 天氣的**規則本體**在純模組（`world/weather.ts`／`render/weather.ts`／
+// `audio/index.ts`）；這批釘子只守「main 有沒有接上、接在哪裡、接幾次」。
+// 天氣是**暫態**：不進存檔、不進雲端 → 每個場次入口都要重新建立。
+describe('main.ts 接線（B15：天氣）', () => {
+  it('the weather state machine is stepped once per playing frame', () => {
+    const playing = playingBranchBody();
+    expect(countOf('stepWeather(')).toBe(1);
+    expect(playing).toContain('stepWeather(weather, dt)');
+    expect(playing).toContain('weatherMode = weather.mode');
+    expect(playing).toContain('weatherFlash = weatherTick.flash');
+  });
+
+  it('the weather tick runs after the clock tick and before the sky colours', () => {
+    const playing = playingBranchBody();
+    const clockAt = playing.indexOf('tickClock(clock, dt)');
+    const weatherAt = playing.indexOf('stepWeather(weather, dt)');
+    const skyAt = playing.indexOf('skyColors(clock.t)');
+    expect(clockAt).toBeGreaterThan(-1);
+    expect(weatherAt).toBeGreaterThan(clockAt); // 時鐘走完才推天氣
+    expect(skyAt).toBeGreaterThan(weatherAt); // 天色要用當幀的天氣
+  });
+
+  it('a weather change swaps the soundscape and tells the player', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('if (weatherTick.changed)');
+    expect(playing).toContain('audio.setWeather(weatherMode)');
+    expect(playing).toContain('hudHint.show(weatherChangeText(weatherMode))');
+    // 雷聲走專屬的 playThunder → 不新增 audio.play 呼叫點（既有 7 處不變）。
+    expect(playing).toContain('audio.playThunder({ volume: 0.9 })');
+    expect(countOf('audio.play(')).toBe(7);
+  });
+
+  it('the sky colours carry the weather tint', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('applyWeatherTint(');
+    expect(playing).toContain('weatherMode');
+    // 兩個消費者：天穹（原始天色）與霧／背景（群系色）——各自套一次天氣色。
+    expect(countOf('applyWeatherTint(')).toBe(2);
+  });
+
+  it('the terrain sky scale is multiplied by the weather factor (one call site)', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain(
+      'chunkRenderer.setSkyScale(skyLightScale(clock.t) * weatherLightScale(weatherMode, weatherFlash))',
+    );
+    expect(countOf('setSkyScale(')).toBe(1);
+  });
+
+  it('the rain renderer is created once and synced once per frame', () => {
+    expect(countOf('createWeatherRenderer(')).toBe(1);
+    expect(countOf('weatherRenderer.sync(')).toBe(1);
+    // 雨絲只在遊戲中、且玩家曝露在天空下時可見（室內／水下整片隱藏）。
+    expect(mainSource).toContain("visible: state === 'playing' && exposed");
+  });
+
+  it('the gameplay hooks read the live weather', () => {
+    const playing = playingBranchBody();
+    // 農業（雨天視為濕潤）與白天燃燒（雨天不著火）各帶一份。
+    expect(playing).toContain("raining: weatherMode !== 'clear'");
+    expect(playing).toContain("isRaining: weatherMode !== 'clear'");
+    // 全檔三處「現在是不是在下雨」的判斷：農業、燃燒、釣魚。
+    expect(countOf("weatherMode !== 'clear'")).toBe(3);
+    // 床：雷雨時白天也能睡。
+    expect(functionBody('tryUseBed')).toContain("thunder: weatherMode === 'thunder'");
+    // 釣魚：雨天等待縮短（×0.8）。
+    expect(functionBody('tryCastFishing')).toContain(
+      "rollFishingWait(Math.random, weatherMode !== 'clear')",
+    );
+  });
+
+  it('the F3 overlay shows the weather', () => {
+    expect(mainSource).toContain('weather: weatherMode');
+  });
+
+  it('the weather is transient: every session entry rebuilds it', () => {
+    expect(functionBody('startGame')).toContain('resetWeather()');
+    expect(functionBody('continueGame')).toContain('resetWeather()');
+    expect(functionBody('applyCloudData')).toContain('resetWeather()');
+    // 天氣不進存檔（暫態）→ payload 裡不得出現天氣欄位。
+    expect(functionBody('sessionSavePayload')).not.toContain('weather');
+  });
+
+  it('the debug hook exposes the weather for the acceptance probes', () => {
+    expect(mainSource).toContain('weather: () => weatherMode');
+    expect(mainSource).toContain('weatherRemaining: () => weather.remaining');
+    expect(mainSource).toContain('weatherFlash: () => weatherFlash');
   });
 });

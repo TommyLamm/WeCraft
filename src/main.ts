@@ -11,6 +11,8 @@ import { createB9MobRenderer } from './render/b9-mobs';
 import { createTntRenderer } from './render/tnt';
 // B14：釣魚線＋浮標（暫態；不跨存檔）。
 import { createFishingRenderer } from './render/fishing';
+// B15：雨絲渲染（600 條線跟著相機；室內／水下整片隱藏）。
+import { createWeatherRenderer } from './render/weather';
 import { createSky } from './render/sky';
 import { createClouds } from './render/clouds';
 import { createViewmodel } from './render/viewmodel';
@@ -56,6 +58,17 @@ import { damageStack } from './core/durability';
 import { bowShotFor, stepBowCharge } from './core/bow';
 // B10 Task 8：床的使用規則與睡眠 UI（規則本體在 world/bed.ts；黑幕在 ui/sleep.ts）。
 import { bedUse, respawnPointFor, SLEEP_DURATION_SEC, type BedLookup } from './world/bed';
+// B15：天氣狀態機（晴朗／下雨／雷雨、轉場與閃電）＋天色與亮度調整（純邏輯）。
+import {
+  applyWeatherTint,
+  createWeather,
+  parseWeatherOverride,
+  stepWeather,
+  weatherChangeText,
+  weatherLightScale,
+  type WeatherMode,
+  type WeatherState,
+} from './world/weather';
 import { createSleepScreen } from './ui/sleep';
 // Ruling I/J: the pure boot entry decision (which session 繼續遊戲 enters).
 import { titleEntry, titleTriState } from './core/boot-entry';
@@ -428,6 +441,12 @@ interface WecraftDebug {
   /** **B10**：箭的逐筆狀態（id／座標／是不是玩家箭）——驗收「射箭 → 命中／落地」
    *  要用；**純唯讀**（映射出新陣列）。 */
   arrowStates: () => Array<{ id: number; x: number; y: number; z: number; fromPlayer: boolean }>;
+  /** **B15**：目前天氣（`clear` / `rain` / `thunder`）——**純唯讀**。 */
+  weather: () => string;
+  /** **B15**：距離下一次天氣轉場的秒數（鎖定模式不倒數）——**純唯讀**。 */
+  weatherRemaining: () => number;
+  /** **B15**：目前閃光強度（0..1；沒有閃光時 0）——**純唯讀**。 */
+  weatherFlash: () => number;
 }
 
 declare global {
@@ -463,6 +482,18 @@ const b9Renderer = createB9MobRenderer(gs.scene);
 const tntRenderer = createTntRenderer(gs.scene);
 // B14：釣魚線＋浮標（暫態；不跨存檔——離開遊戲就沒有線）。
 const fishingRenderer = createFishingRenderer(gs.scene);
+// ---- B15：天氣（**暫態**：不進存檔、不進雲端）----------------------------
+// `?weather=clear|rain|thunder` 只用於**驗收／展示**：鎖定後不自動轉場，
+// 但雷雨仍會打雷閃電。正常遊玩不帶參數 → 天氣自己走（晴→雨→雷→雨→晴）。
+const weatherOverride = parseWeatherOverride(window.location.search);
+const weatherRenderer = createWeatherRenderer(gs.scene);
+let weather: WeatherState = createWeather(
+  Math.random,
+  weatherOverride ?? 'clear',
+  weatherOverride !== null,
+);
+let weatherMode: WeatherMode = weather.mode;
+let weatherFlash = 0;
 // Task 4: break/dig debris — billboard quads over the shared block texture array
 const particleRenderer = createParticleRenderer(gs.scene);
 // Task 3: mining crack overlay — one quad + 10 stage textures, driven per
@@ -1081,7 +1112,8 @@ function heldIsFishingRod(): boolean {
  *
  *  水面用 `includeWater` 專用射線——一般挖掘／放置仍穿過水（`raycast` 的預設
  *  行為一字不變）。只有真的打到水格才拋線；射線中途先撞到實心方塊 → 不拋。
- *  射程 16 格（`FISHING_CAST_RANGE`）；等待秒數由純邏輯擲出（5–30 秒）。 */
+ *  射程 16 格（`FISHING_CAST_RANGE`）；等待秒數由純邏輯擲出（5–30 秒，
+ *  B15 起雨天縮到 4–24 秒）。 */
 function tryCastFishing(
   from: { x: number; y: number; z: number },
   aim: { x: number; y: number; z: number },
@@ -1096,7 +1128,8 @@ function tryCastFishing(
     z: waterHit.z + 0.5,
   };
   fishing = {
-    state: beginFishing(rollFishingWait()),
+    // B15：雨天等待縮到 80%（4–24 秒）——魚訊來得快一些。
+    state: beginFishing(rollFishingWait(Math.random, weatherMode !== 'clear')),
     bobber,
     slot: selected,
   };
@@ -2951,6 +2984,8 @@ function applyCloudData(data: CloudData): void {
   clock = createClock(settings.dayLengthSec);
   clock.t = data.clockT;
   audio.setPhase(phaseOf(clock.t));
+  // B15：天氣是暫態 → 雲端套用後重新建立（雲端 payload 不帶天氣欄位）。
+  resetWeather();
   // B3 Task 8：雲端進度若是**舊存檔**（`worldgenVersion` 缺漏或 ≠ 當前版本）
   // → **只記下**「玩家進場時要跳一次『地形已改變』的 toast」，**不在這裡跳**。
   // 為什麼不跳：這個函式在**開機時**就跑完了（早於標題畫面 render）→ 那時跳的
@@ -3221,6 +3256,18 @@ function quitToTitle(): void {
   setState('title');
 }
 
+/** B15：重建天氣狀態（**暫態**，不進存檔／雲端）。
+ *
+ *  新局／讀檔／雲端套用後都呼叫一次 → 重新進場回到晴朗（除非驗收用的
+ *  `?weather=` 鎖定）。同時把音效音景切到新的天氣（晴朗 → 停雨聲）。
+ *  規則本體在 `world/weather.ts`；這裡只負責建立狀態與餵音效。 */
+function resetWeather(): void {
+  weather = createWeather(Math.random, weatherOverride ?? 'clear', weatherOverride !== null);
+  weatherMode = weather.mode;
+  weatherFlash = 0;
+  audio.setWeather(weatherMode);
+}
+
 /** Drop the live entities (review #4): mobs, passive mobs, ground drops and
  * arrows are NOT persisted (plan: they respawn naturally), so a session
  * restart must never inherit the previous session's. Called by resetWorld
@@ -3316,6 +3363,8 @@ function startGame(): void {
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
+  // B15：天氣是暫態 → 新局重新建立（不從存檔繼承）。
+  resetWeather();
   // A4: the crafting grid is already empty (resetUiOwnedState flushed it into
   // the OLD inventory above) — the new session starts with an empty grid.
   advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
@@ -3453,6 +3502,8 @@ function continueGame(payload: SavePayload): void {
   audio.ensureStarted();
   audio.startAmbience();
   audio.setPhase(phaseOf(clock.t));
+  // B15：天氣是暫態 → 讀檔進場重新建立（不從存檔繼承）。
+  resetWeather();
 
   cloudAppliedAtBoot = false; // Ruling I: this local payload is the session now
   beginNoticeSession(); // B3 Task 8: 新的 play session → 「只提示一次」的記號歸零
@@ -3599,7 +3650,7 @@ function tryUseBed(x: number, y: number, z: number): void {
     ...creepers.map((c) => ({ pos: c.pos })),
     ...spiders.map((sp) => ({ pos: sp.pos })),
   ];
-  const use = bedUse({ eye, bed, clockT: clock.t, monsters });
+  const use = bedUse({ eye, bed, clockT: clock.t, monsters, thunder: weatherMode === 'thunder' });
   if (use === 'too-far') {
     hudHint.show('床太遠了');
     return;
@@ -3610,7 +3661,7 @@ function tryUseBed(x: number, y: number, z: number): void {
     return;
   }
   if (use === 'set-spawn-only') {
-    hudHint.show('你只能在夜晚睡覺（重生點已設定）');
+    hudHint.show('你只能在夜晚或雷雨時睡覺（重生點已設定）');
     return;
   }
   sleepT = 0;
@@ -3822,6 +3873,11 @@ window.__wecraft = {
       z: a.pos.z,
       fromPlayer: a.fromPlayer === true,
     })),
+  // B15：天氣（**純唯讀**）→ 供驗收探針讀「現在是晴／雨／雷、還有多久轉場、
+  // 閃光多強」。天氣是暫態：不進存檔、不進雲端。
+  weather: () => weatherMode,
+  weatherRemaining: () => weather.remaining,
+  weatherFlash: () => weatherFlash,
 };
 /** A1: the boot check (local read → cloud init/read/apply → title settle).
  *  Runs in the BACKGROUND — the title is already on screen while it works.
@@ -3916,6 +3972,18 @@ gs.renderer.setAnimationLoop(() => {
     const prevPhase = phaseOf(clock.t);
     clock = tickClock(clock, dt);
     const phase = phaseOf(clock.t);
+    // ---- B15 天氣：推進狀態機（轉場＋閃電），再餵天色／雨絲／音效 ----
+    // 規則本體在 world/weather.ts（純邏輯）；這裡只負責每幀推進與接線。
+    // **時鐘之後、天色之前**：天色要用「當幀」的天氣（含剛發生的轉場）。
+    const weatherTick = stepWeather(weather, dt);
+    weather = weatherTick.state;
+    weatherMode = weather.mode;
+    weatherFlash = weatherTick.flash;
+    if (weatherTick.changed) {
+      audio.setWeather(weatherMode); // 晴 → 停雨聲；雨／雷雨 → 起雨聲迴圈
+      hudHint.show(weatherChangeText(weatherMode));
+    }
+    if (weatherTick.lightning) audio.playThunder({ volume: 0.9 });
     // Phase 3 Task 6: 0.5 s-throttled biome sample → tint the fog/background;
     // the dome keeps the raw sky (horizon + zenith) so the gradient stays the
     // sunset ramp while the haze picks up the biome hue.
@@ -3926,16 +3994,28 @@ gs.renderer.setAnimationLoop(() => {
     }
     const sunDir = sunDirection(clock.t);
     const c = skyColors(clock.t);
-    const tinted = {
-      ...c,
-      fog: applyBiomeTint(c.fog, biomeNow),
-      sky: applyBiomeTint(c.sky, biomeNow),
-    };
+    // B15：天氣陰影（雨天／雷雨變暗、閃光提亮）。**天穹吃原始天色的天氣色**
+    // （天穹保留原始色階的既有決定），**霧／背景吃群系色再吃天氣色**。
+    const domeColors = applyWeatherTint(c, weatherMode, weatherFlash);
+    const tinted = applyWeatherTint(
+      {
+        ...c,
+        fog: applyBiomeTint(c.fog, biomeNow),
+        sky: applyBiomeTint(c.sky, biomeNow),
+      },
+      weatherMode,
+      weatherFlash,
+    );
     gs.setDayNight(sunDir, tinted);
-    sky.setSky(sunDir, { zenith: c.zenith, horizon: c.sky }, gs.camera.position);
+    sky.setSky(
+      sunDir,
+      { zenith: domeColors.zenith, horizon: domeColors.sky },
+      gs.camera.position,
+    );
     // B6 Task 4：天空比例只進著色器 uniform（每幀一行）→ 太陽落下時地形即時
     // 變暗，不觸發重算光照、不重網格（Review Focus #4：不得引發重網格風暴）。
-    chunkRenderer.setSkyScale(skyLightScale(clock.t));
+    // B15：再乘上天氣比例（雨天 0.82／雷雨 0.68、閃光時回亮）。
+    chunkRenderer.setSkyScale(skyLightScale(clock.t) * weatherLightScale(weatherMode, weatherFlash));
     if (phase !== prevPhase) {
       bus.emit('time-changed', { phase, t: clock.t });
       // Task 12: phase events feed first_night (day after a seen night).
@@ -3958,6 +4038,8 @@ gs.renderer.setAnimationLoop(() => {
           const l = spawnLightAt(world, x, y, z, clock.t);
           return l.lit ? Math.max(l.internalSky, l.block) : -1;
         },
+        // B15：下雨 → 耕地視為濕潤（25%，與水源同一條門檻）。
+        raining: weatherMode !== 'clear',
       });
       farmCursor = grown.nextCursor;
       for (const u of grown.updates) world.setBlock(u.x, u.y, u.z, u.to);
@@ -4163,9 +4245,8 @@ gs.renderer.setAnimationLoop(() => {
     // 水裡就不會；夜晚也不會。`stepSunBurn` 是純函式 → 回傳新的 mob 陣列。
     const sunCtx = {
       isDaylight: isDaylight(clock.t),
-      // B15：下雨 → 不死系不會在露天被曬傷。天氣接線在 B15 Task 6 補上
-      // （這裡先維持晴天行為，與 0.17.0 相同）。
-      isRaining: false,
+      // B15：下雨 → 日光直射被雨擋住 → 不死系不會在露天被曬傷。
+      isRaining: weatherMode !== 'clear',
       isSolidAt,
       isWaterAt,
       dt,
@@ -4990,8 +5071,8 @@ gs.renderer.setAnimationLoop(() => {
             mode: currentMode,
             flying: player.flying,
             triangles: gs.renderer.info.render.triangles,
-            // B15：天氣接線在 B15 Task 6 補上（這裡先固定晴天，行為與 0.17.0 相同）。
-            weather: 'clear',
+            // B15：天氣（晴朗／下雨／雷雨）。
+            weather: weatherMode,
           }),
         );
       } else {
@@ -5083,6 +5164,23 @@ gs.renderer.setAnimationLoop(() => {
       ? { bobber: fishing.bobber, biting: fishing.state.phase === 'biting' }
       : null,
     gs.camera,
+  );
+  // B15：雨絲只在下雨／雷雨、且玩家**曝露在天空下**時顯示（室內／洞穴／水下
+  // 整片隱藏——不會從窗戶看到外面的雨）。光照取相機所在格的天空光。
+  const camLight = spawnLightAt(
+    world,
+    Math.floor(cam.x),
+    Math.floor(cam.y),
+    Math.floor(cam.z),
+    clock.t,
+  );
+  const camInWater =
+    world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER;
+  const exposed = camLight.lit && camLight.sky >= 8 && !camInWater;
+  weatherRenderer.sync(
+    { mode: weatherMode, visible: state === 'playing' && exposed },
+    gs.camera,
+    state === 'playing' ? dt : 0,
   );
   // Task 3: cracks belong to the dig loop only — the playing branch above
   // drives set(digTarget, dig.progress); every other state (title/paused/
