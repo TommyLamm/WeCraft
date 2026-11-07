@@ -244,3 +244,22 @@ export function parseWeatherOverride(search: string): WeatherMode | null {
   const value = params.get('weather');
   return isWeatherMode(value) ? value : null;
 }
+
+// ── 曝露判準（Task 8 修正）──────────────────────────────────────────────────
+// 門檻必須是「天空光 15＝頭頂整柱無不透明方塊」，**不是 ≥ 8**：本引擎的單格厚
+// 屋簷下天空光是 14（水平 −1，B6 Task 2 的光照測試釘死）——用 ≥8 會讓屋內照常
+// 下雨，違反「室內／洞穴／水下整片隱藏」的承諾（README／spec／release notes）。
+// 15 恰好等於原版的 canSeeSky 語意：只有完全開闊的直柱會淋到雨（1×1 直井也會，
+// 與原版一致）；樹葉／玻璃是透明方塊 → 光穿過 → 下方仍看得到雨絲（本作既有的
+// 光照簡化：透明方塊不過濾天空光）。
+
+/** 判定「曝露在天空下」的最低天空光：全亮 15（開闊直柱）。 */
+export const SKY_EXPOSED_MIN_LIGHT = 15;
+
+/** 相機是否會淋到雨（雨絲顯示判準）：已點光＋頭頂整柱開闊＋不在水裡。 */
+export function isSkyExposed(
+  light: { lit: boolean; sky: number },
+  inWater: boolean,
+): boolean {
+  return light.lit && light.sky >= SKY_EXPOSED_MIN_LIGHT && !inWater;
+}

@@ -62,6 +62,7 @@ import { bedUse, respawnPointFor, SLEEP_DURATION_SEC, type BedLookup } from './w
 import {
   applyWeatherTint,
   createWeather,
+  isSkyExposed,
   parseWeatherOverride,
   stepWeather,
   weatherChangeText,
@@ -5176,7 +5177,9 @@ gs.renderer.setAnimationLoop(() => {
   );
   const camInWater =
     world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER;
-  const exposed = camLight.lit && camLight.sky >= 8 && !camInWater;
+  // 曝露判準在 world/weather.ts（純邏輯）：門檻是天空光 **15（頭頂整柱無不透明
+  // 方塊）**——本引擎的屋簷下是 14，用「≥8」會讓屋內照常下雨（Task 8 驗證修正）。
+  const exposed = isSkyExposed(camLight, camInWater);
   weatherRenderer.sync(
     { mode: weatherMode, visible: state === 'playing' && exposed },
     gs.camera,

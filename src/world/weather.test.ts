@@ -19,9 +19,29 @@ import {
   weatherLightScale,
   applyWeatherTint,
   parseWeatherOverride,
+  isSkyExposed,
   type WeatherState,
 } from './weather';
 import type { DayNightColors } from '../core/daynight';
+import { BLOCK, type BlockId } from './blocks';
+import { World } from './world';
+import { computeChunkLight, spawnLightAt } from './lighting';
+
+/** 把 [x0..x1]×[y0..y1]×[z0..z1] 填滿同一種方塊（含端點）；與 lighting.test.ts 同款。 */
+const fill = (
+  w: World,
+  id: number,
+  x0: number,
+  y0: number,
+  z0: number,
+  x1: number,
+  y1: number,
+  z1: number,
+) => {
+  for (let y = y0; y <= y1; y++)
+    for (let z = z0; z <= z1; z++)
+      for (let x = x0; x <= x1; x++) w.setBlock(x, y, z, id as BlockId);
+};
 
 /** Deterministic rng from a sequence; falls back to 0 after the sequence ends. */
 const seq = (...values: number[]): (() => number) => {
@@ -234,5 +254,40 @@ describe('parseWeatherOverride', () => {
     expect(parseWeatherOverride('?weather=RAIN')).toBeNull();
     expect(parseWeatherOverride('')).toBeNull();
     expect(parseWeatherOverride('?weather=')).toBeNull();
+  });
+});
+
+// ── B15（Task 8 修正）：雨絲的曝露判準 ──────────────────────────────────────
+// 門檻必須是「天空光 15（頭頂整柱無不透明方塊）」而不是「≥ 8」：本引擎的單格厚
+// 屋簷下天空光是 14（水平 −1；B6 Task 2 的光照測試釘死）——用 ≥8 會讓屋內照常
+// 下雨，違反「室內／洞穴／水下整片隱藏」的承諾（README／spec／release notes）。
+// 15 恰好等於原版的 canSeeSky：只有完全開闊的直柱會淋到雨（1×1 直井也會，與原版
+// 一致）；樹葉／玻璃是透明方塊 → 光穿過 → 下方仍看得到雨絲（本作既有的光照簡化）。
+
+describe('isSkyExposed（B15：雨絲曝露判準）', () => {
+  it('open sky (15) is exposed; anything under a roof (14) is not', () => {
+    expect(isSkyExposed({ lit: true, sky: 15 }, false)).toBe(true);
+    // 屋簷下（14）＝室內 → 整片隱藏（這是 ≥8 舊門檻的回歸鎖）。
+    expect(isSkyExposed({ lit: true, sky: 14 }, false)).toBe(false);
+    expect(isSkyExposed({ lit: true, sky: 8 }, false)).toBe(false);
+  });
+
+  it('caves, unlit chunks and underwater are never exposed', () => {
+    expect(isSkyExposed({ lit: true, sky: 0 }, false)).toBe(false); // 洞穴
+    expect(isSkyExposed({ lit: false, sky: 0 }, false)).toBe(false); // 未點光 = 未知
+    expect(isSkyExposed({ lit: true, sky: 15 }, true)).toBe(false); // 水下
+  });
+
+  it('the rule reads the real lighting engine (roof → hidden, open column → visible)', () => {
+    const w = new World();
+    fill(w, BLOCK.STONE, 0, 63, 0, 15, 63, 15); // 地表
+    w.setBlock(5, 70, 5, BLOCK.STONE); // 單格厚屋簷
+    computeChunkLight(w, 0, 0);
+    // 開闊柱（4,69,5）→ 天空光 15 → 淋得到雨。
+    expect(spawnLightAt(w, 4, 69, 5, 0.25).sky).toBe(15);
+    expect(isSkyExposed(spawnLightAt(w, 4, 69, 5, 0.25), false)).toBe(true);
+    // 屋簷正下方（5,69,5）→ 天空光 14 → 整片隱藏。
+    expect(spawnLightAt(w, 5, 69, 5, 0.25).sky).toBe(14);
+    expect(isSkyExposed(spawnLightAt(w, 5, 69, 5, 0.25), false)).toBe(false);
   });
 });

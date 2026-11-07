@@ -1541,6 +1541,10 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(countOf('weatherRenderer.sync(')).toBe(1);
     // 雨絲只在遊戲中、且玩家曝露在天空下時可見（室內／水下整片隱藏）。
     expect(mainSource).toContain("visible: state === 'playing' && exposed");
+    // 曝露判準走純邏輯 helper（Task 8 修正）：門檻是天空光 15（頭頂整柱無不透明
+    // 方塊）——屋簷下是 14，≥8 的舊門檻會讓屋內照常下雨。
+    expect(mainSource).toContain('const exposed = isSkyExposed(camLight, camInWater)');
+    expect(mainSource).not.toContain('camLight.sky >= 8');
   });
 
   it('the gameplay hooks read the live weather', () => {

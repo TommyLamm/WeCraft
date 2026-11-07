@@ -417,7 +417,10 @@ if (weatherTick.lightning) audio.playThunder({ volume: 0.9 });
 ```ts
 const camLight = spawnLightAt(world, Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z), clock.t);
 const camInWater = world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER;
-const exposed = camLight.lit && camLight.sky >= 8 && !camInWater;
+// （Task 8 修正：原釘的「sky >= 8」會讓屋簷下（本引擎＝14）照常顯示雨絲，
+//  違反 Review Focus #2 與 README 的「室內／洞穴／水下整片隱藏」→ 判準移進
+//  world/weather.ts 的 isSkyExposed，門檻改為天空光 15（＝原版 canSeeSky）。）
+const exposed = isSkyExposed(camLight, camInWater);
 weatherRenderer.sync(
   { mode: weatherMode, visible: state === 'playing' && exposed },
   gs.camera,
