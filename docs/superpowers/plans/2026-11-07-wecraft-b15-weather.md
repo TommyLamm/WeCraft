@@ -14,7 +14,7 @@
 
 - **本批版本 `0.18.0`**；`game.json`／`package.json` 一起 bump；`id` 維持 `wecraft`；tag 只會是 `v0.18.0`，但**本批未獲發布授權，不推 tag、不建 Release、不呼叫平台 API**。
 - **存檔格式不升版**：本機 payload 維持 v6、雲端 `formatVersion` 4、`game.json` 的 `cloudSave` **一字不動**（`readableFormats [1,2,3,4]`、`writeFormat 4`）。天氣不進任何存檔欄位。
-- 天氣三態：`clear`（晴朗）／`rain`（下雨）／`thunder`（雷雨）。晴天→下雨→（35% 雷雨／45% 放晴）→…；雷雨結束後回到下雨，再依規則轉晴。
+- 天氣三態：`clear`（晴朗）／`rain`（下雨）／`thunder`（雷雨）。晴天→下雨→（35% 雷雨／65% 放晴）→…；雷雨結束後回到下雨，再依規則轉晴。
 - 時間常數：晴朗 **90–210 秒**、下雨 **45–120 秒**、雷雨 **20–60 秒**；雷雨首次閃電 **1–4 秒**、之後 **4–12 秒**；閃光 **0.18 秒**。
 - 雨絲 **600 條**、相機半徑 **14 格**、局部高度 **−6..12 格**、下落速度 **18–26 格/秒**；只在玩家曝光於天空且不在水中時顯示（室內／洞穴／水下隱藏——明示簡化）。
 - 釣魚：下雨或雷雨時等待時間 **×0.8**，最短 **4 秒**；晴天維持 5–30 秒。
@@ -558,7 +558,7 @@ Expected：`Packed wecraft v0.18.0`／`Valid: wecraft v0.18.0 (tools 1.2.0)`；�
 - 暫停／回標題後雨絲隱藏、雨聲停止（聽覺不可自動驗證時列為未驗證；以音訊節點／狀態測試為證據）。
 - 室內隱藏雨絲：若導航成本過高，列為未驗證，不宣稱通過。
   **（實際結果：已驗證——探針以合成滑鼠事件（Playwright `mouse.move` 在 pointer
-  lock 下會送 `movementX/Y`）挖直井＋在頭頂蓋一格 → 雨絲痕跡 2,055 → 0 且天氣仍
+  lock 下會送 `movementX/Y`）挖直井＋在頭頂蓋一格 → 雨絲痕跡 1,641 → 0 且天氣仍
   為 `rain`；見下方執行結果。）**
 
 - [x] **Step 4: 把實際數字填回 README／release notes／本計畫**
@@ -613,26 +613,27 @@ git commit -m "docs(b15): record weather verification evidence"
 
 - **Step 1 全套門檻（全綠）**：typecheck PASS；`npm test` **103 files / 2052 tests
   PASS**；lint PASS；build PASS（Vite 5.4.21、108 modules；
-  `dist/assets/index-D718IrnJ.js` **745.82 kB**／gzip **208.05 kB**、
+  `dist/assets/index-Bmo4ehZe.js` **745.83 kB**／gzip **208.04 kB**（Vite 顯示值
+  以字元數計 → 磁碟實測 **747,741 bytes**，CJK 字串會讓顯示值略低）、
   `index-DFxnV2cx.css` 9.58 kB、`worker-DKytLE9P.js` 10.08 kB）；
   `npm run test:perf` PASS（3×3 群組 best **48.6 ms → 5.4 ms/chunk**；
-  edit→relight→mesh best **28.1 ms**）。
+  edit→relight→mesh best **30.2 ms**）。
 - **Step 2 pinned 工具**：lock SHA-256（`24a2fd36…`）與 ZIP 相符；
   **Packed wecraft v0.18.0**／**Valid: wecraft v0.18.0 (tools 1.2.0)**；
-  ZIP **368,997 bytes**、SHA-256
-  `9d43eb54935c768f5781cee5084185d418225465e4d18d8ee13f096e66910bcb`。
+  ZIP **368,996 bytes**、SHA-256
+  `5bb334760bffe6317d8e61b38d56c1217c4f58a9d1fb8fa73b58379534a7d8e0`。
 - **Step 3 批末瀏覽器 smoke**（探針 `/tmp/opencode/wecraft-b15-smoke.mjs`；靜態伺服
   `dist/`＋pin 住的 `playwright-core`＋`xvfb-run` 有頭 Chromium）：**35 PASS／
   0 FAIL／0 console-page error**；關鍵證據：
   - F3 三態（clear／rain／thunder）與 `__wecraft.weather()` 一致；`weatherRemaining
     > 0`（鎖定不倒數）。
-  - 雨絲以「**細垂直短劃**」變動像素計數：rain **2,176**、thunder **2,107**、
-    clear **0**（原始畫面變動量在晴／雨之間會重疊——區塊串流與太陽位移——故改用
+  - 雨絲以「**細垂直短劃**」變動像素計數：rain **2,619**、thunder **1,141**、
+    clear **7**（原始畫面變動量在晴／雨之間會重疊——區塊串流與太陽位移——故改用
     幾何特徵）。
   - 雷雨至少一次閃電（`weatherFlash()` 峰值 **1.000**）。
-  - 非 playing（背包覆蓋層）雨絲整片隱藏（變動 **0.00301 → 0.00000**）。
+  - 非 playing（背包覆蓋層）雨絲整片隱藏（變動 **0.00337 → 0.00000**）。
   - **室內隱藏雨絲（真實驗收）**：挖直井（y **68 → 63**）＋在頭頂蓋一格 →
-    雨絲痕跡 **2,055 → 0**，天氣仍是 `rain`。
+    雨絲痕跡 **1,641 → 0**，天氣仍是 `rain`。
   - 雨聲生命週期（WebAudio 節點證據）：晴天 1 個 loop 來源（風聲床）、雨天 2 個
     （＋雨聲床）；暫停選單中照常；回到標題後全部 `stop()`。
 - **驗證期間發現並修正的缺陷**（`e80633f`）：plan 原釘的曝露判準
@@ -641,6 +642,12 @@ git commit -m "docs(b15): record weather verification evidence"
   的 `isSkyExposed`（門檻 **15＝原版 canSeeSky**），新增 3 個單元測試（含以真光照
   引擎釘「屋簷 14 → 隱藏、開闊柱 15 → 顯示」）＋接線釘子（`isSkyExposed(` 走線、
   不得再出現 `sky >= 8`）；spec／plan snippet／README／release notes 同步。
+- **批末全分支審查修正**（`3b53802`；無 Critical、3 項 Important 全修）：
+  `continueFromCloud` 補 `resetWeather()`（它是雲端接關的**實際進場點**，是第
+  四個場次入口；釘子改為逐函式檢查四個入口）＋天色釘子改**逐句**（`domeColors`
+  ／`fog:`／`sky:`／`setDayNight`／`zenith`）並以**變異測試**證明有效（暫時移除
+  `sky:` 行 → 新釘子變紅、舊釘子仍綠）＋bundle 數字補上磁碟位元組數（Vite 以
+  字元數計）。其餘審查意見列 minor（見 `.superpowers` ledger 的 `Final:` 行）。
 - **未驗證（誠實列管）**：聽覺本身（人耳）與雷聲／閃光的聽感同步（以 WebAudio
   節點與單元測試為證據）；**未執行**：tag／Release／平台發布 API（未獲授權）、
   平台上架（平台管理員的人工步驟）。
