@@ -386,3 +386,73 @@ describe('createGameAudio play records (B4 triage ⑧: played() ring, capacity 6
     expect(played[63].kind).toBe('step');
   });
 });
+
+// ---- B15：天氣音效生命週期 ----
+describe('createGameAudio weather (B15)', () => {
+  it('setWeather before the first gesture never creates a context; ensureStarted starts the rain bed', () => {
+    const { fake, audio } = setup();
+
+    audio.setWeather('rain');
+    expect(fake.created).toHaveLength(0);
+
+    audio.ensureStarted();
+    expect(fake.bufferSources).toHaveLength(1);
+    const rain = fake.bufferSources[0];
+    expect(rain.loop).toBe(true);
+    expect(fake.biquads[0].frequency.value).toBe(3000);
+
+    // idempotent: a second rain request must not stack a second loop
+    audio.setWeather('rain');
+    expect(fake.bufferSources).toHaveLength(1);
+
+    audio.setWeather('clear');
+    expect(rain.stopCalls).toHaveLength(1);
+
+    audio.setWeather('rain');
+    expect(fake.bufferSources).toHaveLength(2);
+    audio.stopAmbience();
+    expect(fake.bufferSources[1].stopCalls).toHaveLength(1);
+
+    audio.dispose();
+  });
+
+  it('stopAmbience stops the rain bed but keeps the desired weather for the next start', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    audio.setWeather('thunder');
+    const first = fake.bufferSources[0];
+    audio.stopAmbience();
+    expect(first.stopCalls).toHaveLength(1);
+
+    audio.startAmbience();
+    // source 0 = the first rain bed, 1 = wind, 2 = the re-armed rain bed
+    expect(fake.bufferSources).toHaveLength(3);
+    expect(fake.bufferSources[2].loop).toBe(true);
+    audio.dispose();
+  });
+
+  it('playThunder routes through the master bus and obeys distance attenuation', () => {
+    const { fake, audio } = setup();
+    audio.ensureStarted();
+    const master = fake.gains[0];
+
+    audio.playThunder();
+    const near = fake.gains.at(-1)!;
+    expect(near.outputs).toContain(master);
+    expect(near.gain.peak).toBeGreaterThan(0);
+
+    audio.playThunder({ pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } });
+    const far = fake.gains.at(-1)!;
+    expect(far.outputs).toContain(master);
+    expect(far.gain.peak).toBe(0);
+
+    audio.dispose();
+  });
+
+  it('playThunder before the engine starts stays inert', () => {
+    const { fake, audio } = setup();
+    audio.playThunder();
+    expect(fake.created).toHaveLength(0);
+    audio.dispose();
+  });
+});

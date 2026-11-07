@@ -1,7 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { FakeAudioBuffer, FakeAudioContext } from './testing';
 import type { SynthParams } from './sounds';
-import { chirp, createNoiseBuffer, cricket, fishingBite, fishingSplash, phaseCue, playOneShot, startWind } from './voices';
+import {
+  chirp,
+  createNoiseBuffer,
+  cricket,
+  fishingBite,
+  fishingSplash,
+  phaseCue,
+  playOneShot,
+  startRain,
+  startWind,
+  thunderBoom,
+} from './voices';
 
 const asCtx = (fake: FakeAudioContext): BaseAudioContext => fake as unknown as BaseAudioContext;
 const asNode = (node: unknown): AudioNode => node as AudioNode;
@@ -153,5 +164,55 @@ describe('voices', () => {
     expect(osc.frequency.sets.length).toBeGreaterThanOrEqual(2);
     expect(osc.stopCalls[0].when).toBeCloseTo(0.18, 5);
     expect(fake.gains[0].gain.peak).toBeGreaterThan(0);
+  });
+
+  // ---- B15：雨聲迴圈與雷聲 ----
+  it('B15: startRain loops noise through lowpass 3000 at gain 0.055', () => {
+    const fake = new FakeAudioContext();
+    const noise = new FakeAudioBuffer(1, fake.sampleRate, fake.sampleRate);
+    const rain = startRain(asCtx(fake), asNode(fake.destination), asBuffer(noise));
+
+    const source = fake.bufferSources[0];
+    const filter = fake.biquads[0];
+    const gain = fake.gains[0];
+    expect(source.buffer).toBe(noise);
+    expect(source.loop).toBe(true);
+    expect(filter.type).toBe('lowpass');
+    expect(filter.frequency.value).toBe(3000);
+    expect(gain.gain.value).toBeCloseTo(0.055);
+    expect(source.startCalls).toHaveLength(1);
+    expect(source.outputs).toContain(filter);
+    expect(filter.outputs).toContain(gain);
+    expect(gain.outputs).toContain(fake.destination);
+
+    rain.stop();
+    rain.stop(); // idempotent
+    expect(source.stopCalls).toHaveLength(1);
+  });
+
+  it('B15: thunderBoom layers a 180 Hz rumble and a 60→30 Hz sine', () => {
+    const fake = new FakeAudioContext();
+    fake.currentTime = 2;
+    const noise = new FakeAudioBuffer(1, fake.sampleRate, fake.sampleRate);
+    thunderBoom(asCtx(fake), asNode(fake.destination), asBuffer(noise), 0.5);
+
+    const source = fake.bufferSources[0];
+    const rumble = fake.biquads[0];
+    expect(source.buffer).toBe(noise);
+    expect(rumble.type).toBe('lowpass');
+    expect(rumble.frequency.value).toBe(180);
+    expect(source.stopCalls[0].when).toBeCloseTo(3.2, 5);
+
+    const osc = fake.oscillators[0];
+    expect(osc.type).toBe('sine');
+    expect(osc.frequency.sets[0]).toEqual({ value: 60, time: 2 });
+    expect(osc.frequency.ramps[0].value).toBe(30);
+    expect(osc.frequency.ramps[0].time).toBeCloseTo(3.2, 5);
+    expect(osc.stopCalls[0].when).toBeCloseTo(3.2, 5);
+
+    expect(fake.gains[0].gain.peak).toBeCloseTo(0.35, 5); // 0.5 × 0.7 rumble
+    expect(fake.gains[1].gain.peak).toBeCloseTo(0.175, 5); // 0.5 × 0.35 sine
+    expect(fake.gains[0].outputs).toContain(fake.destination);
+    expect(fake.gains[1].outputs).toContain(fake.destination);
   });
 });

@@ -141,6 +141,92 @@ export function startWind(
   };
 }
 
+/** B15：雨聲迴圈（白噪音 → 低通 3000 Hz → gain 0.055）。 */
+const RAIN_HZ = 3000;
+const RAIN_GAIN = 0.055;
+
+/** Looping rain bed; `stop()` stops the source and frees the chain (idempotent). */
+export function startRain(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+): { stop(): void } {
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  source.loop = true;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = RAIN_HZ;
+
+  const gain = ctx.createGain();
+  gain.gain.value = RAIN_GAIN;
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(dest);
+  source.start();
+
+  let stopped = false;
+  return {
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      source.stop();
+      source.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    },
+  };
+}
+
+/** B15：雷聲（低通 180 Hz 的隆隆聲＋ 60→30 Hz 正弦），約 1.2 秒。
+ *  `volume` 已含距離衰減（由 facade 的 `gainForDistance` 算好）。 */
+const THUNDER_SEC = 1.2;
+const THUNDER_LPF_HZ = 180;
+const THUNDER_RUMBLE_GAIN = 0.7;
+const THUNDER_OSC_FROM_HZ = 60;
+const THUNDER_OSC_TO_HZ = 30;
+const THUNDER_OSC_GAIN = 0.35;
+
+export function thunderBoom(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  noise: AudioBuffer,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const level = Math.max(0, Number.isFinite(volume) ? volume : 0);
+
+  const source = ctx.createBufferSource();
+  source.buffer = noise;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = THUNDER_LPF_HZ;
+  const rumbleGain = ctx.createGain();
+  rumbleGain.gain.setValueAtTime(0, now);
+  rumbleGain.gain.linearRampToValueAtTime(level * THUNDER_RUMBLE_GAIN, now + 0.02);
+  rumbleGain.gain.linearRampToValueAtTime(0, now + THUNDER_SEC);
+  source.connect(filter);
+  filter.connect(rumbleGain);
+  rumbleGain.connect(dest);
+  source.start();
+  source.stop(now + THUNDER_SEC);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(THUNDER_OSC_FROM_HZ, now);
+  osc.frequency.linearRampToValueAtTime(THUNDER_OSC_TO_HZ, now + THUNDER_SEC);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0, now);
+  oscGain.gain.linearRampToValueAtTime(level * THUNDER_OSC_GAIN, now + 0.02);
+  oscGain.gain.linearRampToValueAtTime(0, now + THUNDER_SEC);
+  osc.connect(oscGain);
+  oscGain.connect(dest);
+  osc.start();
+  osc.stop(now + THUNDER_SEC);
+}
+
 /** Day ambience: a short sine chirp sweeping 1800→2600 Hz. */
 export function chirp(ctx: BaseAudioContext, dest: AudioNode): void {
   const now = ctx.currentTime;

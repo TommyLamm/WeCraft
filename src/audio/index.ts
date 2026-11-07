@@ -12,7 +12,9 @@ import {
   fishingSplash,
   phaseCue,
   playOneShot,
+  startRain,
   startWind,
+  thunderBoom,
   tntFuse,
 } from './voices';
 
@@ -65,6 +67,10 @@ export interface GameAudio {
   playFishingSplash(opts?: PlayOptions): void;
   /** B14：魚訊聲（兩聲短正弦；距離衰減與其他音效一致）。 */
   playFishingBite(opts?: PlayOptions): void;
+  /** B15：切換天氣音景（晴朗停雨聲、下雨／雷雨啟動雨聲迴圈）。 */
+  setWeather(weather: AudioWeather): void;
+  /** B15：雷聲（低頻隆隆聲＋下滑正弦；距離衰減與其他音效一致）。 */
+  playThunder(opts?: PlayOptions): void;
   /** 最近播放的紀錄（facade 層的 play-call 紀錄，與 `audio/testing.ts` 的節點
    *  紀錄是兩層）；上限 64、新的擠掉最舊的。唯讀視圖——測試用來問「剛剛播了
    *  什麼」。 */
@@ -74,6 +80,9 @@ export interface GameAudio {
   setPhase(phase: 'day' | 'night'): void;
   dispose(): void;
 }
+
+/** B15：天氣音景的三態（與 `world/weather.ts` 的 `WeatherMode` 結構相容）。 */
+export type AudioWeather = 'clear' | 'rain' | 'thunder';
 
 type Phase = 'day' | 'night';
 
@@ -102,6 +111,8 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   let wind: { stop(): void } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let phase: Phase = 'day';
+  let weather: AudioWeather = 'clear';
+  let rain: { stop(): void } | null = null;
   /** Last played 'break' timestamp (deps.now / performance.now); reset on dispose. */
   let lastBreakAt = Number.NEGATIVE_INFINITY;
   const now = deps.now ?? (() => performance.now());
@@ -111,6 +122,27 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   function noiseBuffer(ctx: BaseAudioContext): AudioBuffer {
     if (!noise) noise = createNoiseBuffer(ctx);
     return noise;
+  }
+
+  /** Start the looping rain bed when the engine can host it (idempotent). */
+  function startRainBed(): void {
+    if (rain) return;
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    rain = startRain(ctx, dest, noiseBuffer(ctx));
+  }
+
+  function stopRainBed(): void {
+    if (!rain) return;
+    rain.stop();
+    rain = null;
+  }
+
+  /** Match the soundscape to the stored weather (no context → store only). */
+  function syncRain(): void {
+    if (weather === 'clear') stopRainBed();
+    else startRainBed();
   }
 
   function clearTimer(): void {
@@ -267,11 +299,27 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     fishingBite(ctx, dest, volume);
   }
 
+  /** B15：雷聲。距離衰減走同一條 `gainForDistance`；引擎未啟動時 no-op。 */
+  function playThunder(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    thunderBoom(ctx, dest, noiseBuffer(ctx), volume);
+  }
+
   function startAmbience(): void {
     const ctx = engine.context;
     const dest = engine.master;
     if (!ctx || !dest || wind) return; // not started → no-op; already on → no double wind
     wind = startWind(ctx, dest, noiseBuffer(ctx));
+    syncRain();
     scheduleNext();
   }
 
@@ -281,6 +329,7 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
       wind.stop();
       wind = null;
     }
+    stopRainBed();
   }
 
   function setPhase(next: Phase): void {
@@ -304,6 +353,7 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
   return {
     ensureStarted() {
       engine.ensureStarted();
+      syncRain();
     },
     setVolume(v) {
       engine.setVolume(v);
@@ -320,6 +370,11 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     playExplosion,
     playFishingSplash,
     playFishingBite,
+    setWeather(next) {
+      weather = next;
+      syncRain();
+    },
+    playThunder,
     played: () => played,
     startAmbience,
     stopAmbience,
