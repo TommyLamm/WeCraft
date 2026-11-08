@@ -817,7 +817,12 @@ describe('main.ts 接線（B4 Task 5：白天燃燒＋生怪光照閘門）', ()
   it('the sun-burn context carries daylight, solidity, water and dt', () => {
     const playing = playingBranchBody();
     expect(playing).toContain('isDaylight(clock.t)'); // 只有白天會著火
-    expect(playing).toContain('BLOCK.WATER'); // 站在水裡不著火
+    // B16：水判定改走 `isWaterBlock`（水源＋流動水／水柱都算水）——原釘子比對的
+    // `BLOCK.WATER` 只認水源；`isWaterAt` 本體落在 playing 分支（sunCtx 的上游）。
+    expect(playing).toContain('isWaterBlock('); // 站在水裡（含流動水）不著火
+    // 第二針鎖 `isWaterAt` 的完整本體：playing 分支另有釣魚的 `isWaterBlock(`，
+    // 只靠前一針的話，日曬這份壞掉（退回水源-only）也不會紅（mutation 實測）。
+    expect(playing).toContain('isWaterBlock(world.getBlock(x, y, z))');
     expect(playing).toContain('stepSunBurn(m, sunCtx)');
   });
 
@@ -1472,7 +1477,12 @@ describe('main.ts 接線（B14：釣魚）', () => {
     expect(countOf('stepFishing(')).toBe(1);
     expect(playing).toContain('selected !== fishing.slot');
     expect(playing).toContain('FISHING_CAST_RANGE');
-    expect(playing).toContain('BLOCK.WATER');
+    // B16：浮標的水面判定改走 `isWaterBlock`（水面換成 flow／fall 不算水消失）——
+    // 原釘子比對的 `BLOCK.WATER` 只認水源；此針仍要求判定落在 playing 分支內。
+    expect(playing).toContain('isWaterBlock(');
+    // 第二針鎖 waterGone 本體：playing 分支另有日曬的 `isWaterBlock(`，只靠前一針
+    // 的話，waterGone 壞掉（退回水源-only）也不會紅（mutation 實測）。
+    expect(playing).toContain('waterGone = !isWaterBlock(');
     expect(playing).toContain('tryReelFishing');
   });
 

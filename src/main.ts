@@ -4240,8 +4240,9 @@ gs.renderer.setAnimationLoop(() => {
     // ---- 生物（Task 8）：AI → events → vitals/arrows；死亡/超距移除 ----
     const mobsBefore = mobs.length;
     const isSolidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
+    // B16：水判定走 `isWaterBlock`——不死系站在流動水／水柱裡同樣不會被曬傷。
     const isWaterAt = (x: number, y: number, z: number): boolean =>
-      world.getBlock(x, y, z) === BLOCK.WATER;
+      isWaterBlock(world.getBlock(x, y, z));
     const stepped = stepMobs(mobs, { playerPos: player.position, isSolidAt, dt });
     mobs = stepped.mobs;
     // **事件的套用不能省略**（`stepped.events` 是殭屍近戰／骷髏射箭的來源）。
@@ -5182,8 +5183,10 @@ gs.renderer.setAnimationLoop(() => {
     Math.floor(cam.z),
     clock.t,
   );
-  const camInWater =
-    world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER;
+  // B16：相機在流動水／水柱裡同樣算「在水中」——雨絲要整片隱藏（與水下霧同一判定）。
+  const camInWater = isWaterBlock(
+    world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)),
+  );
   // 曝露判準在 world/weather.ts（純邏輯）：門檻是天空光 **15（頭頂整柱無不透明
   // 方塊）**——本引擎的屋簷下是 14，用「≥8」會讓屋內照常下雨（Task 8 驗證修正）。
   const exposed = isSkyExposed(camLight, camInWater);
