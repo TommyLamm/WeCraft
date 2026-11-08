@@ -345,3 +345,90 @@ describe('clear (fresh-world reset)', () => {
     expect(w.serializeModified()).toEqual([['5,70,5', BLOCK.GLASS]]);
   });
 });
+
+/** B16 Task 3：`World.setFluid`（流動水寫入）與方塊變更監聽。
+ *  - listener：外部 `setBlock` 的位元真的變了才通知（同 id 重寫不通知），
+ *    座標以 floor 後的整數格傳出；`null` 可卸除。
+ *  - setFluid：只接受水 id／空氣；**不自動建立區塊**（未載入回 false）；
+ *    寫入／記 `modified`／標記網格（含邊界鄰塊）／推進 `topY`，但**不**重算
+ *    光照、**不**觸發 listener（水流自己引起的變更由模擬排程，不再回呼）。 */
+describe('World setFluid 與方塊變更監聽（B16 Task 3）', () => {
+  it('setBlockChangeListener fires with floored coordinates on a real change', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    const calls: Array<[number, number, number]> = [];
+    w.setBlockChangeListener((x, y, z) => calls.push([x, y, z]));
+    expect(w.setBlock(1.9, 64.2, 2.1, BLOCK.STONE)).toBe(true);
+    expect(calls).toEqual([[1, 64, 2]]); // floor → (1,64,2)
+    // 同格同 id 重寫：位元沒變 → 不再通知（存檔重套不攪動水流）
+    w.setBlock(1, 64, 2, BLOCK.STONE);
+    expect(calls).toEqual([[1, 64, 2]]);
+  });
+
+  it('setBlockChangeListener(null) detaches', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    const calls: Array<[number, number, number]> = [];
+    w.setBlockChangeListener((x, y, z) => calls.push([x, y, z]));
+    w.setBlock(1, 64, 2, BLOCK.STONE);
+    expect(calls).toHaveLength(1);
+    w.setBlockChangeListener(null);
+    w.setBlock(3, 64, 3, BLOCK.DIRT);
+    expect(calls).toHaveLength(1); // 卸除後不再收到
+  });
+
+  it('setFluid writes only into an existing chunk', () => {
+    const w = new World();
+    expect(w.setFluid(1, 64, 1, BLOCK.WATER_FLOW_1)).toBe(false);
+    expect(w.chunks.size).toBe(0); // 不自動建立區塊
+    expect(w.modified.size).toBe(0); // 沒有寫入就沒有 modified
+  });
+
+  it('setFluid records modified and dirties the chunk without relighting', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    const chunk = w.getChunk(0, 0)!;
+    chunk.dirty = false;
+    chunk.lightDirty = false;
+    expect(w.setFluid(1, 64, 1, BLOCK.WATER_FLOW_1)).toBe(true);
+    expect(w.getBlock(1, 64, 1)).toBe(BLOCK.WATER_FLOW_1);
+    expect(w.modified.get('1,64,1')).toBe(BLOCK.WATER_FLOW_1);
+    expect(chunk.dirty).toBe(true); // 網格要重繪
+    expect(chunk.lightDirty).toBe(false); // 但光照不重算
+  });
+
+  it('setFluid rejects non-water blocks and out-of-range y', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    expect(w.setFluid(1, 64, 1, BLOCK.STONE)).toBe(false);
+    expect(w.getBlock(1, 64, 1)).toBe(BLOCK.AIR); // 世界不變
+    expect(w.modified.size).toBe(0);
+    expect(w.setFluid(2, 64, 2, BLOCK.AIR)).toBe(true); // 空氣是合法流體
+    expect(w.getBlock(2, 64, 2)).toBe(BLOCK.AIR);
+    expect(w.modified.get('2,64,2')).toBe(BLOCK.AIR);
+    expect(w.setFluid(4, 64, 4, BLOCK.WATER)).toBe(true); // 水源（id 9）也接受
+    expect(w.getBlock(4, 64, 4)).toBe(BLOCK.WATER);
+    expect(w.setFluid(3, 256, 3, BLOCK.WATER_FLOW_1)).toBe(false);
+    expect(w.setFluid(3, -1, 3, BLOCK.WATER_FLOW_1)).toBe(false);
+  });
+
+  it('setFluid never calls the block-change listener', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    let calls = 0;
+    w.setBlockChangeListener(() => calls++);
+    expect(w.setFluid(1, 64, 1, BLOCK.WATER_FALL)).toBe(true);
+    expect(w.setFluid(1, 64, 1, BLOCK.AIR)).toBe(true);
+    expect(calls).toBe(0);
+  });
+
+  it('setFluid updates topY and edge dirty flags', () => {
+    const w = new World();
+    w.addChunk(new Chunk(0, 0));
+    w.addChunk(new Chunk(1, 0));
+    w.getChunk(1, 0)!.dirty = false;
+    expect(w.setFluid(15, 64, 0, BLOCK.WATER_FLOW_1)).toBe(true); // 邊界格
+    expect(w.getChunk(0, 0)!.topY).toBeGreaterThanOrEqual(65);
+    expect(w.getChunk(1, 0)!.dirty).toBe(true); // 鄰塊被標記重網格
+  });
+});

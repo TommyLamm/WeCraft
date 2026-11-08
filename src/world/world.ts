@@ -4,6 +4,7 @@ import {
   type BlockId,
   isSolid as blockIsSolid,
   isTargetable as blockIsTargetable,
+  isWaterBlock,
 } from './blocks';
 import { markLightDirty } from './lighting';
 
@@ -11,10 +12,18 @@ export function chunkKey(cx: number, cz: number): string {
   return `${cx},${cz}`;
 }
 
+/** 外部 `setBlock` 真的改變位元時的回呼（B16 Task 3）。座標以 floor 後的
+ *  整數格傳出；同 id 重寫（位元沒變）不通知。水流模擬用它在玩家／爆炸／
+ *  水桶改動方塊後排程鄰近格（main.ts 接線）。 */
+export type BlockChangeListener = (x: number, y: number, z: number) => void;
+
 export class World {
   readonly chunks = new Map<string, Chunk>();
   /** Block edits vs. generated terrain, keyed `"x,y,z"` → blockId (AIR kept). */
   readonly modified = new Map<string, number>();
+  /** 外部方塊變更監聽（B16 Task 3）：`setBlock` 位元真的變了才回呼。
+   *  `setFluid` 刻意不觸發——水的變更由模擬自身排程，不再回呼。 */
+  private blockChangeListener: BlockChangeListener | null = null;
 
   hasChunk(cx: number, cz: number): boolean {
     return this.chunks.has(chunkKey(cx, cz));
@@ -71,6 +80,7 @@ export class World {
     }
     const lx = x - cx * CHUNK_SIZE;
     const lz = z - cz * CHUNK_SIZE;
+    const prev = chunk.get(lx, y, lz);
     chunk.set(lx, y, lz, id);
     if (lx === 0) this.markDirty(cx - 1, cz);
     if (lx === CHUNK_SIZE - 1) this.markDirty(cx + 1, cz);
@@ -83,6 +93,46 @@ export class World {
     // 注意這是光照專用的旗標，與上面網格用的 markDirty 是兩套，不混用。
     chunk.topY = Math.max(chunk.topY, y + 1);
     markLightDirty(this, cx, cz);
+    // B16 Task 3：位元真的變了才通知（同 id 重寫不通知——存檔重套時不會
+    // 無謂地攪動水流）。在光照標記之後、回傳之前，不動既有行為。
+    if (prev !== id) this.blockChangeListener?.(x, y, z);
+    return true;
+  }
+
+  /** 設定／卸除外部方塊變更監聽（B16 Task 3）。`null` = 卸除。 */
+  setBlockChangeListener(listener: BlockChangeListener | null): void {
+    this.blockChangeListener = listener;
+  }
+
+  /** 只寫流體／空氣（B16 流動水專用）。只接受水 id（水源 9 或流動水 41–48）
+   *  與 `BLOCK.AIR`，其他 id 回 false、世界不變；y 越界同 `setBlock` 回 false。
+   *  **不自動建立缺漏的區塊**——未載入的格回 false（水永不寫入未載入區塊，
+   *  載入後再由 `WaterSim.scheduleFromModified` 重排程）。
+   *
+   *  與 `setBlock` 相同：floor 座標、邊界格標記鄰塊重網格、記入 `modified`、
+   *  推進 `topY`。刻意**不**標記光照重算（水的每 0.25 秒批次變動若各觸發
+   *  八鄰光照會拖垮效能；水是透明方塊、不改光）也**不**觸發方塊變更
+   *  listener（水自己引起的變更由模擬排程，回呼會繞回自己）。座標契約與
+   *  `getBlock`／`setBlock` 相同：x/y/z 一律 floor 到整數格。 */
+  setFluid(x: number, y: number, z: number, id: BlockId): boolean {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
+    if (y < 0 || y >= CHUNK_HEIGHT) return false;
+    if (id !== BLOCK.AIR && !isWaterBlock(id)) return false;
+    const cx = Math.floor(x / CHUNK_SIZE);
+    const cz = Math.floor(z / CHUNK_SIZE);
+    const chunk = this.getChunk(cx, cz);
+    if (!chunk) return false;
+    const lx = x - cx * CHUNK_SIZE;
+    const lz = z - cz * CHUNK_SIZE;
+    chunk.set(lx, y, lz, id);
+    if (lx === 0) this.markDirty(cx - 1, cz);
+    if (lx === CHUNK_SIZE - 1) this.markDirty(cx + 1, cz);
+    if (lz === 0) this.markDirty(cx, cz - 1);
+    if (lz === CHUNK_SIZE - 1) this.markDirty(cx, cz + 1);
+    this.modified.set(`${x},${y},${z}`, id);
+    chunk.topY = Math.max(chunk.topY, y + 1);
     return true;
   }
 
