@@ -123,6 +123,35 @@ describe('b16 WaterSim flow rules', () => {
     expect(sim.pendingCount).toBe(0);
   });
 
+  it('recede is monotone (no swell wave)', () => {
+    const g = new FakeGrid();
+    solidFloor(g, -9, 15, -8, 8);
+    put(g, 0, 64, 0, BLOCK.WATER);
+    for (let x = 1; x <= 7; x++) {
+      put(g, x, 64, 0, (BLOCK.WATER_FLOW_1 + x - 1) as BlockId);
+    }
+    // 移除前的水位快照：(x,64,0) 是 FLOW_x（Ruling T2-1：等級只能不變、變濃或消失）
+    const before: Array<number> = [];
+    for (let x = 1; x <= 7; x++) before.push(waterFlowLevel(at(g, x, 64, 0)) as number);
+    const sim = new WaterSim(g);
+    put(g, 0, 64, 0, BLOCK.AIR);
+    sim.notifyBlockChanged(0, 64, 0);
+    for (let t = 1; t <= 7; t++) {
+      sim.tick(WATER_TICK_SEC);
+      // 單調性：移除前就是流動水、現在還在的格，水位不得上升（不得出現迴漲波）。
+      // （(0,64,0) 原本是水源、不是流動水，不在檢查範圍。）
+      for (let x = 1; x <= 7; x++) {
+        const lvl = waterFlowLevel(at(g, x, 64, 0));
+        if (lvl !== null) expect(lvl).toBeLessThanOrEqual(before[x - 1]);
+      }
+      // 退去順序：最靠近（前）水源的格子先變空氣——tick t 後 (t,64,0) 已是 AIR
+      expect(at(g, t, 64, 0)).toBe(BLOCK.AIR);
+    }
+    settle(sim);
+    for (let x = 0; x <= 7; x++) expect(at(g, x, 64, 0)).toBe(BLOCK.AIR);
+    expect(sim.pendingCount).toBe(0);
+  });
+
   it('a placed block cuts the flow and the tail recedes', () => {
     const g = new FakeGrid();
     solidFloor(g, -9, 15, -8, 8);

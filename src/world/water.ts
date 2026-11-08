@@ -9,6 +9,10 @@
  *    大量 tick（畫面掉幀時水只變慢，不會暴衝）。
  *  - 先往下、再落地、再水平：供給格下方是空氣 → `WATER_FALL`；有水在上、下方
  *    是固體 → `WATER_FLOW_1`（落地）；只有水平供給 → 距離＋1 的 `WATER_FLOW_n`。
+ *  - 水平供給是**方向性的**（Ruling T2-1）：已是流動水的格子只接受「更近水源」
+ *    的新水位——候選水位大於現況代表原供給鏈斷了，直接退成空氣（單調退去，
+ *    移除水源絕不出現「水位先迴漲」的波）；空氣格照常採用候選水位流入，但
+ *    **垂死的鄰居不算供給**（它自己都保不住，才不會從它生出迴漲波）。
  *  - `WATER_FALL` 不向側面供給（`waterSpreadLevel` 回 null）——水柱只往下。
  *  - 未載入的區塊一律不讀寫：不排程、不當空氣、不供水。 */
 
@@ -167,18 +171,29 @@ export class WaterSim {
     // 只有空氣與流動水參與：空氣是「可能變成水」的目標格（只算流動水的話
     // 水永遠流不進新格子）；固體／花草／火把都不會被水取代。
     if (id !== BLOCK.AIR && !isFlowingWater(id)) return false;
-    const next = this.nextFor(x, y, z);
+    const next = this.nextFor(x, y, z, id as BlockId);
     if (next === id) return false;
     this.grid.setBlock(x, y, z, next);
     this.scheduleNeighbors(x, y, z);
     return true;
   }
 
-  /** 這格下一步該是什麼。規則（brief 釘死）：先找供給，沒供給 → AIR；
+  /** 這格下一步該是什麼。規則（brief 釘死＋Ruling T2-1）：先找供給，沒供給 → AIR；
    *  有供給時下方是空氣 → 先往下（WATER_FALL）；上方是水且下方也是水 →
    *  維持水柱（WATER_FALL）；上方是水但下方不是水 → 落地（FLOW_1）；
-   *  只有水平供給 → 距離＋1。 */
-  private nextFor(x: number, y: number, z: number): BlockId {
+   *  只有水平供給 → 方向性：空氣採用候選水位；流動水只能變濃或退去（候選大於
+   *  現況 = 供給鏈斷了 → AIR），等級絕不上升（單調退去、無迴漲波）。
+   *
+   *  `checkSupplyStability`（單調性的落地機制）：true 時，**垂死的**水平鄰居
+   *  不算供給——用 plain 規則（`checkSupplyStability: false`，不再往下探、
+   *  不遞迴）算它自己的下一步，回不到自己＝它的供給鏈斷了。讓空氣格從垂死
+   *  鄰居拿候選，會在移除水源後生出「退去後又迴漲」的波（實測：移除源頭後
+   *  (0) 先閃成 F2 → 漣漪 F3/F4 → 把已退成空氣的 (1) 重新淹成 F5）。
+   *  水源永不改寫 → 視為永遠穩定。 */
+  private nextFor(
+    x: number, y: number, z: number, id: BlockId,
+    checkSupplyStability = true,
+  ): BlockId {
     const above = this.read(x, y + 1, z);
     const below = this.read(x, y - 1, z);
     const aboveWater = above !== null && isWaterBlock(above);
@@ -187,10 +202,14 @@ export class WaterSim {
     // （FLOW_7 不再往外供給）。鄰居未載入 → 視為不可流入（不當空氣、不供水）。
     let minLevel: number | null = null;
     for (const [dx, dz] of HORIZONTAL) {
-      const nid = this.read(x + dx, y, z + dz);
+      const nx = x + dx;
+      const nz = z + dz;
+      const nid = this.read(nx, y, nz);
       if (nid === null) continue;
       const lvl = waterSpreadLevel(nid);
       if (lvl === null || lvl >= WATER_MAX_LEVEL) continue;
+      if (checkSupplyStability && nid !== BLOCK.WATER
+        && this.nextFor(nx, y, nz, nid as BlockId, false) !== nid) continue;
       if (minLevel === null || lvl < minLevel) minLevel = lvl;
     }
 
@@ -202,7 +221,15 @@ export class WaterSim {
       // 上方是水：下方也是水 → 維持下落水柱；下方是固體／花草／火把 → 落地
       return belowWater ? BLOCK.WATER_FALL : BLOCK.WATER_FLOW_1;
     }
-    // 只有水平供給 → 距離＋1（minLevel 此處必不為 null）
-    return waterBlockForLevel((minLevel as number) + 1);
+    // 只有水平供給（Ruling T2-1：方向性供給 → 單調退去）：
+    //  - 空氣（或失去上供水的水柱）→ 採用候選水位，水照樣流進新格子。
+    //  - 已是流動水：候選 < 現在 → 變濃（出現更近水源）；候選 == → 不變；
+    //    候選 > 現在 → 原供給鏈斷了 → 直接退成空氣。等級**不得上升**
+    //    （否則移除水源會出現「先迴漲再消失」的波）。
+    const candidate = (minLevel as number) + 1;
+    if (id === BLOCK.AIR || id === BLOCK.WATER_FALL) return waterBlockForLevel(candidate);
+    const current = waterFlowLevel(id) as number; // id 必為 FLOW_1..7 → 1..7
+    if (candidate <= current) return waterBlockForLevel(candidate);
+    return BLOCK.AIR;
   }
 }
