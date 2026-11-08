@@ -1565,6 +1565,13 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(mainSource).not.toContain('camLight.sky >= 8');
   });
 
+  it('B16: rain exposure and underwater fog treat every water id as water', () => {
+    // T5-1：相機在流動水／水柱裡時，雨絲與水下霧都必須走同一條 isWaterBlock 判定
+    // （這兩個站點不在 playing 分支的 pin 範圍內，所以各自留一條錨點）。
+    expect(mainSource).toMatch(/const camInWater = isWaterBlock\(/);
+    expect(mainSource).toMatch(/gs\.setUnderwater\(\s*isWaterBlock\(/);
+  });
+
   it('the gameplay hooks read the live weather', () => {
     const playing = playingBranchBody();
     // 農業（雨天視為濕潤）與白天燃燒（雨天不著火）各帶一份。
