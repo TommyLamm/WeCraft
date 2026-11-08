@@ -405,6 +405,23 @@ describe('isReplaceableForPlacement（可被取代的方塊：與 canPlaceAt 共
       );
     }
   });
+
+  it('B16: flowing water is replaceable when placing a block', () => {
+    // 全部流動水 id（41–48）都可被放置取代——與水源同一條規則。
+    expect(isReplaceableForPlacement(BLOCK.WATER_FLOW_1)).toBe(true);
+    expect(isReplaceableForPlacement(BLOCK.WATER_FALL)).toBe(true);
+    for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
+      expect(isReplaceableForPlacement(id), `flow id ${id}`).toBe(true);
+    }
+    // canPlaceAt：目標格是 flow 水、玩家 AABB 不重疊 → 放行；石頭 → 不放行。
+    const world = new World();
+    world.addChunk(new Chunk(0, 0));
+    const far = { x: 100.5, y: 100, z: 100.5 };
+    world.setBlock(5, 70, 5, BLOCK.WATER_FLOW_1);
+    expect(canPlaceAt(world, 5, 70, 5, far)).toBe(true);
+    world.setBlock(5, 70, 5, BLOCK.STONE);
+    expect(canPlaceAt(world, 5, 70, 5, far)).toBe(false);
+  });
 });
 
 describe('resolvePlacementTarget（B3 Task 9：可被取代的目標格 → 放進同一格）', () => {

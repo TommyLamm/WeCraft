@@ -97,6 +97,17 @@ describe('farmland hydration', () => {
     expect(at(0, 66, 0)).toBe(false);
     expect(at(0, 62, 0)).toBe(false);
   });
+
+  it('B16: any water block hydrates farmland', () => {
+    // 流動水（flow／fall）與水源走同一條濕潤判定。
+    const at = (id: number) => wasFarmlandHydrated(blockMap({ '4,64,0': id }), 0, 64, 0);
+    expect(at(BLOCK.WATER)).toBe(true); // 既有行為：水源
+    expect(at(BLOCK.WATER_FLOW_3)).toBe(true);
+    expect(at(BLOCK.WATER_FALL)).toBe(true);
+    // 非水方塊不受影響
+    expect(at(BLOCK.STONE)).toBe(false);
+    expect(at(BLOCK.AIR)).toBe(false);
+  });
 });
 
 describe('growWheatBatch', () => {

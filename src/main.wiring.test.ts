@@ -1449,7 +1449,9 @@ describe('main.ts 接線（B14：釣魚）', () => {
     const body = functionBody('tryCastFishing');
     expect(body).toContain('includeWater: true');
     expect(body).toContain('FISHING_CAST_RANGE');
-    expect(body).toContain('BLOCK.WATER');
+    // B16：水判定改 `isWaterBlock`（水源＋流動水／水柱都算水；原釘子比對的
+    // `BLOCK.WATER` 只認水源）——命中格不是水時仍必須直接 return。
+    expect(body).toContain('isWaterBlock(');
     expect(body).toContain('beginFishing(');
     expect(body).toContain('rollFishingWait(');
   });

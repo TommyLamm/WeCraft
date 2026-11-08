@@ -67,6 +67,42 @@ describe('raycast', () => {
     expect(hit!.z).toBe(-2);
   });
 
+  // ---- B16：流動水／水柱也算「水」 ----
+
+  it('B16: includeWater hits flowing and falling water', () => {
+    const origin = { x: 0.5, y: 64.5, z: 0.5 };
+    const dir = { x: 0, y: 0, z: -1 };
+    const w = setup();
+    w.setBlock(0, 64, -2, BLOCK.WATER_FLOW_2);
+    w.setBlock(0, 64, -4, BLOCK.WATER_FALL);
+    // 預設（不傳 includeWater）→ 射線照原樣穿過 flow／fall
+    expect(raycast(w, origin, dir, 10)).toBeNull();
+    const flowHit = raycast(w, origin, dir, 10, { includeWater: true });
+    expect(flowHit).not.toBeNull();
+    expect(flowHit!.z).toBe(-2); // 最近的水格（FLOW_2）先命中
+    expect(flowHit!.nz).toBe(1);
+    // 只有水柱在路徑上 → 一樣命中
+    const fallOnly = setup();
+    fallOnly.setBlock(0, 64, -2, BLOCK.WATER_FALL);
+    expect(raycast(fallOnly, origin, dir, 10)).toBeNull();
+    const fallHit = raycast(fallOnly, origin, dir, 10, { includeWater: true });
+    expect(fallHit).not.toBeNull();
+    expect(fallHit!.z).toBe(-2);
+    expect(fallHit!.nz).toBe(1);
+  });
+
+  it('B16: includeWater still ignores non-water', () => {
+    const origin = { x: 0.5, y: 64.5, z: 0.5 };
+    const dir = { x: 0, y: 0, z: -1 };
+    const w = setup();
+    w.setBlock(0, 64, -2, BLOCK.STONE);
+    const hit = raycast(w, origin, dir, 10, { includeWater: true });
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBe(-2);
+    // 純空氣路徑 → 不命中
+    expect(raycast(setup(), origin, dir, 10, { includeWater: true })).toBeNull();
+  });
+
   it('hits glass (solid)', () => {
     const w = setup();
     w.setBlock(0, 64, -2, BLOCK.GLASS);

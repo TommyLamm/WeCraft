@@ -1,5 +1,5 @@
 import type { World } from './world';
-import { getBlockDef, isTransparent, isCross, isSolid, BLOCK, type BlockDef } from './blocks';
+import { getBlockDef, isTransparent, isCross, isSolid, isWaterBlock, BLOCK, type BlockDef } from './blocks';
 import { CHUNK_SIZE, CHUNK_HEIGHT, chunkIndex } from './chunk';
 
 /** One greedily-merged mesh: four unshared vertices per quad. `texIndex`,
@@ -108,6 +108,10 @@ function faceSignature(
 /**
  * 這一面的鄰居要不要畫。
  *
+ * **B16**：任何兩個水 id 相鄰（水源／flow／fall 的任意組合）都是「同一流體」
+ * → 該面是內部面，不畫。此判斷必須在 `id === neighbor` **之前**——水源與
+ * `WATER_FLOW_1` 是不同 id，否則會畫出一片夾在兩格水中間的面。
+ *
  * **注意（B3 Task 6 的已知現象）**：兩個「透明」方塊相鄰時，兩邊的接觸面都會
  * 被畫出來 → 冰（transparent）取代水面頂端那一格時，**冰的底面與水的頂面在
  * 同一個平面上各一片**（水材質 depthWrite: false → 可能是「水色疊加」而非
@@ -116,7 +120,8 @@ function faceSignature(
  */
 function faceVisible(id: number, neighbor: number): boolean {
   if (neighbor === BLOCK.AIR) return true;
-  if (id === neighbor) return false; // 同種相鄰（含玻璃/水內部）不畫
+  if (isWaterBlock(id) && isWaterBlock(neighbor)) return false; // 同一流體（B16）
+  if (id === neighbor) return false; // 同種相鄰（含玻璃內部）不畫
   if (!isTransparent(neighbor)) return false; // 鄰居不透明 → 被擋
   return true; // 鄰居透明 → 畫（含固體貼玻璃）
 }
@@ -720,7 +725,8 @@ export function meshChunk(world: World, cx: number, cz: number): ChunkMesh {
           // 光照鍵 = 面向**前面那一格**的光（牆面顯示的是它前面那格空氣的光，
           // 與原版一致——不是方塊自身的光）。byte 本身就是 sky<<4 | block。
           const lightKey = lightByteAt(lightGrid, cell, face.dir);
-          mask[au + av * uDim] = faceSignature(id, tile, lightKey, aoKey, id === BLOCK.WATER);
+          // B16：所有水 id（水源／flow／fall）都進 water pass。
+          mask[au + av * uDim] = faceSignature(id, tile, lightKey, aoKey, isWaterBlock(id));
           any = true;
         }
       }

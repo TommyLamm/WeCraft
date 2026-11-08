@@ -35,7 +35,7 @@ import {
   stepFishing,
   type FishingState,
 } from './world/fishing';
-import { BLOCK } from './world/blocks';
+import { BLOCK, isWaterBlock } from './world/blocks';
 import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
@@ -1122,7 +1122,8 @@ function tryCastFishing(
   if (fishing) return; // 已經有一條線 → 右鍵是收線，不是再拋一條
   const waterHit = raycast(world, from, aim, FISHING_CAST_RANGE, { includeWater: true });
   if (!waterHit) return;
-  if (world.getBlock(waterHit.x, waterHit.y, waterHit.z) !== BLOCK.WATER) return;
+  // B16：命中格只要是任一種水（水源／流動水／水柱）就能拋線（明示簡化）。
+  if (!isWaterBlock(world.getBlock(waterHit.x, waterHit.y, waterHit.z))) return;
   const bobber = {
     x: waterHit.x + 0.5,
     y: waterHit.y + 0.9, // 水面格的上緣（方塊格高 1 → 0.9 讓浮標浮在水上）
@@ -4934,9 +4935,10 @@ gs.renderer.setAnimationLoop(() => {
           const dx = player.position.x - fishing.bobber.x;
           const dy = player.position.y - fishing.bobber.y;
           const dz = player.position.z - fishing.bobber.z;
-          const waterGone =
-            world.getBlock(fishing.bobber.x, fishing.bobber.y - 0.1, fishing.bobber.z) !==
-            BLOCK.WATER;
+          // B16：浮標下的水換成 flow／fall 仍算水——只在水真的消失時收線。
+          const waterGone = !isWaterBlock(
+            world.getBlock(fishing.bobber.x, fishing.bobber.y - 0.1, fishing.bobber.z),
+          );
           if (
             dx * dx + dy * dy + dz * dz > FISHING_CAST_RANGE * FISHING_CAST_RANGE ||
             waterGone
@@ -5107,8 +5109,9 @@ gs.renderer.setAnimationLoop(() => {
   // the day fog too — getBlock floors the coords and yields AIR when out of
   // range or outside loaded chunks)
   const cam = gs.camera.position;
+  // B16：流動水／水柱也會觸發水下霧（與水源同一條判定）。
   gs.setUnderwater(
-    world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z)) === BLOCK.WATER,
+    isWaterBlock(world.getBlock(Math.floor(cam.x), Math.floor(cam.y), Math.floor(cam.z))),
   );
 
   // Phase 3 Task 5: keep the sun shadow focus on the camera — setSunFocus

@@ -1,4 +1,4 @@
-import { getBlockDef, BLOCK, isCross, type ToolKind, type BlockId } from '../world/blocks';
+import { getBlockDef, BLOCK, isCross, isWaterBlock, type ToolKind, type BlockId } from '../world/blocks';
 import type { World } from '../world/world';
 // B4 Task 6：射線／AABB 的幾何運算搬到 `world/raycast.ts`（`rayAabbEntry`），
 // 讓敵對生物與被動生物的命中盒判定共用同一份實作（這裡是**搬移不是改寫**）。
@@ -331,12 +331,15 @@ export function placeTarget(hit: RayHit): { x: number; y: number; z: number } {
  * 「點到的方塊若可被取代，新方塊就**取代同一格**」→ 瞄準花右鍵放方塊＝**花被
  * 方塊取代、位置不變**（不是「花旁邊多一塊」）。
  *
+ * **B16**：水的判定走 `isWaterBlock`（水源＋流動水＋水柱）——在流動水上放方塊
+ * 也是「取代那一格」。
+ *
  * **為什麼抽成共用函式**：放置**目標**的計算（`resolvePlacementTarget`）與放置
  * **放行**的判定（`canPlaceAt`）必須是同一套規則；兩處各寫一份的話，改了一邊
  * 就會打架（目標算到某格、放行卻不認那格 → 放不下；更糟的是放進實心方塊裡）。
  */
 export function isReplaceableForPlacement(blockId: number): boolean {
-  return blockId === BLOCK.AIR || blockId === BLOCK.WATER || isCross(blockId);
+  return blockId === BLOCK.AIR || isWaterBlock(blockId) || isCross(blockId);
 }
 
 /**

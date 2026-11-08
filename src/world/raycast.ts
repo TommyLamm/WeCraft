@@ -1,6 +1,6 @@
 import type { World } from './world';
 import type { GameMode } from '../core/inventory';
-import { BLOCK } from './blocks';
+import { isWaterBlock } from './blocks';
 
 export interface RayHit {
   x: number;
@@ -111,9 +111,10 @@ export function raycast(
   const includeWater = options?.includeWater === true;
 
   /** 這一格算不算命中：可命中方塊（實心 ＋ cross 植被），加上（釣魚專用）
-   *  水。**不要**改成改 `World.isTargetable` —— 那會讓所有互動都能挖水。 */
+   *  水。**不要**改成改 `World.isTargetable` —— 那會讓所有互動都能挖水。
+   *  **B16**：水判定走 `isWaterBlock`（水源＋流動水＋水柱）——流動水也能拋線。 */
   const isHit = (x: number, y: number, z: number): boolean =>
-    world.isTargetable(x, y, z) || (includeWater && world.getBlock(x, y, z) === BLOCK.WATER);
+    world.isTargetable(x, y, z) || (includeWater && isWaterBlock(world.getBlock(x, y, z)));
 
   let x = Math.floor(origin.x);
   let y = Math.floor(origin.y);

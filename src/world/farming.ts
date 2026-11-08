@@ -7,7 +7,7 @@
  *  耕地滿格且無濕潤貼圖、無踩踏退化。**B15 起**下雨時耕地視為濕潤（與水源
  *  同一條 25% 門檻）——原版雨天作物不會枯死，本作沿用同一條濕潤機率。 */
 
-import { BLOCK, type BlockId } from './blocks';
+import { BLOCK, isWaterBlock, type BlockId } from './blocks';
 import type { ItemId } from '../core/items';
 
 /** 小麥階段數（0..3；3 = 成熟）。 */
@@ -56,6 +56,7 @@ export function isWheatBlock(blockId: number): boolean {
 }
 
 /** 耕地（x,y,z）是否被水潤濕：水平半徑 4 格、垂直 ±1 格內任一格是水。
+ *  **B16**：水源與流動水／水柱都算水（`isWaterBlock`）——流動水也會潤濕耕地。
  *  `getBlock` 由呼叫端注入（純函式、可單元測試；世界越界回空氣）。 */
 export function wasFarmlandHydrated(
   getBlock: (x: number, y: number, z: number) => number,
@@ -66,7 +67,7 @@ export function wasFarmlandHydrated(
   for (let dy = -1; dy <= 1; dy++) {
     for (let dz = -FARMLAND_WATER_RADIUS; dz <= FARMLAND_WATER_RADIUS; dz++) {
       for (let dx = -FARMLAND_WATER_RADIUS; dx <= FARMLAND_WATER_RADIUS; dx++) {
-        if (getBlock(x + dx, y + dy, z + dz) === BLOCK.WATER) return true;
+        if (isWaterBlock(getBlock(x + dx, y + dy, z + dz))) return true;
       }
     }
   }

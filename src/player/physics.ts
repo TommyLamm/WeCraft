@@ -36,7 +36,7 @@
  *  位移**之後**才執行 → 保護要等落地後的**下一幀**才生效。 */
 
 import type { World } from '../world/world';
-import { BLOCK } from '../world/blocks';
+import { isWaterBlock } from '../world/blocks';
 
 export const PLAYER_HALF_WIDTH = 0.3;
 export const PLAYER_HEIGHT = 1.8;
@@ -190,10 +190,10 @@ function stepOnce(
   world: World,
   dt: number,
 ): number | null {
-  // 水檢查（腳或頭）
+  // 水檢查（腳或頭）；B16：水源與流動水／水柱都算水（isWaterBlock）
   const feetId = world.getBlock(Math.floor(p.position.x), Math.floor(p.position.y + 0.1), Math.floor(p.position.z));
   const headId = world.getBlock(Math.floor(p.position.x), Math.floor(p.position.y + 1.6), Math.floor(p.position.z));
-  p.inWater = feetId === BLOCK.WATER || headId === BLOCK.WATER;
+  p.inWater = isWaterBlock(feetId) || isWaterBlock(headId);
 
   // 飛行切換由外部（double-space）處理；這裡只執行
   if (input.fly && !p.flying) {

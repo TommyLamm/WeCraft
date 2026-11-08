@@ -299,6 +299,40 @@ describe('meshChunk', () => {
   });
 });
 
+// ---- B16：流動水（41–48）全部進 water pass、同一流體不畫內部面 ---------------
+describe('B16 flowing water meshing', () => {
+  const ALL_WATER_IDS = [
+    BLOCK.WATER,
+    BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3,
+    BLOCK.WATER_FLOW_4, BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6,
+    BLOCK.WATER_FLOW_7, BLOCK.WATER_FALL,
+  ];
+
+  it('B16: every water id lands in the water pass', () => {
+    // 每個 id 各建一個 fresh world 放一格——不同 id 不會合併，放同一個 world
+    // 會得到 9×6＝54 個 quad，量不到「單一格」的行為。
+    for (const id of ALL_WATER_IDS) {
+      const w = worldWithBlock(5, 60, 5, id);
+      expect(water(w).quadCount, `id ${id}`).toBe(6);
+      expect(opaque(w).quadCount, `id ${id}`).toBe(0);
+    }
+  });
+
+  it('B16: different water ids do not draw an internal face', () => {
+    const w = worldWithBlock(5, 60, 5, BLOCK.WATER_FLOW_1);
+    w.setBlock(6, 60, 5, BLOCK.WATER_FLOW_2);
+    // 共享面（x=6）兩側都不畫 → 10 個可見面各一片；未剔除內部面會是 12。
+    expect(water(w).quadCount).toBe(10);
+    expect(opaque(w).quadCount).toBe(0);
+  });
+
+  it('B16: a flat FLOW layer still greedy-merges', () => {
+    const w = layer(BLOCK.WATER_FLOW_3, 60);
+    expect(water(w).quadCount).toBe(6); // 與既有水源層同一期望（六面各併成一片）
+    expect(opaque(w).quadCount).toBe(0);
+  });
+});
+
 // ---- B3 Task 4: cross 型植被的 foliage pass ----
 
 describe('cross foliage pass', () => {

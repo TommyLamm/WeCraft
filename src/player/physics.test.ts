@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { stepPlayer, createPlayer, wallContactAngleDeg, supportedAt, applyKnockback, PLAYER_HALF_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT } from './physics';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
-import { BLOCK } from '../world/blocks';
+import { BLOCK, type BlockId } from '../world/blocks';
 
 /** 平台：y<=64 滿鋪石頭的無限世界（用大範圍 fill 模擬） */
 function flatWorld(): World {
@@ -387,6 +387,45 @@ describe('sneak edge protection — 潛行防摔邊 (B2.3)', () => {
     expect(p.position.x).toBe(0.5);
     expect(p.position.z).toBe(0.5);
     expect(p.position.y).toBe(65);
+  });
+});
+
+// ---- B16：流動水（flow 1–7／fall）在物理層視為水 ----
+//
+// `stepOnce` 的 in-water 判定改走 `isWaterBlock`：腳或頭所在格是任何水 id
+// （水源 9 或流動水 41–48）→ `inWater === true`，水中 drag 由同一條公式處理
+// （`IN_WATER_DRAG` 0.5 ＋ 每步 0.9 衰減）。期望值與水源完全相同。
+describe('B16 flowing water counts as in-water', () => {
+  /** 池子：水格（id 可為水源或 flow／fall）＋深處池底。池底放得夠低 →
+   *  一步之內不會觸底，垂直速度不會被碰撞歸零，量到的就是水中 drag 本體。 */
+  const poolWorld = (id: BlockId): World => {
+    const w = new World();
+    for (let x = 0; x < 3; x++)
+      for (let z = 0; z < 3; z++) {
+        w.setBlock(x, 55, z, BLOCK.STONE); // 池底（一步內到不了）
+        w.setBlock(x, 65, z, id); // 腳格
+        w.setBlock(x, 66, z, id); // 頭格
+      }
+    return w;
+  };
+
+  it('B16: flowing and falling water both count as in-water', () => {
+    // 一步後垂直速度＝−(32 × 0.5 / 60) × 0.9 ＝ −0.24（與水源同一個期望值）
+    for (const id of [BLOCK.WATER, BLOCK.WATER_FLOW_1, BLOCK.WATER_FALL]) {
+      const p = createPlayer(1.5, 65, 1.5);
+      stepPlayer(p, groundInput, poolWorld(id), 1 / 60);
+      expect(p.inWater, `id ${id}`).toBe(true);
+      expect(p.velocity.y, `id ${id}`).toBeCloseTo(-0.24, 6);
+    }
+  });
+
+  it('B16: standing on solid ground next to flowing water is not in-water', () => {
+    const w = new World();
+    w.setBlock(2, 64, 2, BLOCK.STONE); // 玩家腳下的固體
+    w.setBlock(4, 65, 2, BLOCK.WATER_FLOW_1); // 旁邊的 flow 水（不在玩家腳／頭格內）
+    const p = createPlayer(2.5, 65, 2.5);
+    stepPlayer(p, groundInput, w, 1 / 60);
+    expect(p.inWater).toBe(false);
   });
 });
 
