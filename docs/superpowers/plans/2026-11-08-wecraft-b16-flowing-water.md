@@ -235,8 +235,9 @@ const settle = (sim: WaterSim, steps = 40) => {
   的迴漲波）；最靠近水源的格子先變 AIR，之後才輪到下一格（用 tick 1／2／3 的
   座標檢查）。
 - `a placed block cuts the flow and the tail recedes`：source 在 (0,64,0)，流動水到 (7,64,0)；把 (3,64,0) 設為 `STONE`、notify；settle 後 (4..7,64,0) 全 AIR，source 與 (1..2) 保留。
-- `water falls before it spreads`：source at (0,66,0)、下方 (0,65,0) 與 (0,64,0) 是 AIR、
-  (0,63,0) 是 solid；settle 後 (0,65,0) 是 `WATER_FALL`、(0,64,0) 是 `FLOW_1`
+- `water falls before it spreads`：落地平台 y=63 整片 solid；水源嵌在 y=66 的
+  石壁裡（四面圍住，讓水只能往下）——不然源頭自己的水平鄰居會先流下來、蓋掉
+  本測試要驗的行為。settle 後 (0,65,0) 是 `WATER_FALL`、(0,64,0) 是 `FLOW_1`
   （落地格）；(0,64,1) 會水平擴散成 `FLOW_2`，但 (0,65,1)（水柱旁）保持 AIR
   （`WATER_FALL` 不供給側面）。
 - `two sources do not create a new source`：source at (0,64,0) 與 (2,64,0)，中間 (1,64,0) 是 AIR、下方 solid；settle 後 (1,64,0) 只會是 `FLOW_1`，永遠不是 `BLOCK.WATER`。
