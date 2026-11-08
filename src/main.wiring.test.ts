@@ -331,6 +331,33 @@ function findAllCalls(callName: string): ts.CallExpression[] {
   return out;
 }
 
+/** `new WaterSim({ … })` 的引數**物件字面值**（AST 層）；找不到回 null。
+ *
+ *  `new X(…)` 是 NewExpression（不是 CallExpression）→ `findAllCalls` 抓不到
+ *  → 這裡另外走一次 AST。 */
+function waterSimOptions(): ts.ObjectLiteralExpression | null {
+  let found: ts.ObjectLiteralExpression | null = null;
+  walkAst(mainAst, (n) => {
+    if (found) return;
+    if (!ts.isNewExpression(n)) return;
+    if (!ts.isIdentifier(n.expression) || n.expression.text !== 'WaterSim') return;
+    const arg = n.arguments?.[0];
+    if (!arg || !ts.isObjectLiteralExpression(arg)) return;
+    found = arg;
+  });
+  return found;
+}
+
+/** 物件字面值裡某個屬性的**箭頭函式**值（短名屬性／非箭頭函式 → null）。 */
+function arrowProperty(obj: ts.ObjectLiteralExpression, key: string): ts.ArrowFunction | null {
+  for (const p of obj.properties) {
+    if (!ts.isPropertyAssignment(p)) continue;
+    if (!ts.isIdentifier(p.name) || p.name.text !== key) continue;
+    if (ts.isArrowFunction(p.initializer)) return p.initializer;
+  }
+  return null;
+}
+
 /** 物件字面值裡某個屬性的**值節點**（短名屬性 → 它自己的識別字）。 */
 function propertyValue(obj: ts.ObjectLiteralExpression, key: string): ts.Expression | null {
   for (const p of obj.properties) {
@@ -1606,5 +1633,109 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(mainSource).toContain('weather: () => weatherMode');
     expect(mainSource).toContain('weatherRemaining: () => weather.remaining');
     expect(mainSource).toContain('weatherFlash: () => weatherFlash');
+  });
+});
+
+// ---- B16 Task 6：流動水模擬的主迴圈接線 --------------------------------------
+// 水的**規則本體**在純模組 `world/water.ts`（自己的行為測試覆蓋流動／退去／
+// 未載入區塊）；`World.setFluid`／`setBlockChangeListener` 在 `world.test.ts`
+// 釘住。這裡只釘**組裝根**：模擬有沒有接到世界、每幀推一次、場次邊界有沒有清
+// 佇列並重排程、區塊生成後有沒有恢復水流。
+//
+// 兩層釘法（沿用本檔慣例）：
+// - **字串層**：接線點還在（剔除註解 → 註解掉接線不能假綠）。
+// - **AST 層**：adapter 的寫入必須走 `setFluid`（不重算光照、不召回呼）；
+//   `water` 必須宣告在它讀的 `world` 之後（否則 module 層級就 TDZ 炸掉）。
+describe('main.ts 接線（B16 流動水）', () => {
+  it('the simulation is built on the world with setFluid and chunk loading', () => {
+    expect(mainSource).toContain('new WaterSim({');
+    expect(mainSource).toContain('getBlock: (x, y, z) => world.getBlock(x, y, z)');
+    expect(mainSource).toContain('isLoaded: (x, z) => world.hasChunk(');
+    // **語意層**：adapter 的寫入必須走 `setFluid`——`setBlock` 會標記光照重算
+    // （水的每 0.25 秒一批各觸發八鄰）且會回召 listener（繞回自己）；兩者都
+    // 不是水該走的路徑。`setFluid` 對未載入區塊 no-op（不建區塊）。
+    const options = waterSimOptions();
+    expect(options).not.toBeNull();
+    if (!options) throw new Error('main.ts 裡沒有 new WaterSim({...})');
+    const setter = arrowProperty(options, 'setBlock');
+    expect(setter).not.toBeNull();
+    if (!setter) throw new Error('WaterSim adapter 沒有 setBlock 箭頭屬性');
+    const calls: Array<{ receiver: string; method: string }> = [];
+    walkAst(setter, (n) => {
+      if (!ts.isCallExpression(n)) return;
+      if (!ts.isPropertyAccessExpression(n.expression)) return;
+      const recv = n.expression.expression;
+      calls.push({
+        receiver: ts.isIdentifier(recv) ? recv.text : recv.getText(mainAst),
+        method: n.expression.name.text,
+      });
+    });
+    expect(calls).toContainEqual({ receiver: 'world', method: 'setFluid' });
+    expect(calls.some((c) => c.method === 'setBlock')).toBe(false);
+  });
+
+  it('the simulation is declared after the world it reads', () => {
+    // module 層級的 `const` 有 TDZ：宣告在 `world` 之前的話，模組載入當下的
+    // 建構就會炸（而且 `setBlockChangeListener` 這行是立刻執行的）。
+    const worldAt = mainSource.indexOf('const world = new World();');
+    const waterAt = mainSource.indexOf('const water = new WaterSim({');
+    expect(worldAt).toBeGreaterThan(-1);
+    expect(waterAt).toBeGreaterThan(worldAt);
+  });
+
+  it('external block edits feed the simulation', () => {
+    // 玩家／爆炸／存檔重套的 setBlock → 監聽器把「位元真的變了」的格子餵給
+    // 模擬（同 id 重寫不通知由 world.test.ts 釘住）。允許換行 → 分段比對。
+    expect(mainSource).toContain('world.setBlockChangeListener(');
+    expect(mainSource).toContain('water.notifyBlockChanged(x, y, z)');
+  });
+
+  it('the simulation ticks once per playing frame before farming', () => {
+    const playing = playingBranchBody();
+    expect(playing).toContain('water.tick(dt)');
+    expect(countOf('water.tick(')).toBe(1); // 全檔唯一呼叫點（每幀恰一次）
+    const tickAt = playing.indexOf('water.tick(dt)');
+    const farmAt = playing.indexOf('farmAcc += dt');
+    const growAt = playing.indexOf('growWheatBatch');
+    expect(tickAt).toBeGreaterThan(-1);
+    expect(farmAt).toBeGreaterThan(-1);
+    expect(growAt).toBeGreaterThan(-1);
+    // 水先流（本幀的水位已定），農業才讀「耕地旁有沒有水」→ tick 必須在
+    // 小麥成長之前（`tick` 自己累積 0.25 秒，不是每幀都真的處理批次）。
+    expect(tickAt).toBeLessThan(farmAt);
+    expect(tickAt).toBeLessThan(growAt);
+  });
+
+  it('chunk generation and the spawn chunk schedule from modified', () => {
+    // worker 回應（區塊生成完成、reapply 之後）→ 用該區塊 ±1 的 modified 條目
+    // 重排程：跨區塊邊界的水流要恢復，否則邊界水會停住。
+    expect(functionBody('processQueues')).toContain(
+      'water.scheduleFromModified(world.modified, { cx, cz })',
+    );
+    // 開局的 (0,0) 同步生成 → 同一套重排程。
+    expect(functionBody('spawnPoint')).toContain(
+      'water.scheduleFromModified(world.modified, { cx: 0, cz: 0 })',
+    );
+  });
+
+  it('session boundaries reset or reschedule the queue', () => {
+    // 新遊戲（resetWorld）／回到標題 → 上一場的水佇列不得留下來。
+    expect(functionBody('resetWorld')).toContain('water.reset()');
+    expect(functionBody('quitToTitle')).toContain('water.reset()');
+    // 讀檔／雲端接關 → 先清舊佇列，再依 modified overlay 重排程。
+    for (const fn of ['continueGame', 'continueFromCloud']) {
+      const body = functionBody(fn);
+      expect(body, `${fn} 必須重置水佇列`).toContain('water.reset()');
+      expect(body, `${fn} 必須從 modified 重排程`).toContain('water.scheduleFromModified(');
+    }
+  });
+
+  it('paused/dead/sleeping frames do not tick water', () => {
+    // countOf === 1 ＋「那唯一的呼叫點在 playing 分支」→ 其他狀態（paused／
+    // dead／sleeping／title／各種覆蓋層）不可能推進水。
+    expect(countOf('water.tick(')).toBe(1);
+    expect(playingBranchBody()).toContain('water.tick(dt)');
+    // 睡覺分支在**外層**迴圈（世界凍結）→ 不得有水 tick。
+    expect(blockAfter("if (state === 'sleeping') {")).not.toContain('water.tick(');
   });
 });

@@ -36,6 +36,8 @@ import {
   type FishingState,
 } from './world/fishing';
 import { BLOCK, isWaterBlock } from './world/blocks';
+// B16：流動水的**純邏輯**模擬（規則本體）；main 只負責把世界接上、每幀推進。
+import { WaterSim } from './world/water';
 import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './world/furnace';
 // B3 Task 7／8：世界生成版本戳記 + 「這份存檔需不需要跳提示」的判斷。
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
@@ -470,6 +472,13 @@ const uiRoot = document.getElementById('ui-root') as HTMLElement;
 const gs = createGameScene(canvas);
 const settings = loadSettings();
 const world = new World();
+// B16：流動水模擬。adapter 只在已載入區塊讀寫；setFluid 不觸發光照重算。
+const water = new WaterSim({
+  getBlock: (x, y, z) => world.getBlock(x, y, z),
+  setBlock: (x, y, z, id) => { world.setFluid(x, y, z, id); },
+  isLoaded: (x, z) => world.hasChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)),
+});
+world.setBlockChangeListener((x, y, z) => water.notifyBlockChanged(x, y, z));
 const chunkRenderer = new ChunkRenderer(gs.scene); // Task 4: shared texture array
 // Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
@@ -1760,6 +1769,9 @@ function spawnPoint(): { x: number; y: number; z: number } {
     // recorded before the chunk existed as generated (e.g. Continue's
     // applyModified auto-creating (0,0) ahead of this line).
     world.reapplyModifiedInChunk(0, 0);
+    // B16：(0,0) 的方塊就緒 → 用該區塊的 modified 條目重排程（開局就有的水
+    // 從這裡開始流；未載入的格子由 WaterSim 過濾掉）。
+    water.scheduleFromModified(world.modified, { cx: 0, cz: 0 });
     // B6 Task 3 生成接線（與 worker 回應 handler 同一套）：整塊寫入不經
     // setBlock → topY 與 lightDirty 要自己補。
     chunk.topY = computeChunkTopY(chunk);
@@ -2425,6 +2437,9 @@ function processQueues(): void {
         relit.topY = computeChunkTopY(relit);
         markLightDirty(world, cx, cz);
       }
+      // B16：區塊（含重套的編輯）就緒 → 用該區塊的 modified 條目重排程，讓
+      // 跨區塊／載入後的水流恢復（生成前排程會被 isLoaded 擋掉）。
+      water.scheduleFromModified(world.modified, { cx, cz });
     }).catch(() => genInFlight.delete(key));
     budgetGen--;
   }
@@ -3250,6 +3265,9 @@ function cloudPauseOpts(): {
 function quitToTitle(): void {
   audio.stopAmbience(); // Phase 3 Task 10: kill the wind bed + chirp/cricket timer
   sessionStarted = false;
+  // B16：場次結束 → 上一場的水佇列清掉（世界保留，但水不該在標題畫面後的
+  // 下一場繼續流；新場次由載入／重排程重建）。
+  water.reset();
   resetUiOwnedState(dropAtPlayer); // A4：邊界先清 UI 狀態（再重置玩家位置）
   resetPlayerToSpawn();
   // B2.1：標題畫面的環繞相機也用同一台相機 → 疾跑 FOV 必須在離開遊戲時
@@ -3325,6 +3343,9 @@ function resetWorld(): void {
   pendingGen.length = 0;
   pendingMesh.length = 0;
   pendingLight.length = 0; // B6 Task 3：光照佇列與其他佇列同樣不跨世界沿用
+  // B16：世界資料（chunks + modified）都沒了 → 上一場的水佇列指向的格子
+  // 不再有意義，一併清掉（session 邊界；新世界的水由載入後的重排程重建）。
+  water.reset();
   resetSessionEntities();
   // B8 Task 6：新世界的塊實體歸零（箱子／熔爐都不跨世界；不再有「熔爐進度已
   // 重置」的 toast——熔爐進度現在會存檔，只有真的開新局才清）。
@@ -3416,6 +3437,11 @@ function continueGame(payload: SavePayload): void {
   // 放不下的餘量隨舊場次丟棄——不得活到還原後的新場次）。
   resetUiOwnedState();
   world.applyModified(payload.modified); // 1. world edits (see doc above)
+  // B16：讀檔進場 → 上一場的佇列清掉（applyModified 經 setBlock 的通知也一併
+  // 洗掉），再依 modified overlay 重排程——含存檔帶回的流動水，載入後失去
+  // 水源的流動水會照規則退去（不把上一場跑一半的批次帶進新場次）。
+  water.reset();
+  water.scheduleFromModified(world.modified);
   // B8 Task 4：塊實體（箱子內容與熔爐狀態）——清掉本頁先前的 session，再從
   // 存檔還原。`payload.blockEntities` 已被 `loadGame` 正規化過（27 格、合法
   // item id、座標合法、座標去重）。
@@ -3554,6 +3580,11 @@ function continueGame(payload: SavePayload): void {
  *  payload application here (re-applying is exactly the bug this fixes, and
  *  cloud never carries voxel edits). Body = continueGame's entry tail only. */
 function continueFromCloud(): void {
+  // B16：雲端接關進場 → 與 continueGame 對稱：清掉舊佇列並依 modified 重排程。
+  // 雲端 payload 不帶 voxel 編輯 → `world.modified` 通常是空集合（保留對稱性，
+  // 也不把標題畫面期間殘留的佇列帶進新場次）。
+  water.reset();
+  water.scheduleFromModified(world.modified);
   cloudAppliedAtBoot = false; // session started — the boot state is now the session
   beginNoticeSession(); // B3 Task 8: 新的 play session → 「只提示一次」的記號歸零
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
@@ -4028,6 +4059,13 @@ gs.renderer.setAnimationLoop(() => {
       applyAdvancement({ type: 'phase', phase });
       audio.setPhase(phase); // Phase 3 Task 10: flip ambience voicing (+ one cue)
     }
+
+    // ---- B16 流動水：每幀推進水模擬（規則本體在 world/water.ts）----
+    // `tick` 自己累積 0.25 秒 → 每幀呼叫、滿了才處理一批（最多 256 格；掉幀
+    // 時水只變慢不暴衝）。放在農業成長**之前**：水會改變耕地周圍的方塊，
+    // 成長批的濕潤判定要讀到本幀的水位。批次造成的變更走 `setFluid`（記
+    // modified、標記網格重算），不觸發光照重算、也不回召 listener。
+    water.tick(dt);
 
     // ---- B13 小麥成長：每 5 秒掃 modified overlay，最多 64 株 ----
     // 規則本體在 world/farming.ts 的 growWheatBatch（光照 ≥9、下方耕地、
