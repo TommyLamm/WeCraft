@@ -62,6 +62,17 @@ export const BLOCK = {
   WHEAT_1: 38,
   WHEAT_2: 39,
   WHEAT_3: 40,
+  // B16：流動水（append-only 41–48）。水源仍是 id 9；41–47 是水平距離
+  // 1–7，48 是下落中的水柱。全部沒有物品形式，舊版遇到未知 id 會 fallback 空氣
+  // （存檔格式不動）。
+  WATER_FLOW_1: 41,
+  WATER_FLOW_2: 42,
+  WATER_FLOW_3: 43,
+  WATER_FLOW_4: 44,
+  WATER_FLOW_5: 45,
+  WATER_FLOW_6: 46,
+  WATER_FLOW_7: 47,
+  WATER_FALL: 48,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -150,6 +161,15 @@ export const T = {
  *  (currently `T.WHEAT_3`), so appending a tile and pointing `TILE_COUNT` at it
  *  is the only change needed to grow the atlas. */
 export const TILE_COUNT = T.WHEAT_3 + 1;
+
+/** B16：流動水 41–48 與水源 id 9 共用同一份定義（差別只有 id；三面都用
+ *  水源 tile）。`hardness: Infinity` = 不可破壞；沒有物品形式。 */
+const FLOWING_WATER_DEF = (id: BlockId): BlockDef => ({
+  id, name: 'water', hardness: Infinity, blastResistance: 100,
+  solid: false, transparent: true, shape: 'cube',
+  top: T.WATER, side: T.WATER, bottom: T.WATER,
+  requiredTool: null, fastTool: null,
+});
 
 /** Block registry (Task 5): vanilla hardness (MC Java 1.20+) plus, per block,
  *  the harvest gate (`requiredTool`) and the fast kind (`fastTool`) that feeds
@@ -240,6 +260,15 @@ const DEFS: Record<number, BlockDef> = {
   38: { id: 38, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_1, side: T.WHEAT_1, bottom: T.WHEAT_1, requiredTool: null, fastTool: null },
   39: { id: 39, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_2, side: T.WHEAT_2, bottom: T.WHEAT_2, requiredTool: null, fastTool: null },
   40: { id: 40, name: 'wheat', hardness: 0, blastResistance: 0, solid: false, transparent: true, shape: 'cross', top: T.WHEAT_3, side: T.WHEAT_3, bottom: T.WHEAT_3, requiredTool: null, fastTool: null },
+  // B16：流動水 41–48（水平距離 1–7 ＋ 下落水柱）。每個 id 都是獨立 key。
+  41: FLOWING_WATER_DEF(41),
+  42: FLOWING_WATER_DEF(42),
+  43: FLOWING_WATER_DEF(43),
+  44: FLOWING_WATER_DEF(44),
+  45: FLOWING_WATER_DEF(45),
+  46: FLOWING_WATER_DEF(46),
+  47: FLOWING_WATER_DEF(47),
+  48: FLOWING_WATER_DEF(48),
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -254,6 +283,10 @@ export function blastResistanceOf(blockId: number): number {
 
 export const isSolid = (id: number): boolean => getBlockDef(id).solid;
 export const isTransparent = (id: number): boolean => getBlockDef(id).transparent;
+/** 任何水方塊（B16）：水源 id 9 或流動水 41–48。`NaN`／未知 id → false。 */
+export function isWaterBlock(id: number): boolean {
+  return id === BLOCK.WATER || (id >= BLOCK.WATER_FLOW_1 && id <= BLOCK.WATER_FALL);
+}
 /** cross 型方塊（花／草）：渲染成兩片對角平面，不佔滿格。 */
 export const isCross = (id: number): boolean => getBlockDef(id).shape === 'cross';
 /** 可被「瞄準／挖掘」命中的方塊：實心方塊 ＋ cross 植被 ＋ 火把（B6 Task 6）。

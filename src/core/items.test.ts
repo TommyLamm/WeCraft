@@ -40,13 +40,22 @@ const BLOCK_ITEMS: ItemId[] = [
   // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）
   'tnt',
 ];
-/** B13：耕地與小麥四階段是狀態方塊，刻意沒有物品形式。 */
+/** B13：耕地與小麥四階段是狀態方塊，刻意沒有物品形式。
+ *  B16：流動水 41–48 也是世界模擬產生的狀態方塊，沒有物品形式。 */
 const BLOCK_ONLY_STATES: ReadonlySet<number> = new Set([
   BLOCK.FARMLAND,
   BLOCK.WHEAT_0,
   BLOCK.WHEAT_1,
   BLOCK.WHEAT_2,
   BLOCK.WHEAT_3,
+  BLOCK.WATER_FLOW_1,
+  BLOCK.WATER_FLOW_2,
+  BLOCK.WATER_FLOW_3,
+  BLOCK.WATER_FLOW_4,
+  BLOCK.WATER_FLOW_5,
+  BLOCK.WATER_FLOW_6,
+  BLOCK.WATER_FLOW_7,
+  BLOCK.WATER_FALL,
 ]);
 
 /** B5 Task 2：11 把新工具（木／石／鐵鏟 ＋ 金／鑽的鎬斧劍鏟）。 */
@@ -156,6 +165,12 @@ describe('items', () => {
 
   it('B13: the farming state blocks deliberately have no item form', () => {
     for (const id of BLOCK_ONLY_STATES) expect(itemFromBlock(id)).toBeNull();
+  });
+
+  it('B16: flowing water has no item form', () => {
+    for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
+      expect(itemFromBlock(id)).toBeNull();
+    }
   });
 
   it('ALL_ITEM_IDS is the canonical list: no dupes, same set as the union', () => {

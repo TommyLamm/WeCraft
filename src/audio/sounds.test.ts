@@ -62,6 +62,15 @@ describe('materialGroup', () => {
       [BLOCK.WHEAT_1]: 'grass',
       [BLOCK.WHEAT_2]: 'grass',
       [BLOCK.WHEAT_3]: 'grass',
+      // B16：流動水（41–48）全部走水源的 water 音色
+      [BLOCK.WATER_FLOW_1]: 'water',
+      [BLOCK.WATER_FLOW_2]: 'water',
+      [BLOCK.WATER_FLOW_3]: 'water',
+      [BLOCK.WATER_FLOW_4]: 'water',
+      [BLOCK.WATER_FLOW_5]: 'water',
+      [BLOCK.WATER_FLOW_6]: 'water',
+      [BLOCK.WATER_FLOW_7]: 'water',
+      [BLOCK.WATER_FALL]: 'water',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

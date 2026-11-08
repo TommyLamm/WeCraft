@@ -7,6 +7,7 @@ import {
   isTransparent,
   isCross,
   isTargetable,
+  isWaterBlock,
   PLACEABLE,
   HOTBAR_DEFAULT,
   T,
@@ -81,6 +82,15 @@ describe('blocks', () => {
       [BLOCK.WHEAT_1, 0],
       [BLOCK.WHEAT_2, 0],
       [BLOCK.WHEAT_3, 0],
+      // B16 新增：流動水 41–48 與水源相同（不可破壞）
+      [BLOCK.WATER_FLOW_1, Infinity],
+      [BLOCK.WATER_FLOW_2, Infinity],
+      [BLOCK.WATER_FLOW_3, Infinity],
+      [BLOCK.WATER_FLOW_4, Infinity],
+      [BLOCK.WATER_FLOW_5, Infinity],
+      [BLOCK.WATER_FLOW_6, Infinity],
+      [BLOCK.WATER_FLOW_7, Infinity],
+      [BLOCK.WATER_FALL, Infinity],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -141,6 +151,15 @@ describe('blocks', () => {
       [BLOCK.WHEAT_1, null, null],
       [BLOCK.WHEAT_2, null, null],
       [BLOCK.WHEAT_3, null, null],
+      // B16 新增：流動水 41–48 與水源相同（無工具門檻、無加速工具）
+      [BLOCK.WATER_FLOW_1, null, null],
+      [BLOCK.WATER_FLOW_2, null, null],
+      [BLOCK.WATER_FLOW_3, null, null],
+      [BLOCK.WATER_FLOW_4, null, null],
+      [BLOCK.WATER_FLOW_5, null, null],
+      [BLOCK.WATER_FLOW_6, null, null],
+      [BLOCK.WATER_FLOW_7, null, null],
+      [BLOCK.WATER_FALL, null, null],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -675,6 +694,43 @@ describe('blocks', () => {
         `block ${id} has a non-finite blast resistance`,
       ).toBe(true);
       expect(def.blastResistance).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  // ---- B16：流動水（append-only 41–48）----
+
+  it('B16: water ids are append-only 41–48 and share the water definition', () => {
+    const ids = [
+      BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3,
+      BLOCK.WATER_FLOW_4, BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6,
+      BLOCK.WATER_FLOW_7, BLOCK.WATER_FALL,
+    ];
+    expect(ids).toEqual([41, 42, 43, 44, 45, 46, 47, 48]);
+    for (const id of ids) {
+      expect(getBlockDef(id)).toMatchObject({
+        id, name: 'water', hardness: Infinity, blastResistance: 100,
+        solid: false, transparent: true, shape: 'cube',
+        top: T.WATER, side: T.WATER, bottom: T.WATER,
+        requiredTool: null, fastTool: null,
+      });
+    }
+  });
+
+  it('B16: isWaterBlock covers source + flow + fall and nothing else', () => {
+    expect(isWaterBlock(BLOCK.WATER)).toBe(true);
+    for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
+      expect(isWaterBlock(id)).toBe(true);
+    }
+    expect(isWaterBlock(BLOCK.AIR)).toBe(false);
+    expect(isWaterBlock(BLOCK.STONE)).toBe(false);
+    expect(isWaterBlock(999)).toBe(false);
+    expect(isWaterBlock(Number.NaN)).toBe(false);
+  });
+
+  it('B16: flowing water is not placeable and not in the default hotbar', () => {
+    for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
+      expect(PLACEABLE).not.toContain(id);
+      expect(HOTBAR_DEFAULT).not.toContain(id);
     }
   });
 });
