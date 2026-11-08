@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 68). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 69). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 68 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(68);
+  it('holds exactly the 69 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(69);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -74,6 +74,8 @@ describe('recipe table', () => {
         'bread', 'bone_meal',
         // B14：釣魚竿
         'fishing_rod',
+        // B16：空桶（3 鐵錠 V 形；水桶不可合成）
+        'bucket',
       ].sort(),
     );
   });
@@ -205,6 +207,41 @@ describe('recipe table', () => {
         ['stick', null, 'string'],
       ]);
     }
+  });
+});
+
+describe('bucket recipe (B16)', () => {
+  it('B16: three iron ingots in a V craft one bucket', () => {
+    const g = emptyGrid(3);
+    g[0] = s('iron_ingot'); // (0,0) 左上
+    g[2] = s('iron_ingot'); // (0,2) 右上
+    g[4] = s('iron_ingot'); // (1,1) 中央下方
+    expect(findRecipe(g, 3)?.id).toBe('bucket');
+    expect(matchRecipe(g, 3)).toEqual({ item: 'bucket', count: 1 });
+    // 圖形本體：V 形（可平移，但空位必須是空位）
+    const r = recipe('bucket');
+    expect(r.kind).toBe('shaped');
+    if (r.kind === 'shaped') {
+      expect(r.pattern).toEqual([
+        ['iron_ingot', null, 'iron_ingot'],
+        [null, 'iron_ingot', null],
+      ]);
+    }
+  });
+
+  it('B16: three iron ingots in a row or column do not craft a bucket', () => {
+    // 上排三格（1×3）→ bbox 高度不符
+    const row = emptyGrid(3);
+    row[0] = s('iron_ingot'); row[1] = s('iron_ingot'); row[2] = s('iron_ingot');
+    expect(findRecipe(row, 3)?.id ?? null).not.toBe('bucket');
+    // 一直線（直排 3×1）→ 也不是桶子
+    const col = emptyGrid(3);
+    col[0] = s('iron_ingot'); col[3] = s('iron_ingot'); col[6] = s('iron_ingot');
+    expect(findRecipe(col, 3)?.id ?? null).not.toBe('bucket');
+  });
+
+  it('B16: water_bucket is not craftable (filling a source makes one)', () => {
+    expect(RECIPES.some((r) => r.result.item === 'water_bucket')).toBe(false);
   });
 });
 

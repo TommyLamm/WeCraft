@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming + B14 fishing rod: exactly 68) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming + B14 fishing rod + B16 bucket: exactly 69) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -76,7 +76,7 @@ const WHEAT: PatternCell = 'wheat';
 const ROD_STICK: PatternCell = 'stick';
 const ROD_STRING: PatternCell = 'string';
 
-/** The settled recipe table — exactly 68 entries, checked by tests. */
+/** The settled recipe table — exactly 69 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -629,6 +629,17 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [ROD_STICK, null, ROD_STRING],
     ],
     result: { item: 'fishing_rod', count: 1 },
+  },
+  // B16：空桶（原版 Bucket 配方：3 個鐵錠的 V 形，上排左右 ＋ 中央下方；寬 3 →
+  // 需工作台 3×3）。水桶不可合成——只能右鍵水源裝水得到（plan 驗收項）。
+  {
+    id: 'bucket',
+    kind: 'shaped',
+    pattern: [
+      [I, null, I],
+      [null, I, null],
+    ],
+    result: { item: 'bucket', count: 1 },
   },
 ];
 

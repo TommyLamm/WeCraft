@@ -828,6 +828,21 @@ function drawItemArt(ctx: CanvasRenderingContext2D, item: ItemId): void {
       ctx.fill();
       break;
     }
+    // ---- B16：空桶與水桶 ----
+    case 'bucket':
+    case 'water_bucket': {
+      // 鐵桶：梯形桶身＋上緣＋提把；水桶加藍色水面。
+      ctx.fillStyle = '#b9c6d4';
+      ctx.beginPath();
+      ctx.moveTo(8, 12); ctx.lineTo(24, 12); ctx.lineTo(21, 27); ctx.lineTo(11, 27);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#7f8fa1'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = item === 'water_bucket' ? '#3d7bd1' : '#8a8f96';
+      ctx.fillRect(11, 17, 10, item === 'water_bucket' ? 7 : 2);
+      ctx.strokeStyle = '#7f8fa1'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(16, 12, 7, Math.PI, 0); ctx.stroke();
+      break;
+    }
     default: {
       // unknown/future item — neutral placeholder until it gets real art
       ctx.fillStyle = '#7a7a7a';

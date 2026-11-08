@@ -108,6 +108,9 @@ const B14_ITEM_IDS: ItemId[] = [
   'fishing_rod', 'raw_cod', 'cooked_cod', 'raw_salmon',
   'cooked_salmon', 'pufferfish', 'tropical_fish',
 ];
+/** B16：空桶與水桶。兩者皆堆疊 1（原版桶子 stackable = No）、皆非方塊物品；
+ *  水桶不是任何配方的產物——只能右鍵水源裝水得到。 */
+const B16_ITEM_IDS = ['bucket', 'water_bucket'] as const;
 const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...BLOCK_ITEMS,
   ...TOOL_ITEMS,
@@ -119,6 +122,7 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
   ...MATERIAL_ITEMS,
   ...B13_ITEM_IDS,
   ...B14_ITEM_IDS,
+  ...B16_ITEM_IDS,
   'oak_leaves', 'snow_block', 'bedrock',
 ])];
 
@@ -135,8 +139,9 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B12 再補 16 個（4 材質 × 4 部位盔甲）→ 97。
  *  B13 再補 9 個（4 個農產／材料 ＋ 5 把鋤）→ 106。
  *  B14 再補 7 個（釣魚竿 ＋ 6 種魚）→ **113**。
+ *  B16 再補 2 個（空桶／水桶；皆堆疊 1、皆非方塊）→ **115**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 113;
+const TOTAL_ITEM_COUNT = 115;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -325,6 +330,20 @@ describe('items', () => {
     });
     expect(stackName('raw_cod')).toBe('Raw Cod');
     expect(stackName('tropical_fish')).toBe('Tropical Fish');
+  });
+
+  // ---- B16：空桶與水桶 ----
+
+  it('B16: bucket and water bucket are stack-1, sanitizable items', () => {
+    for (const id of B16_ITEM_IDS) {
+      expect(ALL_ITEM_IDS).toContain(id);
+      expect(sanitizeStack({ item: id, count: 1 })).toEqual({ item: id, count: 1 });
+      expect(maxStack(id)).toBe(1);
+      expect(blockFromItem(id)).toBeNull();
+    }
+    // 沒有 DISPLAY_NAMES 覆寫 → title-case 自動轉出原版名稱
+    expect(stackName('bucket')).toBe('Bucket');
+    expect(stackName('water_bucket')).toBe('Water Bucket');
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

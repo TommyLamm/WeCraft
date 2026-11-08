@@ -29,6 +29,10 @@ const B4_ITEM_IDS = [
  *  否則會掉進 `default:` 的灰色 placeholder（從 items.ts 的現況算出來，不是手抄）。 */
 const NON_BLOCK_ITEM_IDS = ALL_ITEM_IDS.filter((id) => blockFromItem(id) === null);
 
+/** B16：2 個需要專屬像素圖的新 id（空桶／水桶；兩者皆非方塊物品）。
+ *  舊版存檔清洗會把未知 id 丟掉，這裡守的是「兩個 id 都有 drawItemArt 分支」。 */
+const B16_NEEDS_ART = ['bucket', 'water_bucket'] as const;
+
 /** B5 Task 2：14 個需要專屬像素圖的新 id（3 個原料 ＋ 11 把工具）。
  *  本批的方塊物品（礫石／金鑽礦／雲杉白樺板材）走圖集裁切，不在這份清單。 */
 const B5_NEEDS_ART = [
@@ -124,6 +128,15 @@ describe('icons', () => {
     ] as const;
     expect(B14_NEEDS_ART).toHaveLength(7);
     for (const id of B14_NEEDS_ART) {
+      expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
+      expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
+    }
+  });
+
+  it('every B16 non-block item id has its own icon branch', () => {
+    const labels = new Set(drawItemArtCaseLabels(ICONS_SOURCE));
+    expect(B16_NEEDS_ART).toHaveLength(2);
+    for (const id of B16_NEEDS_ART) {
       expect(blockFromItem(id), `${id} 不應有方塊物品形式`).toBeNull();
       expect(labels.has(id), `icons.ts drawItemArt() has no case for ${id}`).toBe(true);
     }
