@@ -665,8 +665,11 @@ describe('main.ts 接線（B3 Task 9 Step 4：放置目標指向被點擊格本�
 
 describe('main.ts 接線（B6 Task 6：火把的放置閘門與支撐掉落）', () => {
   it('placement routes through the unified gate (torches included)', () => {
-    // 全檔唯一呼叫點：tryPlaceBlock 的放行一律走 canPlaceBlockAt（含火把）
-    expect(countOf('canPlaceBlockAt(')).toBe(1);
+    // 原本唯一呼叫點：tryPlaceBlock 的放行一律走 canPlaceBlockAt（含火把）。
+    // B16 Task 7：水桶倒水的目標格走**同一套**放置閘門
+    // （`tryEmptyBucket` 內的 `canPlaceBlockAt(..., BLOCK.WATER)`——不能把水
+    // 倒進玩家站的格子）→ 1 → 2；兩處都沒有私設的放行規則。
+    expect(countOf('canPlaceBlockAt(')).toBe(2);
   });
 
   it('the break branch pops unsupported torches after the block is removed', () => {
@@ -1104,14 +1107,15 @@ describe('main.ts 接線（B4 分診⑧：音訊播放呼叫點）', () => {
     expect(countOf("audio.play('place', 'grass'")).toBe(1);
   });
 
-  it('all seven play call sites stay wired (place / step / break / dig / eat-thud / tool-break / farming)', () => {
+  it('all eight play call sites stay wired (place / step / break / dig / eat-thud / tool-break / farming / bucket)', () => {
     // 以實測釘死（place 方塊、腳步、破壞、挖掘、進食 thud、工具損壞、農業
     // 共用泥土聲共 7 處）——防止未來重構時**靜默刪掉**任何一條音效路徑。
     // B7 Task 5：新增工具損壞音（`damageHeldTool` 內的
     // `audio.play('tool_break', …)`）→ 5 → 6；B13 新增 `playFarmingSound`
-    // （一個呼叫點、三種農業動作共用）→ 6 → 7；這條釘的是「路徑被刪」，
-    // 新增（本批）本來就會轉紅一次 → 已依實測同步。
-    expect(countOf('audio.play(')).toBe(7);
+    // （一個呼叫點、三種農業動作共用）→ 6 → 7；B16 Task 7 新增
+    // `playBucketSound`（**一個**呼叫點、裝水與倒水共用）→ 7 → 8；
+    // 這條釘的是「路徑被刪」，新增（本批）本來就會轉紅一次 → 已依實測同步。
+    expect(countOf('audio.play(')).toBe(8);
   });
 });
 
@@ -1555,8 +1559,9 @@ describe('main.ts 接線（B15：天氣）', () => {
     expect(playing).toContain('audio.setWeather(weatherMode)');
     expect(playing).toContain('hudHint.show(weatherChangeText(weatherMode))');
     // 雷聲走專屬的 playThunder → 不新增 audio.play 呼叫點（既有 7 處不變）。
+    // B16 Task 7：裝水／倒水新增 `playBucketSound`（一個呼叫點）→ 7 → 8。
     expect(playing).toContain('audio.playThunder({ volume: 0.9 })');
-    expect(countOf('audio.play(')).toBe(7);
+    expect(countOf('audio.play(')).toBe(8);
   });
 
   it('the sky colours carry the weather tint (both consumers, full statements)', () => {
@@ -1737,5 +1742,66 @@ describe('main.ts 接線（B16 流動水）', () => {
     expect(playingBranchBody()).toContain('water.tick(dt)');
     // 睡覺分支在**外層**迴圈（世界凍結）→ 不得有水 tick。
     expect(blockAfter("if (state === 'sleeping') {")).not.toContain('water.tick(');
+  });
+});
+
+// ---- B16 Task 7：水桶裝水／倒水的接線 ---------------------------------------
+// 規則本體在純模組 `src/player/bucket.ts`（`canFillBucket`／`bucketAfterFill`／
+// `bucketAfterEmpty`）；這裡只釘**組裝根**：右鍵分流的位置、射線選項、寫入世界
+// 與音效呼叫點。
+//
+// **分流位置＝行為**：水桶分支必須排在「使用方塊」（工作台／熔爐／箱子／床／
+// TNT）**之後**（那些方塊的使用優先），也要排在釣魚竿／弓／食物**之前**（手上
+// 拿著桶時，右鍵是裝水／倒水，不是拋線／拉弓／進食）。
+describe('main.ts 接線（B16 Task 7：水桶）', () => {
+  it('the bucket helpers exist', () => {
+    expect(mainSource).toContain('heldIsBucket()');
+    expect(mainSource).toContain('heldIsWaterBucket()');
+    expect(mainSource).toContain('tryFillBucket(');
+    expect(mainSource).toContain('tryEmptyBucket(');
+  });
+
+  it('the bucket branches run after block use and before the rod/bow/food', () => {
+    const body = blockAfter('if (wantPlace) {');
+    const bucketAt = body.indexOf('heldIsBucket()');
+    const waterBucketAt = body.indexOf('heldIsWaterBucket()');
+    const rodAt = body.indexOf('heldIsFishingRod()');
+    const tntAt = body.indexOf('hitBlock === BLOCK.TNT');
+    expect(tntAt).toBeGreaterThan(-1);
+    expect(bucketAt).toBeGreaterThan(tntAt); // TNT 點燃仍優先
+    expect(waterBucketAt).toBeGreaterThan(tntAt);
+    expect(bucketAt).toBeLessThan(rodAt); // 水桶先於釣魚竿
+    expect(waterBucketAt).toBeLessThan(rodAt);
+    expect(bucketAt).toBeLessThan(body.indexOf('heldIsBow()'));
+    expect(bucketAt).toBeLessThan(body.indexOf('heldIsFood()'));
+  });
+
+  it('fill uses the water-inclusive ray and a source check', () => {
+    const body = functionBody('tryFillBucket');
+    // **水也必須能被射線命中**（一般挖掘／放置的射線照穿水看到水底）。
+    expect(body).toContain('includeWater: true');
+    // 規則本體在純模組（水源／最近命中才裝）。
+    expect(body).toContain('canFillBucket(');
+    // 裝走水源 → 那一格變成空氣（流動水會自己退下去）。
+    expect(body).toContain('world.setBlock(');
+    expect(body).toContain('BLOCK.AIR');
+    // 裝完手上是水桶（不是「憑空加一個」）。
+    expect(body).toContain('bucketAfterFill()');
+    expect(body).toContain('inventory.setSlot(selected, bucketAfterFill())');
+  });
+
+  it('empty places a source and returns the empty bucket', () => {
+    const body = functionBody('tryEmptyBucket');
+    expect(body).toContain('BLOCK.WATER');
+    expect(body).toContain('resolvePlacementTarget(');
+    expect(body).toContain('canPlaceBlockAt(');
+    expect(body).toContain('bucketAfterEmpty()');
+    expect(body).toContain('inventory.setSlot(selected, bucketAfterEmpty())');
+  });
+
+  it('bucket sounds keep one audio.play call site', () => {
+    // 裝水與倒水共用**一個**音效呼叫點（`playBucketSound`）→ 全檔 7 → 8。
+    expect(countOf('audio.play(')).toBe(8);
+    expect(functionBody('playBucketSound')).toContain("audio.play('place', 'water'");
   });
 });

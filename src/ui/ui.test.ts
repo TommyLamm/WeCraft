@@ -1047,6 +1047,9 @@ describe('pause menu', () => {
     expect(hint!.textContent).toContain('Ctrl+Q');
     expect(hint!.textContent).toContain('F5');
     expect(hint!.textContent).toContain('右鍵');
+    // B16 Task 7：水桶的操作提示（空桶裝水／水桶倒水）。
+    expect(hint!.textContent).toContain('空桶右鍵水源裝水');
+    expect(hint!.textContent).toContain('水桶右鍵方塊倒水');
     menus.hideAll();
   });
 
@@ -1069,7 +1072,7 @@ describe('pause menu', () => {
     const hint = root.querySelector('.ui-hint');
     expect(hint).not.toBeNull();
     expect(hint!.textContent).toBe(
-      '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角',
+      '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角｜空桶右鍵水源裝水、水桶右鍵方塊倒水（水會流向低處，水平最多 7 格）',
     );
     menus.hideAll();
   });

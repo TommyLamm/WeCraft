@@ -155,6 +155,9 @@ import {
 // B2.5：Q 丟棄的**決策規則**（純函式）：創造模式不消耗、單個 vs 整疊、丟出數量
 // 不得超過持有數量 —— 三條不變式由 `src/player/drop.test.ts` 把關。
 import { dropCount } from './player/drop';
+// B16 Task 7：水桶裝水／倒水的**純邏輯**（「能不能從這格水源舀水」的判準、
+// 桶 ↔ 水桶的一對一互換）——main 只負責把射線／世界／背包接上。
+import { canFillBucket, bucketAfterFill, bucketAfterEmpty } from './player/bucket';
 import {
   stepDrops,
   pickable,
@@ -1118,6 +1121,16 @@ function heldIsFishingRod(): boolean {
   return slots[selected]?.item === 'fishing_rod';
 }
 
+/** B16 Task 7：手上拿的是不是**空桶**（右鍵 → 對水源裝水）。 */
+function heldIsBucket(): boolean {
+  return slots[selected]?.item === 'bucket';
+}
+
+/** B16 Task 7：手上拿的是不是**水桶**（右鍵 → 對方塊倒水）。 */
+function heldIsWaterBucket(): boolean {
+  return slots[selected]?.item === 'water_bucket';
+}
+
 /** B14：對**水面**拋線。
  *
  *  水面用 `includeWater` 專用射線——一般挖掘／放置仍穿過水（`raycast` 的預設
@@ -1200,6 +1213,69 @@ function tryIgniteTnt(x: number, y: number, z: number): void {
   });
   damageHeldTool(1);
   hud.setHotbar(slots, selected); // 耐久變了 → 刷新熱鍵欄
+}
+
+/** B16 Task 7：裝水／倒水共用的水聲（不新增 MaterialGroup——水的既有音色）。
+ *  傳入的是**方塊角**（x,y,z）→ 這裡補 0.5 對齊方塊中心（與其他音效一致）。
+ *  **唯一**新增的 `audio.play` 呼叫點（兩種動作共用，見 main.wiring 釘子 7 → 8）。 */
+function playBucketSound(x: number, y: number, z: number): void {
+  audio.play('place', 'water', { pos: { x: x + 0.5, y: y + 0.5, z: z + 0.5 } });
+}
+
+/** B16 Task 7：手持**空桶**右鍵水源 → 裝水（原版：水源被取走 → 那一格變空氣，
+ *  流動水會由模擬自己退去——`world.setBlock` 會經由變更監聽器餵給 `WaterSim`）。
+ *
+ *  規則本體在 `player/bucket.ts` 的 `canFillBucket()`（**只能從水源裝**、
+ *  且前面不能有更近的方塊擋著）；這裡只負責「執行」。回傳 true ＝ 這次右鍵
+ *  已被水桶消費。
+ *
+ *  **射線**：水桶走 `includeWater: true` 的專用射線（與釣魚拋線同一個選項；
+ *  一般挖掘／放置的射線照舊穿水）——沒瞄到水格就不裝。`maxDist` 用呼叫端
+ *  當幀已算好的方塊 `reach`（含第三身 back-offset，不再重算）。
+ *
+ *  **順序＝行為**：先寫世界（水源變空氣）、**再**換手上的桶——與 B13 農業
+ *  「先落地再扣耐久」同一條規則的最簡單版本：桶的一對一互換不可能失敗
+ *  （`setSlot` 直接覆寫），不會出現「水沒了、桶也沒了」。 */
+function tryFillBucket(
+  hit: RayHit | null,
+  from: { x: number; y: number; z: number },
+  dir: { x: number; y: number; z: number },
+  maxDist: number,
+): boolean {
+  const held = slots[selected];
+  if (!held || held.item !== 'bucket') return false;
+  // 水面也必須能被射線命中（一般射線照穿水看到水底）。
+  const waterHit = raycast(world, from, dir, maxDist, { includeWater: true });
+  if (!waterHit) return false;
+  const waterId = world.getBlock(waterHit.x, waterHit.y, waterHit.z);
+  // 水源判準（含「方塊擋在前面就不裝」）：`hit` 是一般射線的命中（不含水）
+  // → 它的 t 拿來比「有沒有更近的方塊擋著」。
+  if (!canFillBucket(waterId, waterHit.t, hit ? hit.t : null)) return false;
+  world.setBlock(waterHit.x, waterHit.y, waterHit.z, BLOCK.AIR); // 水源被取走
+  inventory.setSlot(selected, bucketAfterFill()); // 空桶 ↔ 水桶一對一互換
+  hud.setHotbar(slots, selected);
+  playBucketSound(waterHit.x, waterHit.y, waterHit.z);
+  return true;
+}
+
+/** B16 Task 7：手持**水桶**右鍵 → 倒水（原版：在目標格放一個**水源**，
+ *  之後由模擬自己流動——`world.setBlock` 經由變更監聽器餵給 `WaterSim`）。
+ *
+ *  目標格與放置方塊同一套規則：`resolvePlacementTarget`（可被取代的格
+ *  ＝放進同一格；實心方塊＝面鄰格）＋ `canPlaceBlockAt` 的玩家重疊檢查
+ *  （不能把水倒進自己站的格子——原版語意：放置被玩家 AABB 擋下）。
+ *  回傳 true ＝ 這次右鍵已被水桶消費。 */
+function tryEmptyBucket(hit: RayHit | null): boolean {
+  const held = slots[selected];
+  if (!held || held.item !== 'water_bucket') return false;
+  if (!hit) return false; // 沒瞄到方塊 → 不倒（與放置同款守衛）
+  const t = resolvePlacementTarget(hit, world.getBlock(hit.x, hit.y, hit.z));
+  if (!canPlaceBlockAt(world, t.x, t.y, t.z, player.position, BLOCK.WATER)) return false;
+  world.setBlock(t.x, t.y, t.z, BLOCK.WATER); // 放的是「水源」——之後自己流
+  inventory.setSlot(selected, bucketAfterEmpty()); // 水桶 ↔ 空桶一對一互換
+  hud.setHotbar(slots, selected);
+  playBucketSound(t.x, t.y, t.z);
+  return true;
 }
 
 /** B10：放開右鍵 → 結算這一發（生存耗箭、扣 1 耐久；創造不耗不扣）。
@@ -4925,6 +5001,14 @@ gs.renderer.setAnimationLoop(() => {
           // B11：手持打火石右鍵 TNT → 點燃（沒拿打火石時落在下面的一般放置路徑
           // ——TNT 是方塊，可以被疊放）。
           tryIgniteTnt(hit.x, hit.y, hit.z);
+        } else if (heldIsBucket()) {
+          // B16 Task 7：手持**空桶**右鍵水源 → 裝水（**排在方塊使用之後**——
+          // 工作台／熔爐／箱子／床／TNT 的使用仍優先；沒瞄到水源時不吞右鍵，
+          //  只是這一擊沒有東西發生：空桶沒有可放置的方塊形式）。
+          tryFillBucket(hit, rayOrigin, dir, reach);
+        } else if (heldIsWaterBucket()) {
+          // B16 Task 7：手持**水桶**右鍵 → 倒水（目標格走與放置同一套規則）。
+          tryEmptyBucket(hit);
         } else if (heldIsFishingRod()) {
           // B14：手持釣魚竿右鍵水面 → 拋線（不是放置）。**排在方塊使用之後**
           // ——工作台／熔爐／箱子／床／TNT 的使用仍優先。
