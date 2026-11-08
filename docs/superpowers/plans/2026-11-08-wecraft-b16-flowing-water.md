@@ -230,6 +230,10 @@ const settle = (sim: WaterSim, steps = 40) => {
   仍是 `BLOCK.WATER`；它周圍可以合理出現流動水（這不是「source 被改掉」）。
 - `spreads one level per tick and stops at seven`：source at (0,64,0)，下方 solid；tick 7 次後 (7,64,0) 是 `FLOW_7`；(8,64,0) 仍是 `AIR`；再 settle 也不會出現第 8 格。
 - `recedes when the source is removed`：source + 7 格流動水；把 source 設為 AIR、`notifyBlockChanged(0,64,0)`、settle；全部流動水變回 AIR、`pendingCount === 0`。
+- `recede is monotone (no swell wave)`：同一條線，移除 source 後逐 tick 檢查——
+  任何仍在的流動水，其 `waterFlowLevel` **不得上升**（不得出現「水位先變弱再消失」
+  的迴漲波）；最靠近水源的格子先變 AIR，之後才輪到下一格（用 tick 1／2／3 的
+  座標檢查）。
 - `a placed block cuts the flow and the tail recedes`：source 在 (0,64,0)，流動水到 (7,64,0)；把 (3,64,0) 設為 `STONE`、notify；settle 後 (4..7,64,0) 全 AIR，source 與 (1..2) 保留。
 - `water falls before it spreads`：source at (0,66,0)、下方 (0,65,0) 與 (0,64,0) 是 AIR、
   (0,63,0) 是 solid；settle 後 (0,65,0) 是 `WATER_FALL`、(0,64,0) 是 `FLOW_1`
@@ -263,12 +267,17 @@ Expected: FAIL — `Cannot find module './water'`。
   - **空氣與流動水都參與計算**（空氣是「可能變成水」的目標格；只處理流動水
     會讓水永遠流不進新格子）。
   - `nextFor`：
-    - 先找供給：上方是任何水 id → 垂直供給；水平 4 鄰居只取
-      `waterSpreadLevel` 的最小值 +1（只接受 `< 7`）；兩者都沒有 → `BLOCK.AIR`。
+    - 先找供給：上方是任何水 id → 垂直供給；水平 4 鄰居取
+      `waterSpreadLevel` 的最小值 +1 當候選（只接受 `< 7`）。
+    - **水平供給是方向性的（Ruling T2-1）**：只有「比候選更近水源」的鄰居才算供給——
+      - 目標格是**空氣** → 直接採用候選水位（沒有候選 → 維持空氣）。
+      - 目標格已是流動水：候選**小於**目前水位 → 變成候選（出現了更近的水源）；
+        候選**等於** → 不變；候選**大於** → 代表原本的供給鏈斷了 → 變 `BLOCK.AIR`
+        （單調退去，**不得**出現「水位先迴漲再變空氣」的波）。
     - 下方是空氣 → `WATER_FALL`（不管水平距離，先往下）。
     - 上方是水且下方也是水 → `WATER_FALL`（維持下落水柱）。
     - 上方是水且下方不是水（固體／花草／火把）→ `WATER_FLOW_1`（落地）。
-    - 否則（只有水平供給）→ `waterBlockForLevel(minLevel)`。
+    - 否則（只有水平供給）→ `waterBlockForLevel(候選)`。
     - 水平鄰居未載入 → 視為**不可流入**（不當空氣、不供水）。
   - 變更才 `grid.setBlock`，並排程 6 鄰居（不排程自己）。
 - `scheduleFromModified`：解析 `"x,y,z"`，只接受三個整數；有 `chunk` 時只處理
