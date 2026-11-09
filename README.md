@@ -727,7 +727,7 @@ npm run preview    # 預覽產出
 # Test
 
 ```bash
-npm test           # vitest run — 2110 tests / 105 files 全綠（效能檔另跑，見下）
+npm test           # vitest run — 2121 tests / 106 files 全綠（效能檔另跑，見下）
 npm run test:perf  # 光照效能門檻（單檔跑：絕對牆鐘值，平行套件會膨脹約 2×）
 npm run test:watch # watch 模式
 npm run typecheck  # tsc --noEmit
@@ -897,9 +897,11 @@ npm run lint       # eslint .
   **存檔格式不升版**（本機 payload 維持 v6／雲端維持 format 4、`cloudSave` 一字
   未動；新 block id 41–48 是 append-only → 回退到 0.18.0 時流動水／水柱顯示為
   空氣、水源不受影響；桶子／水桶物品 id 會被舊版清洗）。已知簡化見上方
-  〈0.19.0（B16 流動水與水桶）新增的簡化〉。驗證：**2110 tests / 105 files**、
-  typecheck／lint／build／perf 全綠、pinned 工具 pack＋validate 通過（ZIP 370,886
-  bytes）；**批末真實瀏覽器 smoke 未執行**（由 controller 執行，尚未驗證）；
+  〈0.19.0（B16 流動水與水桶）新增的簡化〉。驗證：**2121 tests / 106 files**、
+  typecheck／lint／build／perf 全綠、pinned 工具 pack＋validate 通過（ZIP 371,068
+  bytes）；**批末真實瀏覽器 smoke 29 項全 PASS、0 console error**（標題／pointer
+  lock／F3、創造模式水桶取得與倒水、7 格上限的存檔幾何分析、存檔→繼續一致、
+  裝水退去、載入後退去；未涵蓋項見發布說明）；
   完整驗證見 `docs/releases/v0.19.0.md`。**未發布**（未獲 tag／Release／平台 API
   授權）。
 - 需求文件：`docs/superpowers/specs/2026-09-23-wecraft-design.md`

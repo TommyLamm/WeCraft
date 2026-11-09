@@ -908,24 +908,32 @@ git commit -m "docs(b16): 0.19.0 版本、README、規格與發布說明"
 
 - **版本**：`0.19.0`（`package.json`、`game.json`；`id`／`cloudSave`／`devices` 不動；
   `game.json.instructions` 已加空桶／水桶說明）。
-- **驗證（2026-11-09，工作樹 `b16-flowing-water`）**：
+- **驗證（2026-11-09，工作樹 `b16-flowing-water`；含最終審查修正波之後的重跑）**：
   - `npm run typecheck` PASS。
-  - `npm test` PASS：**105 files / 2110 tests**（`lighting-perf` 依既有慣例另跑）。
+  - `npm test` PASS：**106 files / 2121 tests**（`lighting-perf` 依既有慣例另跑）。
   - `npm run lint` PASS。
   - `npm run build` PASS：Vite 5.4.21、**110 modules**；
-    `dist/assets/index-YszHUKJz.js` **751.26 kB**（gzip **209.86 kB**；磁碟
-    **753,241 bytes**）、`index-DFxnV2cx.css` 9.58 kB（gzip 2.33 kB；磁碟
-    **9,579 bytes**）、`worker-DKytLE9P.js` 10.08 kB（磁碟 **10,075 bytes**）。
-  - `npm run test:perf` PASS：3×3 群組重算 best **49.7 ms → 5.5 ms/chunk**
-    （預算 8 ms）；「一次編輯 → relight → mesh」best **29.6 ms**（預算 33 ms）。
+    `dist/assets/index-BCBt8JMC.js` **751.87 kB**（gzip **210.04 kB**）、
+    `index-DFxnV2cx.css` 9.58 kB、`worker-DKytLE9P.js` 10.08 kB。
+  - `npm run test:perf` PASS：3×3 群組重算 best **46.2 ms → 5.1 ms/chunk**
+    （預算 8 ms）；「一次編輯 → relight → mesh」best **27.3 ms**（預算 33 ms）。
   - pinned 工具（1.2.0，lock SHA-256 `24a2fd36…` 與 ZIP 相符；解壓到 repo 外的
-    `/tmp/opencode/b16-tools`）：`pack-game.mjs` → **Packed wecraft v0.19.0**；
+    `/tmp/opencode/b16-tools-final`）：`pack-game.mjs` → **Packed wecraft v0.19.0**；
     `validate-game.mjs` → **Valid: wecraft v0.19.0 (tools 1.2.0)**；
-    ZIP **370,886 bytes**、SHA-256
-    **`87bccbc2d92bf14d0664a10032c33e18b406e3f8199c41436ed21276bdfb858c`**。
-- **真實瀏覽器 smoke**：**controller 執行；本任務未跑、尚未驗證**（本任務只留下
-  `npm run build` 產出的 `dist/`）。待 controller 依 Step 5 驗證後把探針輸出與
-  截圖路徑補進 `docs/releases/v0.19.0.md`。
+    ZIP **371,068 bytes**、SHA-256
+    **`ad410d3f3ef5864fccf9395aaf07581da2ae49991fe163054c1a5ba56dc9795c`**。
+- **真實瀏覽器 smoke（controller 執行，Step 5）**：xvfb-run 有頭 Chromium ＋ 平台
+  checkout 的 `playwright-core`、靜態伺服 `npm run preview`（`dist/`）；探針在 repo 外
+  （`/tmp/opencode/wecraft-b16-smoke.mjs`、`/tmp/opencode/wecraft-b16-part2.mjs`）。
+  **29 項檢查全 PASS、0 console/page error**：標題／pointer lock／F3；創造模式取得
+  桶子＋水桶；倒水後 `modified` 0 → 10 → 253 格穩態；**Ruling I-1 實機**（創造倒水
+  後仍是水桶）；**7 格上限由存檔幾何驗證**（同層最遠 = 7、距離 8 無水、24 格在 d=7、
+  253 格全部可回推供給鏈且鏈長 ≤ 7）；**存檔 → 繼續來回一致**（253 格 id 逐一相同、
+  0 mismatch）；裝水後**完全退去**（存檔 0 水 id）；**載入後退去**（移除存檔中水源
+  → 重載 → 退去、存檔 0 水 id）。截圖：`b16-flow.png`／`b16-reload.png`／
+  `b16-recede.png`／`b16-load-recede.png`。
+  **未涵蓋**：海邊徒步（出生點最近水面 37 格外）、真實 GPU 幀成本（Xvfb 軟體渲染
+  不具代表性）→ 列為未驗證。
 - **發布**：**未執行**（未獲推 tag／建 Release／呼叫平台 API 的授權）。
 
 ## 最終審查修正（final review fixes）
@@ -968,3 +976,16 @@ git commit -m "docs(b16): 0.19.0 版本、README、規格與發布說明"
 - **不在本波**：審查建議 3（`modified` overlay 衛生）留待之後的批次；建議 4
   （文件修正併入 browser-smoke 結果提交）由 controller 處理。
 - **未動**：存檔格式、版本、SDK、manifest、workflow（皆不在本波範圍）。
+
+### 最終審查與複核（2026-11-09）
+
+- **整支最終審查**（1196d7f..5ca68bf，最強模型）：**Ready to merge? With fixes**
+  ——0 Critical、2 Important（I-1 創造模式水桶消耗與文件不符、I-2 生成洞穴口不灌水）、
+  3 Minor（`modified` 無上限增長、農業掃描複製 overlay、裝水阻擋措辭）、5 項建議；
+  **34 項 deferred minor 全部判為可隨文件出貨或已解決**。審查者自行重跑
+  `npm test`（106 files／2121）與 typecheck 通過。
+- **修正波**（見上）＋**唯一一次 scoped re-review**（5ca68bf..3bf42f4）：
+  **All findings addressed, no new Critical/Important breakage**；一項新 Minor
+  （生成掃描 ~2.5–3 ms/區塊）由 controller 裁決保留機制、最佳化 park 到下一批
+  （並記錄：目前地形參數產生不出該洞穴口——審查者實測相鄰柱高差 ≤ 2、需要 ≥ 4）。
+- **controller 瀏覽器 smoke**：見上方 Execution results（29 PASS／0 error）。
