@@ -1799,6 +1799,45 @@ describe('main.ts 接線（B16 Task 7：水桶）', () => {
     expect(body).toContain('inventory.setSlot(selected, bucketAfterEmpty())');
   });
 
+  it('empty swaps the bucket only in survival (B16 最終審查修正：規格 §B16)', () => {
+    // 規格 §B16：「生存模式消耗／替換物品，創造模式不消耗」→ `tryEmptyBucket`
+    // 的互換必須被 `shouldConsumeBucket(currentMode)` **守衛**（創造倒水後
+    // 水桶留在手上）；放水源這一步在守衛**之前**、兩種模式都會做。
+    const body = functionBody('tryEmptyBucket');
+    const guardMarker = 'if (shouldConsumeBucket(currentMode)) {';
+    const guardAt = body.indexOf(guardMarker);
+    expect(guardAt).toBeGreaterThan(-1);
+    // 配對大括號 → 互換必須「真的在 guard 裡面」（不是只是排在後面）。
+    let depth = 0;
+    let guardEnd = -1;
+    for (let i = guardAt + guardMarker.length - 1; i < body.length; i++) {
+      if (body[i] === '{') depth++;
+      else if (body[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          guardEnd = i;
+          break;
+        }
+      }
+    }
+    expect(guardEnd).toBeGreaterThan(guardAt);
+    const swapAt = body.indexOf('inventory.setSlot(selected, bucketAfterEmpty())');
+    expect(swapAt).toBeGreaterThan(guardAt);
+    expect(swapAt).toBeLessThan(guardEnd);
+    // 放水源在 guard 之前 → 兩種模式都倒水（只是創造不換掉手上的桶）。
+    const placeAt = body.indexOf('world.setBlock(t.x, t.y, t.z, BLOCK.WATER)');
+    expect(placeAt).toBeGreaterThan(-1);
+    expect(placeAt).toBeLessThan(guardAt);
+  });
+
+  it('fill keeps the unconditional swap (no mode guard)', () => {
+    // 裝水是空桶 ↔ 水桶的**轉換**（不是消耗）→ 規格對裝水沒有模式差異，
+    // `tryFillBucket` 維持無條件互換、**不得**出現 `shouldConsumeBucket`。
+    const body = functionBody('tryFillBucket');
+    expect(body).toContain('inventory.setSlot(selected, bucketAfterFill())');
+    expect(body).not.toContain('shouldConsumeBucket');
+  });
+
   it('bucket sounds keep one audio.play call site', () => {
     // 裝水與倒水共用**一個**音效呼叫點（`playBucketSound`）→ 全檔 7 → 8。
     expect(countOf('audio.play(')).toBe(8);

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { canFillBucket, bucketAfterFill, bucketAfterEmpty } from './bucket';
+import {
+  canFillBucket,
+  bucketAfterFill,
+  bucketAfterEmpty,
+  shouldConsumeBucket,
+} from './bucket';
 import { BLOCK } from '../world/blocks';
 
 // ---- B16 Task 7：水桶的純邏輯 ----------------------------------------------
@@ -39,6 +44,19 @@ describe('canFillBucket（B16 Task 7）', () => {
   it('a tie (same distance) still counts as the source being in front', () => {
     // blockT >= waterT 才放行 → 同一距離視為沒有更近的方塊。
     expect(canFillBucket(BLOCK.WATER, 3, 3)).toBe(true);
+  });
+});
+
+describe('shouldConsumeBucket（B16 最終審查修正）', () => {
+  it('survival consumes (water_bucket ↔ bucket 1:1 swap)', () => {
+    // 生存模式：倒水消耗水桶（規格 §B16「生存模式消耗／替換物品」）。
+    expect(shouldConsumeBucket('survival')).toBe(true);
+  });
+
+  it('creative never consumes (infinite supply — spendFromSlot is a no-op)', () => {
+    // 創造模式：不消耗（規格 §B16「創造模式不消耗」；與本作創造慣例一致——
+    // `spendFromSlot` 在創造是 no-op、物品無限供應）→ 水桶留在手上。
+    expect(shouldConsumeBucket('creative')).toBe(false);
   });
 });
 

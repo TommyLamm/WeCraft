@@ -157,7 +157,7 @@ import {
 import { dropCount } from './player/drop';
 // B16 Task 7：水桶裝水／倒水的**純邏輯**（「能不能從這格水源舀水」的判準、
 // 桶 ↔ 水桶的一對一互換）——main 只負責把射線／世界／背包接上。
-import { canFillBucket, bucketAfterFill, bucketAfterEmpty } from './player/bucket';
+import { canFillBucket, bucketAfterFill, bucketAfterEmpty, shouldConsumeBucket } from './player/bucket';
 import {
   stepDrops,
   pickable,
@@ -1272,7 +1272,14 @@ function tryEmptyBucket(hit: RayHit | null): boolean {
   const t = resolvePlacementTarget(hit, world.getBlock(hit.x, hit.y, hit.z));
   if (!canPlaceBlockAt(world, t.x, t.y, t.z, player.position, BLOCK.WATER)) return false;
   world.setBlock(t.x, t.y, t.z, BLOCK.WATER); // 放的是「水源」——之後自己流
-  inventory.setSlot(selected, bucketAfterEmpty()); // 水桶 ↔ 空桶一對一互換
+  // B16 最終審查修正（規格 §B16：「生存模式消耗／替換物品，創造模式不消耗」）：
+  // 倒水的**消耗**只發生在生存模式（水桶 ↔ 空桶一對一互換）；創造模式是無限
+  // 供應（`spendFromSlot` 在創造是 no-op）→ 水桶留在手上、不互換。放水源這一步
+  // 在守衛之外、兩種模式都做（倒水行為本身不分模式）。裝水（`tryFillBucket`）
+  // 維持**無條件**互換——那是一次轉換、不是消耗，規格對裝水沒有模式差異。
+  if (shouldConsumeBucket(currentMode)) {
+    inventory.setSlot(selected, bucketAfterEmpty()); // 水桶 ↔ 空桶一對一互換
+  }
   hud.setHotbar(slots, selected);
   playBucketSound(t.x, t.y, t.z);
   return true;

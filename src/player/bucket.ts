@@ -1,5 +1,6 @@
 import { BLOCK } from '../world/blocks';
 import type { ItemStack } from '../core/items';
+import type { GameMode } from '../core/inventory';
 
 /** B16 Task 7：水桶裝水／倒水的**決策規則**——純邏輯，不 import DOM／Three、
  *  不讀遊戲狀態（與 `player/drop.ts` 同一套慣例：規則在純模組、可單元測試，
@@ -41,4 +42,18 @@ export function bucketAfterFill(): ItemStack {
 /** 倒水後手持的物品。同上：水桶 ↔ 空桶一對一互換、每次回傳新物件。 */
 export function bucketAfterEmpty(): ItemStack {
   return { item: 'bucket', count: 1 };
+}
+
+/** B16 最終審查修正：倒水要不要**消耗**手上的水桶（規格 §B16：「生存模式
+ *  消耗／替換物品，創造模式不消耗」）。
+ *
+ *  - 生存 → `true`：水桶 ↔ 空桶一對一互換（`bucketAfterEmpty`）。
+ *  - 創造 → `false`：**不消耗**——與本作創造慣例一致，物品是無限供應
+ *    （`spendFromSlot` 在創造模式是 no-op、`addItem` 直接回 0）→ 倒水後
+ *    水桶留在手上。
+ *
+ *  裝水（`bucketAfterFill`）**不分模式**：空桶 ↔ 水桶是一次「轉換」、
+ *  不是消耗，規格對裝水沒有模式差異 → `tryFillBucket` 維持無條件互換。 */
+export function shouldConsumeBucket(mode: GameMode): boolean {
+  return mode === 'survival';
 }
