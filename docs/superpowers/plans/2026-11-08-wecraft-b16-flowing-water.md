@@ -50,7 +50,7 @@
   - `isWaterBlock(id: number): boolean` — `BLOCK.WATER` 或 41–48 回 true；其他（含 air／stone／999／NaN）回 false。
   - `getBlockDef(id)` 對 41–48 回傳完整 `BlockDef`。
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 在 `src/world/blocks.test.ts` 新增：
 ```ts
@@ -102,12 +102,12 @@ it('B16: flowing water has no item form', () => {
 在 `src/audio/sounds.test.ts` 的 table 加入 41–48（全部 `'water'`），維持
 `Object.keys(table)).toHaveLength(Object.keys(BLOCK).length)` 這條守門。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/world/blocks.test.ts src/core/items.test.ts src/audio/sounds.test.ts`
 Expected: FAIL — `BLOCK.WATER_FLOW_1` undefined、`isWaterBlock` 不存在、音效表長度不足。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `src/world/blocks.ts`：
 ```ts
@@ -138,14 +138,14 @@ export function isWaterBlock(id: number): boolean {
 
 `src/audio/sounds.ts` 的 `GROUP_BY_BLOCK` 加 8 筆 `'water'`。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/world/blocks.test.ts src/core/items.test.ts src/audio/sounds.test.ts`
 Expected: PASS（含既有 38＋46＋12 條與新測試）。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/world/blocks.ts src/world/blocks.test.ts src/audio/sounds.ts src/audio/sounds.test.ts src/core/items.test.ts
@@ -199,7 +199,7 @@ export class WaterSim {
 }
 ```
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/world/water.test.ts` 用假 grid：
 
@@ -247,12 +247,12 @@ const settle = (sim: WaterSim, steps = 40) => {
 - `scheduleFromModified parses keys and filters chunks`：給 `[['0,64,0', BLOCK.WATER], ['99,64,99', BLOCK.WATER], ['bad', 1]]` 與 `{cx:0,cz:0}`；只排程 (0,64,0) 附近；非法 key 不拋錯。
 - `reset clears the queue`：排程後 `reset()`，`pendingCount === 0`，後續 tick 不變更。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/world/water.test.ts`
 Expected: FAIL — `Cannot find module './water'`。
 
-- [ ] **Step 3: 實作 `WaterSim`**
+- [x] **Step 3: 實作 `WaterSim`**
 
 實作要點（照此實作，不要另創規則）：
 - `queue` 用 `Map<string, readonly [number, number, number]>`，保留插入順序；
@@ -287,14 +287,14 @@ Expected: FAIL — `Cannot find module './water'`。
 - `reset()` 清空 queue 與 `acc`。
 - `pendingCount` 回 queue.size。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/world/water.test.ts`
 Expected: PASS（全部新測試）。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/world/water.ts src/world/water.test.ts
@@ -322,7 +322,7 @@ setBlockChangeListener(listener: BlockChangeListener | null): void;
 setFluid(x: number, y: number, z: number, id: BlockId): boolean;
 ```
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/world/world.test.ts` 新增：
 - `setBlockChangeListener fires with floored coordinates on a real change`：
@@ -339,12 +339,12 @@ setFluid(x: number, y: number, z: number, id: BlockId): boolean;
 - `setFluid updates topY and edge dirty flags`：在邊界格寫入會 `markDirty` 鄰塊；
   `topY >= y+1`。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/world/world.test.ts`
 Expected: FAIL — `setBlockChangeListener`／`setFluid` 不存在。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 在 `World` 加 `private blockChangeListener: BlockChangeListener | null = null;`。
 `setBlock` 在寫入前記 `prev = chunk.get(lx, y, lz)`，在現有
@@ -360,14 +360,14 @@ Expected: FAIL — `setBlockChangeListener`／`setFluid` 不存在。
   `markLightDirty`、**不呼叫** listener。
 - 回 true。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/world/world.test.ts`
 Expected: PASS。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/world/world.ts src/world/world.test.ts
@@ -394,7 +394,7 @@ git commit -m "feat(b16): setFluid 與方塊變更監聽"
   - 配方 id `'bucket'`：3 個 `iron_ingot` 的 V 形（`[[I,null,I],[null,I,null]]`）。
   - `itemFromBlock` 對兩個新 id 無關（它們不是方塊）。
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/core/items.test.ts`：
 - `TOTAL_ITEM_COUNT = 115`；新增 `B16_ITEM_IDS = ['bucket', 'water_bucket'] as const`。
@@ -414,12 +414,12 @@ git commit -m "feat(b16): setFluid 與方塊變更監聽"
 - 新增 `B16_NEEDS_ART = ['bucket', 'water_bucket'] as const`，逐一點名
   `drawItemArt` 的 case；既有 `NON_BLOCK_ITEM_IDS` 動態守門也會自動涵蓋。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/core/items.test.ts src/core/recipes.test.ts src/ui/icons.test.ts`
 Expected: FAIL — 新 id 不在 union、配方數 68、icons 無 case。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `items.ts`：
 - union 加 `| 'bucket' | 'water_bucket'`（註解寫 B16 與用途）。
@@ -461,14 +461,14 @@ case 'water_bucket': {
 }
 ```
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/core/items.test.ts src/core/recipes.test.ts src/ui/icons.test.ts`
 Expected: PASS。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/core/items.ts src/core/items.test.ts src/core/recipes.ts src/core/recipes.test.ts src/ui/icons.ts src/ui/icons.test.ts
@@ -498,7 +498,7 @@ git commit -m "feat(b16): 桶子與水桶物品、配方與圖示"
   `isReplaceableForPlacement` 接受全部水 id；mesher 把所有水 id 放進 water pass
   並在兩個水 id 相鄰時剔除內部面。
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/world/raycast.test.ts`：
 - `B16: includeWater hits flowing and falling water`：在射線路徑放
@@ -536,12 +536,12 @@ git commit -m "feat(b16): 桶子與水桶物品、配方與圖示"
 - `tryCastFishing` 的 `world.getBlock(...) !== BLOCK.WATER` 改成
   `!isWaterBlock(...)`（允許在流動水釣魚；明示簡化）。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/world/raycast.test.ts src/player/physics.test.ts src/world/farming.test.ts src/player/interact.test.ts src/world/mesher.test.ts`
 Expected: FAIL — 流動水未被判定為水／未進 water pass。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 - `raycast.ts` 的 `isHit`：`includeWater && isWaterBlock(world.getBlock(...))`。
 - `physics.ts`：`p.inWater = isWaterBlock(feetId) || isWaterBlock(headId)`。
@@ -554,14 +554,14 @@ Expected: FAIL — 流動水未被判定為水／未進 water pass。
   - 其他 pass 不變。
 - `main.ts` 的三處水判斷改 `isWaterBlock`；`BLOCK` import 保留（其他地方仍用）。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/world/raycast.test.ts src/player/physics.test.ts src/world/farming.test.ts src/player/interact.test.ts src/world/mesher.test.ts`
 Expected: PASS。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/world/raycast.ts src/world/raycast.test.ts src/player/physics.ts src/player/physics.test.ts src/world/farming.ts src/world/farming.test.ts src/player/interact.ts src/player/interact.test.ts src/world/mesher.ts src/world/mesher.test.ts src/main.ts
@@ -581,7 +581,7 @@ git commit -m "feat(b16): 流動水參與物理、農業、射線與網格"
 - Produces：遊戲進行中每幀推進水；所有場次入口與區塊載入都會重排程；
   離開 playing／回標題不會留下上一場的水佇列。
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/main.wiring.test.ts` 新增 describe `B16 流動水接線`：
 - `the simulation is built on the world with setFluid and chunk loading`：
@@ -602,12 +602,12 @@ git commit -m "feat(b16): 流動水參與物理、農業、射線與網格"
 - `paused/dead/sleeping frames do not tick water`：`water.tick(dt)` 只出現在
   `playing` 段（用 `countOf('water.tick(') === 1` 與所在段落檢查）。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/main.wiring.test.ts`
 Expected: FAIL — 找不到 `new WaterSim`／`water.tick`。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `main.ts`：
 - import `WaterSim` 與 `isWaterBlock`（若 Task 5 尚未 import）。
@@ -635,14 +635,14 @@ world.setBlockChangeListener((x, y, z) => water.notifyBlockChanged(x, y, z));
   `water.scheduleFromModified(world.modified, { cx, cz });`。
 - 不要在 `sleeping`／`paused`／`dead`／`title` 分支呼叫 `water.tick`。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/main.wiring.test.ts`
 Expected: PASS。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main.ts src/main.wiring.test.ts
@@ -679,7 +679,7 @@ export function bucketAfterFill(): ItemStack; // { item: 'water_bucket', count: 
 export function bucketAfterEmpty(): ItemStack; // { item: 'bucket', count: 1 }
 ```
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 `src/player/bucket.test.ts`：
 - `canFillBucket accepts only a nearest source`：
@@ -707,12 +707,12 @@ export function bucketAfterEmpty(): ItemStack; // { item: 'bucket', count: 1 }
 - `bucket sounds keep one audio.play call site`：`countOf('audio.play(')` 從 7
   改為 8（新增 `playBucketSound` 一個呼叫點；不新增第二個）。
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 Run: `npx vitest run src/player/bucket.test.ts src/main.wiring.test.ts`
 Expected: FAIL — bucket 模組不存在、wiring 找不到分支。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 `src/player/bucket.ts` 照上面簽名實作；`canFillBucket` 必須：
 - `waterId === BLOCK.WATER`；
@@ -758,14 +758,14 @@ Expected: FAIL — bucket 模組不存在、wiring 找不到分支。
   `｜空桶右鍵水源裝水、水桶右鍵方塊倒水（水會流向低處，水平最多 7 格）`
 - `ui/ui.test.ts` 若有精確文字斷言，更新為包含新字串（或改成 `toContain`）。
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 Run: `npx vitest run src/player/bucket.test.ts src/main.wiring.test.ts src/ui/ui.test.ts`
 Expected: PASS。
 Run: `npm run typecheck`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/player/bucket.ts src/player/bucket.test.ts src/main.ts src/main.wiring.test.ts src/ui/menus.ts src/ui/ui.test.ts
@@ -788,14 +788,14 @@ git commit -m "feat(b16): 水桶裝水與倒水互動"
 - Consumes: 前 7 個任務的全部交付。
 - Produces: 版本 0.19.0、文件誠實化、完整驗證證據。
 
-- [ ] **Step 1: 版本與 Manifest**
+- [x] **Step 1: 版本與 Manifest**
 
 - `package.json` `version` → `0.19.0`。
 - `game.json` `version` → `0.19.0`；`id`／`cloudSave`／`devices` 不動。
 - `game.json.instructions` 在既有釣魚說明後加：
   `手持空桶右鍵水源裝水（只裝水源）、手持水桶右鍵方塊倒水；水會流向低處，水平最多 7 格。`
 
-- [ ] **Step 2: README 與規格**
+- [x] **Step 2: README 與規格**
 
 README：
 - 版本字串 0.18.0 → 0.19.0；Description 的批次列表加「流動水與水桶」。
@@ -816,7 +816,7 @@ README：
 - §7 決策記錄加：`B16 流動水與水桶（0.19.0）——使用者 2026-11-08 指示續作、
   內容由實作者決定；本批未獲發布授權。`
 
-- [ ] **Step 3: 發布說明 `docs/releases/v0.19.0.md`**
+- [x] **Step 3: 發布說明 `docs/releases/v0.19.0.md`**
 
 照 `docs/releases/v0.18.0.md` 的結構寫：
 - 標題與摘要（流動水／水桶）。
@@ -830,7 +830,7 @@ README：
   測試檔案數與測試數、ZIP bytes／SHA-256、未驗證清單。
 - **發布：未執行**（未獲 tag／Release／平台 API 授權）。
 
-- [ ] **Step 4: 完整驗證**
+- [x] **Step 4: 完整驗證**
 
 依序跑（每個都要有輸出證據）：
 ```bash
@@ -852,7 +852,7 @@ node /tmp/opencode/b16-tools/validate-game.mjs /tmp/opencode/b16-game.zip
 Expected：`Packed wecraft v0.19.0`、`Valid: wecraft v0.19.0 (tools 1.2.0)`；
 記下 ZIP bytes 與 SHA-256（`sha256sum`）。
 
-- [ ] **Step 5: 真實瀏覽器 smoke（controller 執行；Implementer 只需留下 dist）**
+- [x] **Step 5: 真實瀏覽器 smoke（controller 執行；Implementer 只需留下 dist）**
 
 用靜態伺服 `dist/` ＋ 平台 checkout 的 `playwright-core` ＋ `xvfb-run` 有頭
 Chromium；探針腳本放 `/tmp/opencode`，不進 repo。至少驗：
@@ -866,7 +866,7 @@ Chromium；探針腳本放 `/tmp/opencode`，不進 repo。至少驗：
 把實際探針輸出與截圖路徑寫進 `docs/releases/v0.19.0.md`；做不到的項目列為
 「未驗證」，不要推測通過。
 
-- [ ] **Step 6: 把計畫勾選完成並 Commit**
+- [x] **Step 6: 把計畫勾選完成並 Commit**
 
 把本計畫所有 `- [ ]` 改成 `- [x]`，在檔尾加 `## Execution results`（版本、
 測試數、bundle、ZIP、browser smoke 結果）。然後：
@@ -899,3 +899,27 @@ git commit -m "docs(b16): 0.19.0 版本、README、規格與發布說明"
 
 **5. Proportion:** 計畫長度與 B15 同級（8 任務），沒有把完整實作貼進來；每個
 程式步驟只給簽名、規則與關鍵片段，實作者可自行寫出身體。
+
+## Execution results
+
+- **版本**：`0.19.0`（`package.json`、`game.json`；`id`／`cloudSave`／`devices` 不動；
+  `game.json.instructions` 已加空桶／水桶說明）。
+- **驗證（2026-11-09，工作樹 `b16-flowing-water`）**：
+  - `npm run typecheck` PASS。
+  - `npm test` PASS：**105 files / 2110 tests**（`lighting-perf` 依既有慣例另跑）。
+  - `npm run lint` PASS。
+  - `npm run build` PASS：Vite 5.4.21、**110 modules**；
+    `dist/assets/index-YszHUKJz.js` **751.26 kB**（gzip **209.86 kB**；磁碟
+    **753,241 bytes**）、`index-DFxnV2cx.css` 9.58 kB（gzip 2.33 kB；磁碟
+    **9,579 bytes**）、`worker-DKytLE9P.js` 10.08 kB（磁碟 **10,075 bytes**）。
+  - `npm run test:perf` PASS：3×3 群組重算 best **49.7 ms → 5.5 ms/chunk**
+    （預算 8 ms）；「一次編輯 → relight → mesh」best **29.6 ms**（預算 33 ms）。
+  - pinned 工具（1.2.0，lock SHA-256 `24a2fd36…` 與 ZIP 相符；解壓到 repo 外的
+    `/tmp/opencode/b16-tools`）：`pack-game.mjs` → **Packed wecraft v0.19.0**；
+    `validate-game.mjs` → **Valid: wecraft v0.19.0 (tools 1.2.0)**；
+    ZIP **370,886 bytes**、SHA-256
+    **`87bccbc2d92bf14d0664a10032c33e18b406e3f8199c41436ed21276bdfb858c`**。
+- **真實瀏覽器 smoke**：**controller 執行；本任務未跑、尚未驗證**（本任務只留下
+  `npm run build` 產出的 `dist/`）。待 controller 依 Step 5 驗證後把探針輸出與
+  截圖路徑補進 `docs/releases/v0.19.0.md`。
+- **發布**：**未執行**（未獲推 tag／建 Release／呼叫平台 API 的授權）。
