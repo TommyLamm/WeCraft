@@ -1723,6 +1723,19 @@ describe('main.ts 接線（B16 流動水）', () => {
     );
   });
 
+  it('chunk generation and the spawn chunk also scan the water edges（B16 最終審查修正）', () => {
+    // 生成的地形**不進** `modified` → 只靠 scheduleFromModified 看不到「生成時
+    // 就開在海水旁的洞穴口」。兩個生成路徑（worker 回應、開局 (0,0)）都要補掃
+    // 「海平面以下緊鄰水的空氣格」→ 洞穴口載入後水會灌進去。
+    const gen = functionBody('processQueues');
+    expect(gen).toContain('water.scheduleWaterEdges(cx, cz)');
+    // 掃描排在 modified 重排程**之後**（先重套存檔編輯、再補掃生成邊界）。
+    expect(gen.indexOf('water.scheduleFromModified(world.modified, { cx, cz })')).toBeLessThan(
+      gen.indexOf('water.scheduleWaterEdges(cx, cz)'),
+    );
+    expect(functionBody('spawnPoint')).toContain('water.scheduleWaterEdges(0, 0)');
+  });
+
   it('session boundaries reset or reschedule the queue', () => {
     // 新遊戲（resetWorld）／回到標題 → 上一場的水佇列不得留下來。
     expect(functionBody('resetWorld')).toContain('water.reset()');

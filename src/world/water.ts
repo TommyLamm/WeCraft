@@ -18,6 +18,7 @@
 
 import { BLOCK, isWaterBlock, type BlockId } from './blocks';
 import { CHUNK_HEIGHT, CHUNK_SIZE } from './chunk';
+import { SEA_LEVEL } from './terrain-noise';
 
 export const WATER_TICK_SEC = 0.25;
 export const WATER_MAX_UPDATES_PER_TICK = 256;
@@ -114,6 +115,64 @@ export class WaterSim {
       scheduled++;
     }
     return scheduled;
+  }
+
+  /** B16 最終審查修正（I-2）：**區塊生成後**掃描「緊鄰水的空氣格」並排程。
+   *
+   *  **為什麼需要**：生成的地形**不進** `modified`（它不是編輯）→ 只靠
+   *  `scheduleFromModified` 永遠看不到「生成時就開在海水旁的洞穴口」
+   *  （`terrain.ts` 的洞穴切挖會把海平面以下、旁邊是海的格子挖成空氣）→
+   *  海水不會灌進那個洞穴口。這個方法在生成後補掃一次。
+   *
+   *  **規則**（對稱的兩條，兩種生成順序都涵蓋）：
+   *  - 空氣格的 6 鄰居有水 → 排程**那個空氣格**。
+   *  - 水格的 6 鄰居有空氣 → 排程**那個空氣鄰居**（涵蓋「洞穴區塊先生成、
+   *    海的區塊後生成」的順序）。
+   *
+   *  **海平面帶（`y ∈ [1, min(SEA_LEVEL, CHUNK_HEIGHT-1)]`）是刻意的**：生成
+   *  的海水只存在於海平面以下；把「海面上方那一層空氣」也排進去只會白灌
+   *  256 格／批的預算（那格永遠不會變）。鄰居也限在同一條帶內。
+   *
+   *  未載入的鄰居**既不當空氣、也不供水**（`read` 回 null → 直接略過）；
+   *  排程仍走既有的 `schedule`（未載入／y 越界 → 不排程）。
+   *  回傳**新排入佇列**的格數（重複排程由佇列的 Map 去重）。 */
+  scheduleWaterEdges(cx: number, cz: number): number {
+    const yMax = Math.min(SEA_LEVEL, CHUNK_HEIGHT - 1);
+    const x0 = cx * CHUNK_SIZE;
+    const z0 = cz * CHUNK_SIZE;
+    const before = this.queue.size;
+    for (let y = 1; y <= yMax; y++) {
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const x = x0 + lx;
+          const z = z0 + lz;
+          const id = this.read(x, y, z);
+          if (id === null) continue; // 未載入 → 當它不存在
+          if (id === BLOCK.AIR) {
+            // 空氣格：鄰居有水 → 排程自己（水會從那裡流進來）。
+            for (const [dx, dy, dz] of NEIGHBORS) {
+              const ny = y + dy;
+              if (ny < 1 || ny > yMax) continue; // 鄰居限在同一條海平面帶內
+              const nid = this.read(x + dx, ny, z + dz);
+              if (nid !== null && isWaterBlock(nid)) {
+                this.schedule(x, y, z);
+                break;
+              }
+            }
+          } else if (isWaterBlock(id)) {
+            // 水格：鄰居有空氣 → 排程那個空氣鄰居（海先生成、洞穴後生成時）。
+            for (const [dx, dy, dz] of NEIGHBORS) {
+              const ny = y + dy;
+              if (ny < 1 || ny > yMax) continue;
+              const nx = x + dx;
+              const nz = z + dz;
+              if (this.read(nx, ny, nz) === BLOCK.AIR) this.schedule(nx, ny, nz);
+            }
+          }
+        }
+      }
+    }
+    return this.queue.size - before; // 去重後「新排入」的格數
   }
 
   /** 推進 dt；每滿 `WATER_TICK_SEC` 處理一批（最多 256 格）。

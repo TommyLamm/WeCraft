@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BLOCK, type BlockId } from './blocks';
+import { SEA_LEVEL } from './terrain-noise';
 import {
   WATER_TICK_SEC,
   WATER_MAX_UPDATES_PER_TICK,
@@ -304,5 +305,137 @@ describe('b16 WaterSim scheduling and batching', () => {
     expect(sim.pendingCount).toBe(0);
     for (let i = 0; i < 5; i++) expect(sim.tick(WATER_TICK_SEC)).toBe(0);
     expect(at(g, 1, 64, 0)).toBe(BLOCK.AIR);
+  });
+});
+
+// ---- B16 最終審查修正（I-2）：生成後排程「緊鄰水的空氣格」 --------------------
+//
+// **為什麼需要**：`terrain.ts` 的洞穴切挖會把「海平面以下、旁邊是海」的格子挖成
+// 空氣（洞穴口）→ 那格**從來不進 `modified`**（生成的地形不是編輯）→ 只靠
+// `scheduleFromModified` 永遠看不到它 → 海水不會灌進那個洞穴口。
+// `scheduleWaterEdges` 在**區塊生成後**掃一遍「海平面以下緊鄰水的空氣格」並排程。
+//
+// **海平面帶（y ∈ [1, SEA_LEVEL]）是刻意的**：生成的海水只存在於海平面以下；
+// 把「海面上方那一層空氣」也排進去只會灌滿 256 格／批的預算（那格永遠不會變）。
+describe('b16 WaterSim.scheduleWaterEdges（B16 最終審查修正）', () => {
+  /** 只載入區塊 (0,0) 的 16×16（其他區塊未載入 → 鄰居一律讀不到）。 */
+  const chunkLoadedOnly = (g: FakeGrid) => {
+    g.loadedFor = (x, z) => x >= 0 && x < 16 && z >= 0 && z < 16;
+  };
+
+  /** 鋪一整塊寬的海：海床 y=seabed 是石頭、海水 y=seabed+1..SEA_LEVEL。 */
+  const fillOcean = (g: FakeGrid, seabed: number) => {
+    for (let x = 0; x < 16; x++) {
+      for (let z = 0; z < 16; z++) {
+        put(g, x, seabed, z, BLOCK.STONE);
+        for (let y = seabed + 1; y <= SEA_LEVEL; y++) put(g, x, y, z, BLOCK.WATER);
+      }
+    }
+  };
+
+  it('a cave mouth open to the ocean is scheduled and the sea pours in', () => {
+    const g = new FakeGrid();
+    chunkLoadedOnly(g);
+    fillOcean(g, 60); // 海床 y=60、海水 y=61..62
+    // 海床破口（藍洞）：(6,61) 是空氣（洞穴口——上方是海面、旁邊同 y 是海水）、
+    // (6,60) 是空氣（洞穴）、(6,59) 是石頭（洞穴地板）。
+    put(g, 6, 61, 0, BLOCK.AIR);
+    put(g, 6, 60, 0, BLOCK.AIR);
+    put(g, 6, 59, 0, BLOCK.STONE);
+    const sim = new WaterSim(g);
+    const scheduled = sim.scheduleWaterEdges(0, 0);
+    expect(scheduled).toBeGreaterThan(0);
+    settle(sim);
+    // 洞穴口：下方是空氣 → 先變水柱；洞穴地板上落地 → FLOW_1。
+    expect(at(g, 6, 61, 0)).toBe(BLOCK.WATER_FALL);
+    expect(at(g, 6, 60, 0)).toBe(BLOCK.WATER_FLOW_1);
+    expect(at(g, 6, 59, 0)).toBe(BLOCK.STONE); // 地板不動
+    // 水源本身**永不改寫**：口上方的海面與旁邊同 y 的海水都還在。
+    expect(at(g, 6, 62, 0)).toBe(BLOCK.WATER);
+    expect(at(g, 5, 61, 0)).toBe(BLOCK.WATER);
+    expect(sim.pendingCount).toBe(0);
+  });
+
+  it('a stone-topped cave mouth at water level also pours in', () => {
+    const g = new FakeGrid();
+    chunkLoadedOnly(g);
+    fillOcean(g, 60);
+    // 海邊洞穴：口開在海平面（(3,62) 是空氣、與旁邊的海水同一個 y）、上方
+    // (3,63) 是石崖；洞往下兩格，地板 (3,59)。
+    put(g, 3, 63, 0, BLOCK.STONE);
+    put(g, 3, 62, 0, BLOCK.AIR);
+    put(g, 3, 61, 0, BLOCK.AIR);
+    put(g, 3, 60, 0, BLOCK.AIR);
+    put(g, 3, 59, 0, BLOCK.STONE);
+    const sim = new WaterSim(g);
+    const scheduled = sim.scheduleWaterEdges(0, 0);
+    expect(scheduled).toBeGreaterThan(0);
+    settle(sim);
+    // 海水灌進來：口與旁邊的海水等高（水平供給候選 1 → FLOW_1）、洞的中段維持
+    // 水柱、落地格是 FLOW_1。
+    expect(at(g, 3, 62, 0)).toBe(BLOCK.WATER_FLOW_1);
+    expect(at(g, 3, 61, 0)).toBe(BLOCK.WATER_FALL);
+    expect(at(g, 3, 60, 0)).toBe(BLOCK.WATER_FLOW_1);
+    // 旁邊的海水不變（水源永不改寫）。
+    expect(at(g, 2, 62, 0)).toBe(BLOCK.WATER);
+    expect(at(g, 2, 61, 0)).toBe(BLOCK.WATER);
+    expect(sim.pendingCount).toBe(0);
+  });
+
+  it('a plain ocean chunk schedules nothing (the air above the surface stays out)', () => {
+    const g = new FakeGrid();
+    chunkLoadedOnly(g);
+    fillOcean(g, 54); // 海床 y=54、海水 y=55..62（整塊都是海）
+    const sim = new WaterSim(g);
+    expect(sim.scheduleWaterEdges(0, 0)).toBe(0);
+    expect(sim.pendingCount).toBe(0);
+    settle(sim);
+    // 海面、海床都沒變；海面**上方**那一層空氣不進佇列。
+    expect(at(g, 5, SEA_LEVEL, 0)).toBe(BLOCK.WATER);
+    expect(at(g, 5, SEA_LEVEL + 1, 0)).toBe(BLOCK.AIR);
+    expect(at(g, 5, 54, 0)).toBe(BLOCK.STONE);
+    expect(g.writes).toEqual([]);
+  });
+
+  it('an unloaded neighbour is neither a scheduling target nor a water source', () => {
+    const g = new FakeGrid();
+    chunkLoadedOnly(g);
+    // 貼著東緣（x=15）的水柱，其餘面向用石頭圍住 → 唯一的空氣鄰居在未載入側。
+    for (let y = 58; y <= SEA_LEVEL; y++) {
+      put(g, 15, y, 5, BLOCK.WATER);
+      put(g, 15, y, 4, BLOCK.STONE);
+      put(g, 15, y, 6, BLOCK.STONE);
+      put(g, 14, y, 5, BLOCK.STONE);
+    }
+    put(g, 15, 57, 5, BLOCK.STONE);
+    put(g, 15, 57, 4, BLOCK.STONE);
+    put(g, 15, 57, 6, BLOCK.STONE);
+    const sim = new WaterSim(g);
+    expect(sim.scheduleWaterEdges(0, 0)).toBe(0);
+    expect(sim.pendingCount).toBe(0);
+    settle(sim);
+    // 模擬從不寫入未載入的區塊（(16,…) 一格都沒被寫）。
+    for (const w of g.writes) expect(g.isLoaded(w.x, w.z)).toBe(true);
+    expect(at(g, 16, 60, 5)).toBe(BLOCK.AIR);
+  });
+
+  it('water inside an unloaded chunk does not supply a loaded air cell', () => {
+    const g = new FakeGrid();
+    chunkLoadedOnly(g);
+    // 未載入的鄰區有水（模擬「那邊生成過、但區塊沒載入」）。
+    put(g, 16, 60, 5, BLOCK.WATER);
+    // 本區塊內 (15,60,5) 是空氣、其他鄰居是石頭 → 唯一的水鄰居在未載入側
+    // （未載入 → `read` 回 null → 既不供水、也不當空氣 → 不排程）。
+    put(g, 15, 59, 5, BLOCK.STONE);
+    put(g, 15, 61, 5, BLOCK.STONE);
+    put(g, 15, 60, 4, BLOCK.STONE);
+    put(g, 15, 60, 6, BLOCK.STONE);
+    put(g, 14, 60, 5, BLOCK.STONE);
+    const sim = new WaterSim(g);
+    expect(sim.scheduleWaterEdges(0, 0)).toBe(0);
+    expect(sim.pendingCount).toBe(0);
+    settle(sim);
+    expect(at(g, 15, 60, 5)).toBe(BLOCK.AIR); // 沒有被灌水
+    expect(g.writes).toEqual([]);
   });
 });

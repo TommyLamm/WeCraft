@@ -1855,6 +1855,9 @@ function spawnPoint(): { x: number; y: number; z: number } {
     // B16：(0,0) 的方塊就緒 → 用該區塊的 modified 條目重排程（開局就有的水
     // 從這裡開始流；未載入的格子由 WaterSim 過濾掉）。
     water.scheduleFromModified(world.modified, { cx: 0, cz: 0 });
+    // B16 最終審查修正：同 gen 回應 handler——(0,0) 生成完也補掃一次緊鄰水的
+    // 空氣格（海平面以下），出生區塊內的洞穴口同樣會被海水灌入。
+    water.scheduleWaterEdges(0, 0);
     // B6 Task 3 生成接線（與 worker 回應 handler 同一套）：整塊寫入不經
     // setBlock → topY 與 lightDirty 要自己補。
     chunk.topY = computeChunkTopY(chunk);
@@ -2523,6 +2526,10 @@ function processQueues(): void {
       // B16：區塊（含重套的編輯）就緒 → 用該區塊的 modified 條目重排程，讓
       // 跨區塊／載入後的水流恢復（生成前排程會被 isLoaded 擋掉）。
       water.scheduleFromModified(world.modified, { cx, cz });
+      // B16 最終審查修正：生成的地形**不進** `modified` → 上面的重排程看不到
+      // 「生成時就開在海水旁的洞穴口」。這裡補掃本區塊海平面以下緊鄰水的空氣
+      // 格並排程——海邊的生成洞穴口，載入後水會灌進去。
+      water.scheduleWaterEdges(cx, cz);
     }).catch(() => genInFlight.delete(key));
     budgetGen--;
   }
