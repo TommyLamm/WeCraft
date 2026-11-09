@@ -29,7 +29,7 @@
 1. **流動終止與退去**：水平最多 7 格；失去水源、路徑被擋、或水柱落地後，流動水必須在有限 tick 內退去；不得出現永遠震盪或無限增生的水。測試擁有者：Task 2（`water.test.ts` 的 7 格上限／退去／阻擋／雙水源不生成新水源）。
 2. **未載入區塊與跨區塊邊界**：`WaterSim` 不得讀寫未載入區塊；`World.setFluid` 不得自動建立區塊；區塊載入後要從 `modified` 重排程，讓邊界水流恢復。測試擁有者：Task 2（`isLoaded` 邊界）＋ Task 3（`setFluid` 缺區塊回 false）＋ Task 6（`scheduleFromModified` 接線）。
 3. **存檔／session 邊界**：流動水狀態要隨 `modified` 保存；載入／繼續／雲端套用／回標題要清掉舊佇列並重排程；失去水源的流動水在載入後退去，不得把上一場的水帶進新場。測試擁有者：Task 2（`scheduleFromModified`／`reset`）＋ Task 6（四個場次入口的接線）。
-4. **水桶物品守恆與互動優先序**：空桶只能從最近命中的**水源**裝水（不能穿過較近的實心方塊）；水桶倒水後必須變回空桶；生存／創造都不得複製或消失物品；水桶分支不得搶走工作台／熔爐／箱子／床／TNT 的使用。測試擁有者：Task 7（`player/bucket.test.ts`＋wiring 釘子）。
+4. **水桶物品守恆與互動優先序**：空桶只能從最近命中的**水源**裝水（不能穿過較近的命中方塊——含花草／火把；**最終審查修正**，原文寫「實心方塊」）；水桶倒水後必須變回空桶（**最終審查修正：依規格 §B16，生存模式才消耗／替換，創造模式不消耗水桶**）；生存／創造都不得複製或消失物品；水桶分支不得搶走工作台／熔爐／箱子／床／TNT 的使用。測試擁有者：Task 7（`player/bucket.test.ts`＋wiring 釘子）。
 5. **渲染與效能**：所有水 id 進 water pass、同流體不畫內部面；`setFluid` 不觸發光照重算；每 tick 最多 256 格，`dt` 過大不得一次補償大量 tick。測試擁有者：Task 2（批次／dt）＋ Task 3（`lightDirty` 不變）＋ Task 5（mesher）。
 
 ---
@@ -742,6 +742,10 @@ Expected: FAIL — bucket 模組不存在、wiring 找不到分支。
   - `if (!canPlaceBlockAt(world, t.x, t.y, t.z, player.position, BLOCK.WATER)) return false;`
   - `world.setBlock(t.x, t.y, t.z, BLOCK.WATER);`
   - `inventory.setSlot(selected, bucketAfterEmpty());`
+    （**最終審查修正：依規格 §B16，創造模式不消耗水桶**——這一步改為包在
+    `if (shouldConsumeBucket(currentMode))` 裡：生存模式水桶 ↔ 空桶一對一互換，
+    創造模式水桶留在手上（放水源那一步兩種模式都做）。裝水
+    `tryFillBucket` 維持**無條件**互換——那是轉換、不是消耗。）
   - `hud.setHotbar(slots, selected);`
   - `playBucketSound(t.x, t.y, t.z);`
   - `return true;`
@@ -923,3 +927,44 @@ git commit -m "docs(b16): 0.19.0 版本、README、規格與發布說明"
   `npm run build` 產出的 `dist/`）。待 controller 依 Step 5 驗證後把探針輸出與
   截圖路徑補進 `docs/releases/v0.19.0.md`。
 - **發布**：**未執行**（未獲推 tag／建 Release／呼叫平台 API 的授權）。
+
+## 最終審查修正（final review fixes）
+
+> 2026-11-09 最終整支審查（2 Important ＋ 1 Minor ＋ 2 建議）的修正波。
+> 裁決：規格 §B16 與本作創造慣例勝過 Task 7 簡報的無條件互換；審查者的洞穴口
+> 證據成立（要**實作**、不能只寫文件）。
+
+- **F-1（Important）創造模式倒水不消耗水桶**：規格 §B16「生存模式消耗／替換
+  物品，創造模式不消耗」＋創造慣例（無限供應、`spendFromSlot` 是 no-op）→
+  `player/bucket.ts` 新增純函式 `shouldConsumeBucket(mode)`（生存 `true`、創造
+  `false`）；`main.ts` 的 `tryEmptyBucket` 把 `inventory.setSlot(selected,
+  bucketAfterEmpty())` 包進 `if (shouldConsumeBucket(currentMode))`（**放水源**
+  兩種模式都做）；`tryFillBucket` 維持無條件互換（裝水是轉換、不是消耗）。
+  釘子：`bucket.test.ts`（生存 true／創造 false）、`main.wiring.test.ts`
+  （互換在 guard 內、fill 不得出現 guard）。
+- **F-2（Important）生成洞穴口灌水**：生成的地形**不進** `modified` → 只靠
+  `scheduleFromModified` 看不到「生成時就開在海水旁的洞穴口」。`WaterSim` 新增
+  `scheduleWaterEdges(cx, cz)`：掃描海平面帶（`y ∈ [1, min(SEA_LEVEL,
+  CHUNK_HEIGHT-1)]`）內「緊鄰水的空氣格」與「水格的空氣鄰居」並排程（未載入的
+  格 `read` 回 null → 既不當空氣、也不供水）；`main.ts` 的 worker gen 回應
+  handler 與 `spawnPoint` 各在 `scheduleFromModified` 之後呼叫一次。
+  釘子：`water.test.ts`（藍洞口 → 水柱＋落地 `FLOW_1`、石頂洞穴口 → 水平供給
+  灌入、純海區塊 0 排程、海面上方空氣不排程、未載入鄰居不排程／不供水）、
+  `main.wiring.test.ts`（兩個生成路徑都呼叫、且排在重排程之後）。
+- **F-3（Minor）裝水阻擋措辭**：程式碼是「**任何較近的命中方塊**都擋住裝水」
+  （含花草／火把）→ 發布說明、規格、README 的「實心方塊」措辭統一改成
+  「較近的命中方塊（含花草／火把）」。無程式碼變更。
+- **F-4（建議）載入路徑順序釘子**：`continueGame`／`continueFromCloud` 內的
+  `water.reset()` 必須出現在 `water.scheduleFromModified(` **之前**（wiring 釘子）。
+- **F-5（建議）跨元件整合測試**：新增 `src/world/water-integration.test.ts`
+  ——`World` ＋ `WaterSim`（`main.ts` 同款 adapter）→ 放水源 → 流動 → 序列化
+  `modified` → 全新 `World.applyModified` ＋ `reset` ＋ `scheduleFromModified`
+  → 重載後水流**繼續**（`FLOW_2`）、移除水源後**退去**成空氣。
+- **提交（依序）**：
+  - `2711ff0` `fix(b16): 創造模式倒水不消耗水桶（規格 §B16）`
+  - `65f22b9` `feat(b16): 區塊生成後排程緊鄰水的空氣格（洞穴口灌水）`
+  - `576a3ab` `test(b16): 補上最終審查要求的釘子與存檔重載整合測試`
+  - `docs(b16): 最終審查文件修正（裝水阻擋措辭、規格與發布說明）`（本提交）
+- **不在本波**：審查建議 3（`modified` overlay 衛生）留待之後的批次；建議 4
+  （文件修正併入 browser-smoke 結果提交）由 controller 處理。
+- **未動**：存檔格式、版本、SDK、manifest、workflow（皆不在本波範圍）。
