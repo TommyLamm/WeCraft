@@ -1745,6 +1745,13 @@ describe('main.ts 接線（B16 流動水）', () => {
       const body = functionBody(fn);
       expect(body, `${fn} 必須重置水佇列`).toContain('water.reset()');
       expect(body, `${fn} 必須從 modified 重排程`).toContain('water.scheduleFromModified(');
+      // **順序**也是行為：先 `reset` 才不會把上一場跑一半的批次帶進新場次
+      // （`reset` 只是清佇列、不影響之後的重排程 → 順序反了也不會壞，但那是
+      //  兩次呼叫的語意依賴 → 釘住「先清再排」）。
+      expect(
+        body.indexOf('water.reset()'),
+        `${fn} 必須先重置水佇列、再從 modified 重排程`,
+      ).toBeLessThan(body.indexOf('water.scheduleFromModified('));
     }
   });
 
