@@ -1897,10 +1897,11 @@ describe('main.ts 接線（B17：經驗）', () => {
     expect(countOf('audio.play(')).toBe(8);
   });
 
-  it('all six awardXpAt call sites stay wired (mining / three death helpers / furnace / fishing)', () => {
-    // 1 個函式宣告 ＋ 6 個呼叫點：挖礦 1／三種死亡 helper 各 1（helper 內用
-    // 迴圈逐隻呼叫同一個 `awardXpAt`）／熔爐 1／釣魚 1。拆掉任何一個來源 → 數字變。
-    expect(countOf('awardXpAt(')).toBe(7);
+  it('all seven awardXpAt call sites stay wired (mining / four death sources / furnace / fishing)', () => {
+    // 1 個函式宣告 ＋ 7 個呼叫點：挖礦 1／三種死亡 helper 各 1（helper 內用
+    // 迴圈逐隻呼叫同一個 `awardXpAt`）／被動生物箭殺 1／熔爐 1／釣魚 1。
+    // 拆掉任何一個來源 → 數字變。
+    expect(countOf('awardXpAt(')).toBe(8);
     // 三種死亡 helper 都以 `xpForMob` 給點（同一張點數表）。
     expect(functionBody('spawnMobDeathDrops')).toContain('awardXpAt(xpForMob(');
     expect(functionBody('spawnPassiveDeathDrops')).toContain('awardXpAt(xpForMob(');
@@ -1909,6 +1910,24 @@ describe('main.ts 接線（B17：經驗）', () => {
     expect(playingBranchBody()).toContain('awardXpAt(xpForOre(id)');
     expect(functionBody('takeFurnaceOutput')).toContain('awardXpAt(xpPerSmelt() * out.count');
     expect(functionBody('tryReelFishing')).toContain('awardXpAt(xpForFishing(caught.category)');
+  });
+
+  it('a player-arrow kill of a passive mob awards xp at the damage site', () => {
+    // 被動生物的每幀死亡過濾支傳 `false`（不發）→ 弓獵的點數只能在傷害當下發；
+    // 拆掉這個呼叫點 → 雞／豬／羊／牛的箭殺會 0 經驗（本次修正的缺陷）。
+    const body = functionBody('applyPlayerArrowHit');
+    expect(body).toContain('awardXpAt(');
+    expect(body).toContain('awardXpAt(xpForMob(next.kind)');
+  });
+
+  it('the mining award sits inside the canHarvest gate (survival harvestability)', () => {
+    // spec §6：「手動挖破**且可收穫**（生存）」→ 經驗與掉落同一道 `canHarvest`
+    // 閘門。只斷言 `awardXpAt(` 存在不夠（未閘門時也過）→ 斷言**閘門與發點
+    // 相連的整段文字**：拿掉 `if (canHarvest(id, held)) {` 或把 award 移出閘門
+    // → 這條轉紅。`held` 是破壞分支裡從 `slots[selected]` 讀到的同一把工具。
+    expect(playingBranchBody()).toContain(
+      'if (canHarvest(id, held)) {\n            awardXpAt(xpForOre(id)',
+    );
   });
 
   it('explosion deaths never award xp (killedByPlayer plumbing)', () => {

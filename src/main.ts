@@ -115,6 +115,7 @@ import {
   DigProgress,
   resolvePlacementTarget,
   canPlaceBlockAt,
+  canHarvest,
   spawnBlockDrop,
   digStep,
   getBreakTime,
@@ -2105,6 +2106,11 @@ function applyPlayerArrowHit(ev: Extract<MobEvent, { type: 'arrow-hit' }>): void
       passiveMobs = passiveMobs.map((m) => (m.id === ev.targetId ? next : m));
       passiveRenderer.flashPassiveMob(ev.targetId);
       killed = isPassiveDead(next);
+      // B17：被動生物的**玩家箭殺**在傷害當下發經驗（spec §6：玩家造成的擊殺，
+      // 含近戰與玩家箭）。被動生物的每幀死亡過濾支一律傳 `killedByPlayer: false`
+      // （不發點）→ 不在此發的話，弓獵雞／豬／羊／牛會 0 經驗。
+      // **不**記進 `playerArrowKills`：那是敵對生物的 id 空間，兩邊 id 可能數值相同。
+      if (killed) awardXpAt(xpForMob(next.kind), next.pos);
       break;
     }
   }
@@ -4642,8 +4648,9 @@ gs.renderer.setAnimationLoop(() => {
     const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
     if (deadPassive.length > 0) {
       passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
-      // B17：這一支是「非近戰」的死亡過濾（爆炸炸死的被動生物從這裡離場）
-      // → 不是玩家擊殺 → 不發經驗（與掉落的 killedByPlayer: false 同一支）。
+      // B17：這一支是「每幀死亡過濾」。近戰與爆炸各自在當下把死者移走 →
+      // 這裡看到的只有**玩家箭擊殺**（`applyPlayerArrowHit` 已於傷害當下發過
+      // 經驗）→ 傳 `false` 避免重複發點（與掉落的 killedByPlayer: false 同支）。
       if (spawnPassiveDeathDrops(deadPassive, false)) bus.emit('drops-changed', {});
     }
 
@@ -4976,9 +4983,13 @@ gs.renderer.setAnimationLoop(() => {
           // B10：被拆的是重生點所在的床 → 重生點失效（回世界出生點）。
           clearBedSpawnAt(hit.x, hit.y, hit.z);
           // B17：礦物經驗（煤 1／鐵 1／金 2／鑽 4）——`id` 是**挖除前**讀到的
-          // 方塊 id（與下面掉落同一個值；非礦物 → 0 → 不生球；創造不發——
-          // awardXpAt 自行守門）。球生在方塊中心、`spawnBlockDrop` 之前。
-          awardXpAt(xpForOre(id), { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 });
+          // 方塊 id（與下面掉落同一個值）。spec §6：「手動挖破**且可收穫**（生存）」
+          // → 與掉落共用同一道 `canHarvest` 閘門（徒手挖石頭／鐵礦不發點）；
+          // 非礦物 → 0 → 不生球；創造不發（awardXpAt 自行守門）。球生在方塊中心、
+          // `spawnBlockDrop` 之前。
+          if (canHarvest(id, held)) {
+            awardXpAt(xpForOre(id), { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 });
+          }
           // Task 7: the broken block becomes a world drop (survival only; creative
           // spawns nothing). Task 6: the held stack gates the drop (bare hands
           // can't harvest stone/iron ore) and breaking costs exhaustion — one
