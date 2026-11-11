@@ -579,6 +579,42 @@
   image-rendering: pixelated;
 }
 
+/* 經驗條（B17 Task 5）：等級數字 ＋ 經驗進度條。由 ui/xp-hud.ts 掛／收
+   （`set(null)` ＝ 創造模式 → 兩個節點 display:none；同值不重寫 DOM）。
+
+   **位置：塞進熱鍵欄頂緣（66）與血條底（72）之間的縫**——`.xp-bar` 佔
+   66..72（height 4 ＋ border 1×2 ＝ 6px，剛好貼滿，見上方 `.eat-progress` 的
+   帶狀表）；`.xp-level`（bottom 71、11px 粗體）疊在血條列**中央的空隙**
+   （心／雞腿貼兩端，中間本來就是空的）。與 `.vitals`／`.eat-progress` 同族
+   （viewport 錨定）→ 用 `position: fixed`。`pointer-events: none` → 不擋滑鼠。 */
+.xp-bar {
+  position: fixed;
+  bottom: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 364px;
+  height: 4px;
+  border: 1px solid #000;
+  background: #1b1b1b;
+  pointer-events: none;
+}
+.xp-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: #7ef23c;
+}
+.xp-level {
+  position: fixed;
+  bottom: 71px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 700 11px/1 monospace;
+  color: #7ef23c;
+  text-shadow: 1px 1px 0 #000;
+  pointer-events: none;
+  z-index: 6;
+}
+
 /* 進食進度條（B4 Task 9）：按住右鍵吃東西時，畫面下方的橫條顯示「按住多久了」。
    由 ui/eat-progress.ts 掛／收（**規則不依賴它**）。pointer-events 關掉 → 不擋
    滑鼠事件。
@@ -587,6 +623,7 @@
    畫面下緣由下往上的帶狀（同一個 viewport 座標系；B12 後的數值）：
 
      | 8..66px   | `.ui-hotbar`      | 熱鍵欄（48px 的格子 ＋ 內距 ＋ 邊框） |
+     | 66..72px  | `.xp-bar`         | 經驗條（B17，height 4 ＋ border 1×2 ＝ 6px，剛好貼滿縫） |
      | 72..88px  | `.vitals`         | 血量／飢餓條（16px 的圖示）           |
      | 90..106px | `.armor`          | 護甲條（B12，0 點時隱藏）             |
      | 112..131px| `.ui-item-name`   | 物品名提示（16px 字級 → 行高約 19px）  |

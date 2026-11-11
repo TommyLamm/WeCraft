@@ -358,6 +358,7 @@ describe('formatDebugLines', () => {
     flying: false,
     triangles: 42,
     weather: 'rain',
+    xp: 'L2 3/9',
   };
 
   it('reports the triangle count on its own line (F3 baseline check)', () => {
@@ -375,7 +376,14 @@ describe('formatDebugLines', () => {
   it('renders the Weather line between Biome and Triangles (B15)', () => {
     const lines = formatDebugLines(base);
     expect(lines.indexOf('Weather: rain')).toBe(lines.indexOf('Biome: plains') + 1);
-    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Weather: rain') + 1);
+  });
+
+  it('renders the Xp line between Weather and Triangles (B17)', () => {
+    const lines = formatDebugLines(base);
+    // B17：`Xp:` 由 main 組好整段字串（`L<等級> <xp>/<need>`）傳入，插在
+    // Weather 之後、Triangles 之前 → 順序釘子 Weather < Xp < Triangles。
+    expect(lines.indexOf('Xp: L2 3/9')).toBe(lines.indexOf('Weather: rain') + 1);
+    expect(lines.indexOf('Triangles: 42')).toBe(lines.indexOf('Xp: L2 3/9') + 1);
   });
 
   it('keeps the fps and XYZ line formats byte-for-byte', () => {
@@ -400,6 +408,7 @@ describe('formatDebugLines', () => {
       'Seed: 1337',
       'Biome: plains',
       'Weather: rain',
+      'Xp: L2 3/9',
       'Triangles: 42',
       'Mode: survival',
     ]);
@@ -1286,6 +1295,33 @@ describe('bottom HUD band geometry (B7 Task 17)', () => {
     expect(
       ruleStyles('.ui-sprint-hint').some((s) => s.getPropertyValue('position') === 'fixed'),
     ).toBe(true);
+  });
+});
+
+// ---- B17 Task 5：經驗條塞進熱鍵欄（66）與血條（72）之間的縫 --------------------
+// 下緣帶狀新增一格：`.xp-bar` 佔 66..72（height 4 ＋ border 1×2 ＝ 6px，剛好
+// 貼滿縫隙）；`.xp-level`（bottom 71）疊在血條列**中央的空隙**（心／雞腿在兩端）。
+// 沿用 B7 的 ruleStyles／ruleBottom 讀真實 CSS 規則（jsdom 不算版面）。
+describe('bottom HUD band geometry (B17: xp bar)', () => {
+  it('the xp bar sits between the hotbar and the vitals row', () => {
+    // 熱鍵欄頂緣 66、血條底 72 → 經驗條必須整條（含邊框）塞進 66..72。
+    const bottom = ruleBottom('.xp-bar');
+    expect(bottom).not.toBeNull();
+    expect(bottom!).toBeGreaterThanOrEqual(66);
+    const styles = ruleStyles('.xp-bar')[0];
+    const height = Number.parseFloat(styles.getPropertyValue('height'));
+    // jsdom 不展開 border 簡寫 → 直接從 "1px solid #000" 開頭抓 px。
+    const border = Number.parseFloat(/^(\d+(?:\.\d+)?)px/.exec(styles.getPropertyValue('border'))?.[1] ?? '0');
+    expect(bottom! + height + border * 2).toBeLessThanOrEqual(72);
+    // 等級數字：疊在血條列中央空隙的上緣（71）。
+    expect(ruleBottom('.xp-level')).toBe(71);
+  });
+
+  it('the xp bar fill has its own width rule', () => {
+    const fills = ruleStyles('.xp-bar-fill');
+    expect(fills).toHaveLength(1);
+    expect(fills[0].getPropertyValue('width')).toBe('0%'); // 初始 0，由 set() 逐值改寫
+    expect(fills[0].getPropertyValue('background')).toBe('#7ef23c');
   });
 });
 
