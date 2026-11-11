@@ -534,3 +534,36 @@ export function arrowHit(
   osc.start();
   osc.stop(now + ARROW_HIT_SEC);
 }
+
+/** 經驗球吸收聲（B17）：0.08 秒的**單一正弦上滑**（1200 → 1800 Hz）——
+ *  亮而短促的「叮」，近似原版 `orb` 撿取音的高頻提示（原版是取樣；
+ *  本作程序合成）。`volume` 已含距離衰減（`index.ts` 算好再傳進來；
+ *  主迴圈的接線是**本地音**（玩家自己吸收）→ 距離恆為 0）。 */
+export const XP_PICKUP_FROM_HZ = 1200;
+export const XP_PICKUP_TO_HZ = 1800;
+const XP_PICKUP_SEC = 0.08;
+const XP_PICKUP_GAIN = 0.15;
+
+export function xpPickup(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  volume = 1,
+): void {
+  const now = ctx.currentTime;
+  const peak = Math.max(0, Number.isFinite(volume) ? volume : 0) * XP_PICKUP_GAIN;
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(XP_PICKUP_FROM_HZ, now);
+  osc.frequency.linearRampToValueAtTime(XP_PICKUP_TO_HZ, now + XP_PICKUP_SEC);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(peak, now + 0.01);
+  gain.gain.linearRampToValueAtTime(0, now + XP_PICKUP_SEC);
+
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start();
+  osc.stop(now + XP_PICKUP_SEC);
+}

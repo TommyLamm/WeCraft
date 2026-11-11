@@ -19,10 +19,9 @@ export interface DebugLinesParams {
   triangles: number;
   /** B15：目前天氣（`clear` / `rain` / `thunder`）——純字串，由 main.ts 決定。 */
   weather: string;
-  /** B17：F3 的 Xp 行本體——main 組好的 `L<等級> <xp>/<need>` 字串（Task 6
-   *  接線；本欄位宣告為選填，是因為接線前的 `main.ts` 呼叫點還沒傳它，
-   *  而 `npm run typecheck` 每個 task 都要全綠）。 */
-  xp?: string;
+  /** B17：F3 的 Xp 行本體——main 組好的 `L<等級> <xp>/<need>` 字串
+   *  （Task 6 起必填：main 的呼叫點已接上 `experience`）。 */
+  xp: string;
 }
 
 /** Build the F3 debug lines (pure — main.ts reads the frame, hud renders it).
@@ -40,7 +39,7 @@ export function formatDebugLines(p: DebugLinesParams): string[] {
     `Seed: ${p.seed}`,
     `Biome: ${p.biome}`,
     `Weather: ${p.weather}`,
-    `Xp: ${p.xp ?? ''}`,
+    `Xp: ${p.xp}`,
     `Triangles: ${p.triangles}`,
     `Mode: ${p.mode}${p.flying ? ' (flying)' : ''}`,
   ];

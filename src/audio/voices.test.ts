@@ -12,6 +12,7 @@ import {
   startRain,
   startWind,
   thunderBoom,
+  xpPickup,
 } from './voices';
 
 const asCtx = (fake: FakeAudioContext): BaseAudioContext => fake as unknown as BaseAudioContext;
@@ -188,6 +189,28 @@ describe('voices', () => {
     rain.stop();
     rain.stop(); // idempotent
     expect(source.stopCalls).toHaveLength(1);
+  });
+
+  // ---- B17：經驗球吸收聲 ----
+  it('playXpPickup builds an oscillator with a short bright envelope', () => {
+    const fake = new FakeAudioContext();
+    xpPickup(asCtx(fake), asNode(fake.destination), 0.5);
+
+    // 單一振盪器：正弦、亮音（頻率 ≥ 800 Hz）、0.08 秒上滑後停止
+    expect(fake.oscillators).toHaveLength(1);
+    const osc = fake.oscillators[0];
+    expect(osc.type).toBe('sine');
+    expect(osc.frequency.sets[0].value).toBeGreaterThanOrEqual(800);
+    expect(osc.frequency.ramps[0].value).toBeGreaterThan(osc.frequency.sets[0].value);
+    expect(osc.frequency.ramps[0].time).toBeCloseTo(0.08, 5);
+    expect(osc.startCalls).toHaveLength(1);
+    expect(osc.stopCalls).toHaveLength(1);
+    expect(osc.stopCalls[0].when).toBeCloseTo(0.08, 5);
+    // 音量包絡收尾 0；峰值＝volume × 0.15（0.5 × 0.15）
+    const gain = fake.gains[0];
+    expect(gain.gain.peak).toBeCloseTo(0.075, 5);
+    expect(gain.gain.ramps.at(-1)!.value).toBe(0);
+    expect(gain.outputs).toContain(fake.destination);
   });
 
   it('B15: thunderBoom layers a 180 Hz rumble and a 60→30 Hz sine', () => {

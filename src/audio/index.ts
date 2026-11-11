@@ -16,6 +16,7 @@ import {
   startWind,
   thunderBoom,
   tntFuse,
+  xpPickup,
 } from './voices';
 
 export { createAudioEngine } from './engine';
@@ -67,6 +68,9 @@ export interface GameAudio {
   playFishingSplash(opts?: PlayOptions): void;
   /** B14：魚訊聲（兩聲短正弦；距離衰減與其他音效一致）。 */
   playFishingBite(opts?: PlayOptions): void;
+  /** B17：經驗球吸收聲（單一正弦上滑；距離衰減與其他音效一致——主迴圈
+   *  的接線是本地音，實際距離恆為 0）。 */
+  playXpPickup(opts?: PlayOptions): void;
   /** B15：切換天氣音景（晴朗停雨聲、下雨／雷雨啟動雨聲迴圈）。 */
   setWeather(weather: AudioWeather): void;
   /** B15：雷聲（低頻隆隆聲＋下滑正弦；距離衰減與其他音效一致）。 */
@@ -299,6 +303,22 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     fishingBite(ctx, dest, volume);
   }
 
+  /** B17：經驗球吸收聲。距離衰減走同一條 `gainForDistance`；引擎未啟動時
+   *  no-op（惰性建構不變）——與 `playBowShoot` 同一個樣板。 */
+  function playXpPickup(opts: PlayOptions = {}): void {
+    const ctx = engine.context;
+    const dest = engine.master;
+    if (!ctx || !dest) return;
+    const from = opts.listener ?? opts.pos;
+    const distance =
+      from && opts.pos
+        ? Math.hypot(opts.pos.x - from.x, opts.pos.y - from.y, opts.pos.z - from.z)
+        : 0;
+    const requested = opts.volume ?? 1;
+    const volume = (Number.isFinite(requested) ? requested : 0) * gainForDistance(distance);
+    xpPickup(ctx, dest, volume);
+  }
+
   /** B15：雷聲。距離衰減走同一條 `gainForDistance`；引擎未啟動時 no-op。 */
   function playThunder(opts: PlayOptions = {}): void {
     const ctx = engine.context;
@@ -370,6 +390,7 @@ export function createGameAudio(deps: AudioEngineDeps = {}): GameAudio {
     playExplosion,
     playFishingSplash,
     playFishingBite,
+    playXpPickup,
     setWeather(next) {
       weather = next;
       syncRain();

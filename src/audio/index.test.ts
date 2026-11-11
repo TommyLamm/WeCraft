@@ -455,4 +455,25 @@ describe('createGameAudio weather (B15)', () => {
     expect(fake.created).toHaveLength(0);
     audio.dispose();
   });
+
+  // ---- B17：經驗球吸收聲 ----
+  it('playXpPickup routes through the master bus and is inert before start', () => {
+    const { fake, audio } = setup();
+    audio.playXpPickup(); // 引擎未啟動 → 惰性（不建 AudioContext、不建任何節點）
+    expect(fake.created).toHaveLength(0);
+    audio.dispose();
+
+    audio.ensureStarted();
+    const master = fake.gains[0];
+    audio.playXpPickup();
+    expect(fake.oscillators).toHaveLength(1); // 單一正弦，無噪音層
+    const envelope = fake.gains[fake.gains.length - 1];
+    expect(envelope.outputs).toContain(master);
+    expect(envelope.gain.peak).toBeGreaterThan(0);
+
+    // 距離衰減與其他音效同一條 gainForDistance：可聽距離外峰值 0
+    audio.playXpPickup({ pos: { x: 40, y: 0, z: 0 }, listener: { x: 0, y: 0, z: 0 } });
+    expect(fake.gains[fake.gains.length - 1].gain.peak).toBe(0);
+    audio.dispose();
+  });
 });

@@ -1864,3 +1864,96 @@ describe('main.ts 接線（B16 Task 7：水桶）', () => {
     expect(functionBody('playBucketSound')).toContain("audio.play('place', 'water'");
   });
 });
+
+// ---- B17：經驗主線接線（四種來源／球步進／HUD／音效／session） --------------
+// 規則本體都在純模組（`core/experience.ts`／`world/xp-orbs.ts`／`world/xp-awards.ts`
+// ＋各有行為測試）；這裡只釘**組裝根**：main.ts 有沒有把來源、球步進、HUD、
+// 音效與 session 邊界接上、接在哪裡、接幾次。任何一條被拆掉都會紅。
+describe('main.ts 接線（B17：經驗）', () => {
+  it('the orb step and its renderer are wired exactly once', () => {
+    // 步進只有 playing 分支一個呼叫點（import 那行沒有括號 → 不會被算到）；
+    // 渲染尾巴也恰一次（暫停時 dt = 0 → 動畫凍結）。
+    expect(countOf('stepXpOrbs(')).toBe(1);
+    expect(countOf('xpOrbRenderer.syncOrbs(')).toBe(1);
+    // 渲染尾巴緊接在掉落物的同步之後（同一個「每幀 reconcile」區段）。
+    const syncAt = mainSource.indexOf('dropRenderer.syncDrops(');
+    const orbSyncAt = mainSource.indexOf('xpOrbRenderer.syncOrbs(');
+    expect(orbSyncAt).toBeGreaterThan(syncAt);
+  });
+
+  it('the orb step assigns the result back and credits collected xp through setExperience', () => {
+    // **結果必須指派回驅動遊戲的變數**（`xpOrbs = orbStep.orbs`），且吸收到的
+    // 點數走 `setExperience` 單一顯示路徑——兩者任一被拆掉都紅。
+    const playing = playingBranchBody();
+    const at = playing.indexOf('const orbStep = stepXpOrbs(');
+    expect(at).toBeGreaterThan(-1);
+    const after = playing.slice(at);
+    expect(after).toContain('xpOrbs = orbStep.orbs');
+    expect(after).toContain('setExperience(');
+    // 吸收音在球步進之後、且全檔恰一個呼叫點（本地音——不需要 pos）。
+    expect(after.indexOf('audio.playXpPickup(')).toBeGreaterThan(-1);
+    expect(countOf('audio.playXpPickup(')).toBe(1);
+    // 既有 8 個 `audio.play(` 呼叫點**不變**（撿取音走專屬 facade 方法）。
+    expect(countOf('audio.play(')).toBe(8);
+  });
+
+  it('all six awardXpAt call sites stay wired (mining / three death helpers / furnace / fishing)', () => {
+    // 1 個函式宣告 ＋ 6 個呼叫點：挖礦 1／三種死亡 helper 各 1（helper 內用
+    // 迴圈逐隻呼叫同一個 `awardXpAt`）／熔爐 1／釣魚 1。拆掉任何一個來源 → 數字變。
+    expect(countOf('awardXpAt(')).toBe(7);
+    // 三種死亡 helper 都以 `xpForMob` 給點（同一張點數表）。
+    expect(functionBody('spawnMobDeathDrops')).toContain('awardXpAt(xpForMob(');
+    expect(functionBody('spawnPassiveDeathDrops')).toContain('awardXpAt(xpForMob(');
+    expect(functionBody('spawnB9DeathDrops')).toContain('awardXpAt(xpForMob(');
+    // 挖礦／熔爐／釣魚各自用自己的點數來源。
+    expect(playingBranchBody()).toContain('awardXpAt(xpForOre(id)');
+    expect(functionBody('takeFurnaceOutput')).toContain('awardXpAt(xpPerSmelt() * out.count');
+    expect(functionBody('tryReelFishing')).toContain('awardXpAt(xpForFishing(caught.category)');
+  });
+
+  it('explosion deaths never award xp (killedByPlayer plumbing)', () => {
+    // 爆炸路徑的被動生物死亡過濾支明確傳 false（非玩家擊殺 → 不發）；
+    // 敵對生物的死亡移除支（白天燃燒）也傳 false——既有 5 處 `killedByPlayer: false`。
+    expect(playingBranchBody()).toContain('spawnPassiveDeathDrops(deadPassive, false)');
+    expect(countOf('killedByPlayer: false')).toBe(5);
+    // 三個 helper 的發點閘門：敵對＝`!== false`（undefined 視同玩家擊殺）、
+    // 苦力怕／蜘蛛與被動＝真值判斷。
+    expect(functionBody('spawnMobDeathDrops')).toContain('if (opts.killedByPlayer !== false)');
+    expect(functionBody('spawnB9DeathDrops')).toContain('if (killedByPlayer)');
+    expect(functionBody('spawnPassiveDeathDrops')).toContain('if (killedByPlayer)');
+  });
+
+  it('the orb roster is transient: resetSessionEntities clears it', () => {
+    expect(functionBody('resetSessionEntities')).toContain('xpOrbs = [];');
+  });
+
+  it('startGame resets experience and honors the ?xp= override', () => {
+    const body = functionBody('startGame');
+    expect(body).toContain('xpOverride');
+    expect(body).toContain('setExperience(');
+    // 覆寫解析在模組層只做一次（與 `?weather=` 同一條慣例）。
+    expect(mainSource).toContain('const xpOverride = parseXpOverride(');
+  });
+
+  it('the xp HUD is created once and shown only through setExperience', () => {
+    expect(countOf('createXpHud(uiRoot)')).toBe(1);
+    // 單一顯示路徑：`xpHud.set` 只出現在 `setExperience` 裡（模式切換／球吸收／
+    // 新局都走它 → 創造隱藏不會有第二條寫入路徑漏掉）。
+    expect(functionBody('setExperience')).toContain('xpHud.set(');
+    const modeHandler = blockAfter("bus.on('mode-changed', ({ mode }) => {");
+    expect(modeHandler).toContain('setExperience(experience)');
+  });
+
+  it('the F3 overlay carries the xp line from the live experience', () => {
+    // main 組好整段字串（`L<等級> <xp>/<need>`）→ hud 只負責渲染。
+    expect(mainSource).toContain('xp: `L${experience.level} ${experience.xp}/');
+    expect(countOf('xpToNext(')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the debug hooks expose xpState and orbs (read-only)', () => {
+    // 介面簽名與實作都要在（比照 B11 的 tntStates 釘法：只斷言欄位名太弱）。
+    expect(mainSource).toContain('xpState: () => { level: number; xp: number; need: number }');
+    expect(mainSource).toContain('orbs: () => number');
+    expect(mainSource).toContain('orbs: () => xpOrbs.length');
+  });
+});

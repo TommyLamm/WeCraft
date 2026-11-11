@@ -255,6 +255,20 @@ import {
 // B4 Task 10：被動生物的持久化（附加欄位 `passiveMobs`；B4 當時本機 payload 是 v3、
 // 雲端是 format 1——當時兩邊都只是多蓋一個可選的鍵；B7 後格式已另行升版）。
 import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
+// B17：經驗模型（等級曲線／加點）＋經驗球實體（暫態）＋四種來源的點數表。
+// 主線接線（`setExperience`／`awardXpAt`）在下方 B17 區塊；球的每幀步進與
+// 吸收入帳在 playing 分支（drops 之後）。
+import {
+  addExperience,
+  createExperience,
+  parseXpOverride,
+  xpToNext,
+  type Experience,
+} from './core/experience';
+import { spawnXpOrbs, stepXpOrbs, type XpOrb } from './world/xp-orbs';
+import { xpForFishing, xpForMob, xpForOre, xpPerSmelt } from './world/xp-awards';
+import { createXpHud } from './ui/xp-hud';
+import { createXpOrbRenderer } from './render/xp-orbs';
 import { createHud, formatDebugLines } from './ui/hud';
 import { itemIcon } from './ui/icons';
 import { renderVitals, renderArmorBar } from './ui/survival-hud';
@@ -453,6 +467,11 @@ interface WecraftDebug {
   weatherRemaining: () => number;
   /** **B15**：目前閃光強度（0..1；沒有閃光時 0）——**純唯讀**。 */
   weatherFlash: () => number;
+  /** **B17**：玩家的經驗快照（等級／當前等級內已累積點數／升到下一級所需）。
+   *  **純唯讀**（回傳一份新物件，不修改任何遊戲狀態）。 */
+  xpState: () => { level: number; xp: number; need: number };
+  /** **B17**：場上的經驗球數量。**純唯讀**。 */
+  orbs: () => number;
 }
 
 declare global {
@@ -485,6 +504,8 @@ world.setBlockChangeListener((x, y, z) => water.notifyBlockChanged(x, y, z));
 const chunkRenderer = new ChunkRenderer(gs.scene); // Task 4: shared texture array
 // Task 7: drop sprites — icon factory injected here (render/ never imports ui/)
 const dropRenderer = createDropRenderer(gs.scene, itemIcon);
+// B17 Task 6：經驗球的視覺（0.25 見方的發光綠方塊；暫態——不跨存檔）。
+const xpOrbRenderer = createXpOrbRenderer(gs.scene);
 // Task 8: mobs + arrows — blocky humanoids and oriented boxes
 const mobRenderer = createMobRenderer(gs.scene);
 // B4 Task 8：被動生物渲染（方塊化的雞／豬／羊／牛；與敵對生物的模型分開）
@@ -499,6 +520,9 @@ const fishingRenderer = createFishingRenderer(gs.scene);
 // `?weather=clear|rain|thunder` 只用於**驗收／展示**：鎖定後不自動轉場，
 // 但雷雨仍會打雷閃電。正常遊玩不帶參數 → 天氣自己走（晴→雨→雷→雨→晴）。
 const weatherOverride = parseWeatherOverride(window.location.search);
+// B17：`?xp=<n>` 驗收覆寫（與 `?weather=` 同級）：開局把生存經驗直接設為 n
+// （正常遊玩不帶此參數 → null）。唯讀一次，`startGame` 使用。
+const xpOverride = parseXpOverride(window.location.search);
 const weatherRenderer = createWeatherRenderer(gs.scene);
 let weather: WeatherState = createWeather(
   Math.random,
@@ -532,6 +556,9 @@ let terrain = new TerrainWorkerClient(settings.seed);
 let terrainEpoch = 0;
 const input = createInput(canvas, settings);
 const hud = createHud(uiRoot);
+// B17：經驗條（熱鍵欄上方的綠色進度條＋中央等級數字）。初始即隱藏——
+// 第一次 `setExperience`（新局／讀檔／切模式）才會顯示；創造模式維持隱藏。
+const xpHud = createXpHud(uiRoot);
 const menus = createMenus(uiRoot);
 const inv = createInventory(uiRoot);
 // Task 11: standalone 3×3 crafting overlay (right-click on a crafting table)
@@ -611,6 +638,14 @@ const slots = inventory.slots;
 let armor: ArmorSet = emptyArmorSet();
 let selected = 0;
 let showDebug = false;
+// ---- B17：經驗狀態（Task 6 接線）----
+// `experience` 是「等級＋當前等級內累積點數」的單一真值；**點數只在經驗球被
+// 吸收時入帳**（spec §5：未吸收的點數會消失）→ 入帳點只有主迴圈的 orb step。
+// `xpOrbs` 是暫態實體（不跨存檔——resetSessionEntities 清空）；`xpSoundAcc`
+// 是撿取音的 0.15 秒節流累積器（每幀遞減、歸零才能再響）。
+let experience: Experience = createExperience();
+let xpOrbs: XpOrb[] = [];
+let xpSoundAcc = 0;
 // B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
 // 這是**工作階段層級**的狀態：不進存檔（重置點見 `resetViewMode()`）。
 let viewMode: ViewMode = 'first';
@@ -882,6 +917,13 @@ function takeFurnaceOutput(): void {
   if (!out || !Number.isFinite(out.count) || out.count < 1) return;
   if (!inventory.fits(out.item, out.count)) return; // full → blocked
   giveItem(out.item, out.count, out.dur);
+  // B17：冶煉取物經驗（原版「取走才發」：每取出 1 個產物 1 點；創造不發——
+  // awardXpAt 自行守門）。球生在熔爐方塊中心。
+  awardXpAt(xpPerSmelt() * out.count, {
+    x: entity.x + 0.5,
+    y: entity.y + 0.5,
+    z: entity.z + 0.5,
+  });
   const next: FurnaceState = { ...st, output: null };
   blockEntities.set(openFurnaceKey, furnaceStateToEntity(next, entity.x, entity.y, entity.z));
   hud.setHotbar(slots, selected);
@@ -1179,6 +1221,8 @@ function tryReelFishing(): void {
     return;
   }
   const overflow = giveItem(caught.item, caught.count);
+  // B17：釣魚經驗（魚 2／垃圾 1／寶物 5）——成功收線才發，球生在浮標處。
+  awardXpAt(xpForFishing(caught.category), bobber);
   if (overflow > 0) {
     drops = spawnDrop(drops, caught.item, overflow, {
       x: player.position.x,
@@ -1727,6 +1771,33 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
   setVitals({ ...vitals, hp, maxHp, hunger, maxHunger });
 });
 
+// ---- B17：經驗的單一顯示路徑與單一給點入口（Task 6 接線）--------------------
+/**
+ * 經驗的**單一變更路徑**：指派＋HUD 顯示（創造 → `xpHud.set(null)` 隱藏）。
+ * 每個經驗變化點（球吸收／新局／模式切換）都走這裡 → HUD 不會有第二條寫入路徑。
+ * （等級上升時的 `applyAdvancement` 進度事件由 Task 12 在此補上——先佔位。）
+ */
+function setExperience(next: Experience): void {
+  experience = next;
+  xpHud.set(currentMode === 'survival' ? experience : null);
+}
+
+/**
+ * 給經驗的**單一入口**（四種來源共用）：生存模式且點數 ≥ 1 才在 `pos` 生出
+ * 經驗球（球內含點數，由玩家磁吸／吸收——**不在此直接入帳**：spec §5 明訂
+ * 「未吸收的點數會消失」，點數只住在球裡，入帳點只有主迴圈吸收時的
+ * `addExperience(experience, orbStep.collected)`；這也是 Task 12 驗收
+ * 「挖煤 → 球生成、**吸收**、等級上升」的順序）。
+ *
+ * 守門與掉落同一條規則：創造模式**不發經驗**（與「創造不灑掉落」一致）；
+ * 表外來源（非礦物／表外 kind）→ 0 點 → 不生球。
+ */
+function awardXpAt(amount: number, pos: { x: number; y: number; z: number }): void {
+  if (currentMode !== 'survival') return; // 創造模式不發經驗
+  if (!(amount >= 1)) return; // 0／負數／NaN → 沒有點數可給（不生球）
+  xpOrbs = spawnXpOrbs(xpOrbs, amount, pos);
+}
+
 // ---- Mode switch (Task 5): THE single place mode state is persisted + applied
 // (consolidated per review Important #1 — a future emitter just emits and gets
 // saveSettings + in-memory settings.mode + inventory/refill/vitals for free).
@@ -1762,6 +1833,9 @@ bus.on('mode-changed', ({ mode }) => {
     hud.setHotbar(slots, selected);
     setVitals({ ...modeStash.survivalVitals }); // copy: the stash object must never become live vitals
   }
+  // B17：經驗條跟著模式走（生存顯示、創造隱藏）——經驗值本身跨模式保留
+  // （與 armor 同一條規則：切到創造不清空、切回生存原樣顯示）。
+  setExperience(experience);
 });
 
 function applyRenderDistanceFog(): void {
@@ -2087,6 +2161,11 @@ function spawnMobDeathDrops(
   opts: { killedByPlayer?: boolean } = {},
 ): boolean {
   if (currentMode !== 'survival') return false; // 創造模式不掉落
+  // B17：**玩家造成的擊殺**才發經驗（近戰／玩家箭走預設或 true；爆炸與白天
+  // 燃燒的死亡移除支傳 `killedByPlayer: false` → 不發）。逐隻在屍體位置生球。
+  if (opts.killedByPlayer !== false) {
+    for (const m of dead) awardXpAt(xpForMob(m.kind), m.pos);
+  }
   let spilled = false;
   for (const d of dropsForDeaths(dead, undefined, opts)) {
     drops = spawnDrop(drops, d.item, d.count, d.pos);
@@ -2104,8 +2183,15 @@ function spawnMobDeathDrops(
  * 入口（`main.wiring.test.ts` 的釘子釘的就是這件事）→ 兩種生物共用同一條路徑。
  * `PassiveKind` 與 `MobDropKind` 的被動分支是同一組字面量 → 不需要轉型。
  */
-function spawnPassiveDeathDrops(dead: readonly PassiveMob[]): boolean {
+function spawnPassiveDeathDrops(
+  dead: readonly PassiveMob[],
+  killedByPlayer = true,
+): boolean {
   if (currentMode !== 'survival') return false; // 創造模式不掉落
+  // B17：玩家近戰擊殺（預設 true）才發經驗；爆炸路徑的死亡過濾支傳 false。
+  if (killedByPlayer) {
+    for (const m of dead) awardXpAt(xpForMob(m.kind), m.pos);
+  }
   let spilled = false;
   const table = dead.map((m) => ({ kind: m.kind, pos: m.pos }));
   for (const d of dropsForDeaths(table)) {
@@ -2126,6 +2212,11 @@ function spawnB9DeathDrops(
   killedByPlayer: boolean,
 ): boolean {
   if (currentMode !== 'survival') return false;
+  // B17：玩家擊殺才發經驗（爆炸炸死傳 false——與「蜘蛛眼只在玩家擊殺時掉」
+  // 同一條規則）。逐隻在屍體位置生球。
+  if (killedByPlayer) {
+    for (const m of dead) awardXpAt(xpForMob(m.kind), m.pos);
+  }
   let spilled = false;
   // 掉落表仍只有 `dropsForDeaths` 這個入口（main.ts 不直接呼叫 rollMobDrops）。
   for (const d of dropsForDeaths(dead, undefined, { killedByPlayer })) {
@@ -3403,6 +3494,9 @@ function resetSessionEntities(): void {
   farmCursor = 0;
   // B14：釣魚線不跨場（與引信 TNT 同一級：暫態實體不進存檔）。
   fishing = null;
+  // B17：經驗球是暫態（與掉落物同一級）——吸收過的點數已在 `experience` 裡，
+  // 地上沒吸走的球不跨場（原版同款：換世界球就沒了）。
+  xpOrbs = [];
 }
 
 /** New Game = a FRESH world (plan 14.3 "new → fresh state"): sessions within
@@ -3470,6 +3564,11 @@ function startGame(): void {
   selected = 0;
   hud.setHotbar(slots, selected);
   setVitals(currentMode === 'survival' ? { ...modeStash.survivalVitals } : null);
+  // B17：新局 → 經驗歸零（`?xp=<n>` 驗收覆寫除外——與 B15 `?weather=` 同級；
+  // 正規化由 `addExperience(createExperience(), n)` 的曲線進位自然完成）。
+  experience =
+    xpOverride !== null ? addExperience(createExperience(), xpOverride) : createExperience();
+  setExperience(experience);
   clock = createClock(settings.dayLengthSec);
   // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
   // bed and pin the ambience phase to the fresh clock (day).
@@ -4005,6 +4104,13 @@ window.__wecraft = {
   weather: () => weatherMode,
   weatherRemaining: () => weather.remaining,
   weatherFlash: () => weatherFlash,
+  // B17：經驗／經驗球（**純唯讀**）→ 供驗收探針讀「等級與進度」與「場上球數」。
+  xpState: () => ({
+    level: experience.level,
+    xp: experience.xp,
+    need: xpToNext(experience.level),
+  }),
+  orbs: () => xpOrbs.length,
 };
 /** A1: the boot check (local read → cloud init/read/apply → title settle).
  *  Runs in the BACKGROUND — the title is already on screen while it works.
@@ -4315,8 +4421,11 @@ gs.renderer.setAnimationLoop(() => {
     }
 
     // ---- 物品掉落（Task 7）：physics → proximity pickup ----
+    // B17：掉落物與經驗球共用同一個固體判定回呼（抽成區域常數重用——與下方
+    // 生物用的 `isSolidAt` 同型；水不算固體 → 會沉到水底）。
+    const solidAt = (x: number, y: number, z: number): boolean => world.isSolid(x, y, z);
     const dropsBefore = drops.length;
-    drops = stepDrops(drops, dt, (x, y, z) => world.isSolid(x, y, z)); // water ≠ solid → falls through
+    drops = stepDrops(drops, dt, solidAt); // water ≠ solid → falls through
     if (drops.length !== dropsBefore) bus.emit('drops-changed', {}); // a drop despawned (300 s)
     // Creative guard (review Minor #6): creative never SPAWNS drops, but after a
     // mid-game survival→creative switch ground drops exist — and addItem's
@@ -4346,6 +4455,23 @@ gs.renderer.setAnimationLoop(() => {
       }
       for (const item of obtained) {
         applyAdvancement({ type: 'obtain', item, mode: currentMode });
+      }
+    }
+
+    // ---- B17：經驗球（暫態）：步進 → 吸收入帳 → 撿取音 ----
+    // 點數**只在吸收時入帳**（spec §5：未吸收的點數會消失）→ 這裡是經驗的
+    // 唯一 gameplay 入帳點；HUD 走 `setExperience` 單一顯示路徑。
+    xpSoundAcc = Math.max(0, xpSoundAcc - dt); // 撿取音節流累積器每幀遞減
+    const orbStep = stepXpOrbs(xpOrbs, dt, player.position, solidAt);
+    xpOrbs = orbStep.orbs;
+    if (orbStep.collected > 0) {
+      experience = addExperience(experience, orbStep.collected);
+      setExperience(experience);
+      // 撿取音（**本地音**——玩家自己吸收，不需 pos）：0.15 秒節流，磁吸
+      // 連續吸收時不會機關槍連響；節流歸零後的下一顆一定會響。
+      if (xpSoundAcc <= 0) {
+        xpSoundAcc = 0.15;
+        audio.playXpPickup();
       }
     }
 
@@ -4516,7 +4642,9 @@ gs.renderer.setAnimationLoop(() => {
     const deadPassive = passiveMobs.filter((m) => isPassiveDead(m));
     if (deadPassive.length > 0) {
       passiveMobs = passiveMobs.filter((m) => !isPassiveDead(m));
-      if (spawnPassiveDeathDrops(deadPassive)) bus.emit('drops-changed', {});
+      // B17：這一支是「非近戰」的死亡過濾（爆炸炸死的被動生物從這裡離場）
+      // → 不是玩家擊殺 → 不發經驗（與掉落的 killedByPlayer: false 同一支）。
+      if (spawnPassiveDeathDrops(deadPassive, false)) bus.emit('drops-changed', {});
     }
 
     // ---- 生存值（Task 9）：sprint/jump exhaustion + regen/starve tick ----
@@ -4847,6 +4975,10 @@ gs.renderer.setAnimationLoop(() => {
           world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
           // B10：被拆的是重生點所在的床 → 重生點失效（回世界出生點）。
           clearBedSpawnAt(hit.x, hit.y, hit.z);
+          // B17：礦物經驗（煤 1／鐵 1／金 2／鑽 4）——`id` 是**挖除前**讀到的
+          // 方塊 id（與下面掉落同一個值；非礦物 → 0 → 不生球；創造不發——
+          // awardXpAt 自行守門）。球生在方塊中心、`spawnBlockDrop` 之前。
+          awardXpAt(xpForOre(id), { x: hit.x + 0.5, y: hit.y + 0.5, z: hit.z + 0.5 });
           // Task 7: the broken block becomes a world drop (survival only; creative
           // spawns nothing). Task 6: the held stack gates the drop (bare hands
           // can't harvest stone/iron ore) and breaking costs exhaustion — one
@@ -5217,6 +5349,8 @@ gs.renderer.setAnimationLoop(() => {
             triangles: gs.renderer.info.render.triangles,
             // B15：天氣（晴朗／下雨／雷雨）。
             weather: weatherMode,
+            // B17：經驗行（main 組好整段字串——`L<等級> <xp>/<need>`）。
+            xp: `L${experience.level} ${experience.xp}/${xpToNext(experience.level)}`,
           }),
         );
       } else {
@@ -5291,6 +5425,8 @@ gs.renderer.setAnimationLoop(() => {
   playerModel.setVisible(state === 'playing' && viewMode !== 'first');
 
   dropRenderer.syncDrops(drops); // reconcile sprites every frame (cheap <50)
+  // B17：經驗球（非 playing 時 dt = 0 → 浮動／自轉凍結，與其他實體同一個處理）。
+  xpOrbRenderer.syncOrbs(xpOrbs, gs.camera, state === 'playing' ? dt : 0);
   particleRenderer.sync(particles, gs.camera); // Task 4 (empty list → nothing drawn)
   mobRenderer.syncMobs(mobs, state === 'playing' ? dt : 0); // frozen off-play (no walk cycle)
   mobRenderer.syncArrows(arrows);
