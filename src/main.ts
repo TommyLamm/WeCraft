@@ -262,6 +262,7 @@ import { passiveMobsForLoad, restorePassiveMobs } from './world/passive-save';
 import {
   addExperience,
   createExperience,
+  normalizeExperience,
   parseXpOverride,
   xpToNext,
   type Experience,
@@ -3016,6 +3017,7 @@ function sessionSavePayload(): SavePayload | null {
       mode: currentMode,
       inventory: [...slots],
       armor, // B12：四格盔甲（附加欄位；清洗與深拷貝在 collectSavePayload）
+      xp: experience, // B17：玩家經驗（附加欄位；`normalizeExperience` 在 collectSavePayload）
     },
     vitals,
     clockT: clock.t,
@@ -3144,6 +3146,11 @@ function applyCloudData(data: CloudData): void {
   // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。
   armor = normalizeArmorSet(data.armor);
   refreshArmor();
+  // B17：玩家經驗（附加欄位；舊 payload 沒有 → level 0）——`acceptCloudData`
+  // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。走單一顯示路徑
+  // `setExperience` → 讀雲端後 HUD 反映雲端等級（不殘留上一場）。
+  experience = normalizeExperience(data.xp);
+  setExperience(experience);
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -3232,6 +3239,7 @@ async function saveCloudNow(reason: string): Promise<void> {
       blockEntities: [...blockEntities.values()], // B8 Task 5: 箱子內容＋熔爐狀態
       spawnPoint: bedSpawn, // B10：床的重生點（附加欄位；沒有＝null）
       armor, // B12：四格盔甲（附加欄位；沒有穿也要明寫四格空）
+      xp: experience, // B17：玩家經驗（附加欄位）
     });
     if (byteSizeOf(data) > CLOUD_MAX_BYTES) {
       pushCloudToast('雲端空間不足，僅本機存檔');
@@ -3662,6 +3670,11 @@ function continueGame(payload: SavePayload): void {
   // B12：四格盔甲（附加欄位；`loadGame` 一律回傳正規化後的結果）。
   armor = normalizeArmorSet(payload.player.armor);
   refreshArmor();
+  // B17：玩家經驗（附加欄位；`loadGame` 一律回傳正規化後的結果）——走單一顯示
+  // 路徑 `setExperience`（HUD 由它依模式決定顯示／隱藏）。**必須還原**：否則
+  // 讀檔後 HUD 仍是上一場的等級／進度（Task 6 的殘留顯示）。
+  experience = normalizeExperience(payload.player.xp);
+  setExperience(experience);
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);

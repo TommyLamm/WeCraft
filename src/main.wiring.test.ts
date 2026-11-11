@@ -1975,4 +1975,42 @@ describe('main.ts 接線（B17：經驗）', () => {
     expect(mainSource).toContain('orbs: () => number');
     expect(mainSource).toContain('orbs: () => xpOrbs.length');
   });
+
+  // ---- B17 Task 7：經驗走本機＋雲端存檔＋兩條還原路徑 -----------------------
+  it('the local save payload stores the LIVE experience as an identifier', () => {
+    // `collectSavePayload({ player: { … xp } })` 的 `player.xp` 必須是**模組級的
+    // `experience` 變數本身**（短名屬性）→ 傳 `{ level: 0, xp: 0 }` 字面值會紅
+    //（存檔就不會反映玩家真實等級）。
+    const call = findObjectLiteralCall('sessionSavePayload', 'collectSavePayload');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('sessionSavePayload 沒有呼叫 collectSavePayload');
+    const player = propertyValue(call.arguments[0] as ts.ObjectLiteralExpression, 'player');
+    expect(player).not.toBeNull();
+    if (!player) throw new Error('collectSavePayload 沒有 player 屬性');
+    expect(ts.isObjectLiteralExpression(player)).toBe(true);
+    if (!ts.isObjectLiteralExpression(player)) return;
+    const xp = propertyValue(player, 'xp');
+    if (!xp) throw new Error('collectSavePayload 的 player 沒有 xp 屬性');
+    expect(ts.isIdentifier(xp)).toBe(true);
+    expect(ts.isIdentifier(xp) ? xp.text : '').toBe('experience');
+  });
+
+  it('both restore paths re-seed experience through setExperience', () => {
+    for (const fn of ['continueGame', 'applyCloudData']) {
+      const body = functionBody(fn);
+      expect(body).toContain('experience =');
+      expect(body).toContain('setExperience(');
+      expect(body).toContain('normalizeExperience(');
+    }
+  });
+
+  it('the cloud checkpoint writes the LIVE experience', () => {
+    const call = findObjectLiteralCall('saveCloudNow', 'buildCloudData');
+    expect(call).not.toBeNull();
+    if (!call) throw new Error('saveCloudNow 沒有呼叫 buildCloudData');
+    const xp = propertyValue(call.arguments[0] as ts.ObjectLiteralExpression, 'xp');
+    if (!xp) throw new Error('buildCloudData 的來源物件沒有 xp 屬性');
+    expect(ts.isIdentifier(xp)).toBe(true);
+    expect(ts.isIdentifier(xp) ? xp.text : '').toBe('experience');
+  });
 });

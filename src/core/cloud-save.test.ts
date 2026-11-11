@@ -881,3 +881,53 @@ describe('cloud save armor (B12)', () => {
     });
   });
 });
+
+// ---- B17 Task 7：玩家經驗附加欄位（雲端 format 不升）--------------------------
+describe('cloud save xp (B17)', () => {
+  const baseSrc = () => ({
+    seed: 42,
+    pos: [0, 64, 0] as [number, number, number],
+    yaw: 0,
+    vitals: null,
+    clockT: 0,
+    inventory: [],
+    advancements: emptyAdvancements(),
+    settings: validSettings(),
+    stash: createModeStash(),
+    passiveMobs: [],
+    blockEntities: [],
+    spawnPoint: null as { x: number; y: number; z: number } | null,
+    armor: emptyArmorSet(),
+    xp: { level: 0, xp: 0 },
+  });
+
+  it('B17: format 4 payloads without xp accept as level 0 (format pins unchanged)', () => {
+    expect(CLOUD_FORMAT_VERSION).toBe(4);
+    expect(CLOUD_READABLE_FORMATS).toEqual([1, 2, 3, 4]);
+    const accepted = acceptCloudData(rawValid())!; // rawValid() 沒有 xp
+    expect('xp' in accepted).toBe(true);
+    expect(accepted.xp).toEqual({ level: 0, xp: 0 });
+  });
+
+  it('B17: xp round-trips through buildCloudData and acceptCloudData', () => {
+    const built = buildCloudData({ ...baseSrc(), xp: { level: 7, xp: 3 } });
+    expect(built.xp).toEqual({ level: 7, xp: 3 });
+    expect(acceptCloudData(built)!.xp).toEqual({ level: 7, xp: 3 });
+    // 來源省略 → 寫入 level 0（與 accept 路徑「舊 payload → 0」同一語意）。
+    expect(buildCloudData(baseSrc()).xp).toEqual({ level: 0, xp: 0 });
+  });
+
+  it('B17: a non-object xp rejects the whole payload', () => {
+    for (const junk of ['x', 42, [], null]) {
+      expect(validateCloudData({ ...rawValid(), xp: junk })).toBe(false);
+      expect(acceptCloudData({ ...rawValid(), xp: junk })).toBeNull();
+    }
+    expect(validateCloudData({ ...rawValid(), xp: { level: 1, xp: 2 } })).toBe(true);
+    expect(validateCloudData(rawValid())).toBe(true); // 缺欄位＝舊 payload，合法
+  });
+
+  it('B17: junk level/xp fields are sanitized, not rejected', () => {
+    const accepted = acceptCloudData({ ...rawValid(), xp: { level: 1.5, xp: 999 } })!;
+    expect(accepted.xp).toEqual({ level: 1, xp: 8 });
+  });
+});

@@ -18,6 +18,7 @@ import { createInventoryModel } from '../core/inventory';
 import { createModeStash } from '../core/mode-stash';
 import { emptyAdvancements } from '../core/advancements';
 import { emptyArmorSet } from '../core/armor';
+import { createExperience } from '../core/experience';
 import { sanitizeSlots } from '../core/items';
 import { collectSavePayload } from '../world/save';
 
@@ -67,7 +68,7 @@ describe('A4：舞台化的材料在存檔／讀檔之間恰好出現一次', ()
 
     const payload = collectSavePayload({
       world: { seed: 1, serializeModified: () => [] },
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [...slots], armor: emptyArmorSet() },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [...slots], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -97,7 +98,7 @@ describe('A4：舞台化的材料在存檔／讀檔之間恰好出現一次', ()
     flushCraftGrid({ grid, excess: [] }, 2, { giveItem: giveTo(inv) });
     const payload = collectSavePayload({
       world: { seed: 1, serializeModified: () => [] },
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [...slots], armor: emptyArmorSet() },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [...slots], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),

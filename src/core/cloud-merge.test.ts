@@ -207,3 +207,19 @@ describe('mergeCloudData spawnPoint (B10)', () => {
     expect(mergedNull.spawnPoint).toBeNull();
   });
 });
+
+// ---- B17 Task 7：經驗合併（本機為基底）--------------------------------------
+describe('mergeCloudData xp (B17)', () => {
+  it('B17: keeps the LOCAL xp and never takes the remote one', () => {
+    const local = mkData({ xp: { level: 5, xp: 2 } });
+    const remote = mkData({ xp: { level: 99, xp: 1 } });
+    const merged = mergeCloudData(local, remote);
+    expect(merged.xp).toEqual({ level: 5, xp: 2 });
+  });
+
+  it('B17: a junk local xp normalizes to level 0 (never NaN)', () => {
+    const local = mkData({ xp: 'x' as unknown as { level: number; xp: number } });
+    const merged = mergeCloudData(local, mkData({ xp: { level: 99, xp: 1 } }));
+    expect(merged.xp).toEqual({ level: 0, xp: 0 });
+  });
+});

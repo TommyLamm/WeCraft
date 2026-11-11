@@ -15,6 +15,7 @@ import {
 } from './save';
 import { createVitals } from '../player/survival';
 import { emptyArmorSet } from '../core/armor';
+import { createExperience } from '../core/experience';
 import { emptyAdvancements } from '../core/advancements';
 import { createModeStash, type ModeStash } from '../core/mode-stash';
 import { starterSlots, INVENTORY_SLOTS, type ItemStack } from '../core/items';
@@ -72,6 +73,9 @@ function makePayload(patch: Partial<SavePayload> = {}): SavePayload {
       ),
       // B12：附加欄位（版本仍 6）——四格盔甲；空 fixture 讓 deep-equal 成立。
       armor: emptyArmorSet(),
+      // B17：附加欄位（版本仍 6）——玩家經驗；level 0 fixture 讓 round-trip
+      // 的 deep-equal 成立（`loadGame` 一律回傳正規化後的 xp）。
+      xp: createExperience(),
     },
     time: { t: 0.42 },
     // non-empty, so the round-trip deep-equal actually exercises progress state
@@ -328,6 +332,8 @@ describe('saveGame / loadGame', () => {
         inventory: slots({ item: 'stone', count: 32 }),
         // B12：`loadGame` 一律回傳四格盔甲（舊記錄缺欄位 → 空）。
         armor: emptyArmorSet(),
+        // B17：`loadGame` 一律回傳玩家經驗（舊記錄缺欄位 → level 0）。
+        xp: { level: 0, xp: 0 },
       },
       advancements: emptyAdvancements(),
       // no stash on the record → the survival side is derived from what it saved
@@ -365,6 +371,8 @@ describe('saveGame / loadGame', () => {
         inventory: slots({ item: 'oak_planks', count: 12 }),
         // B12：同上。
         armor: emptyArmorSet(),
+        // B17：同上——舊記錄缺 `xp` → `loadGame` 補 level 0。
+        xp: { level: 0, xp: 0 },
       },
       stash: {
         survival: slots(), // the mode the record was NOT in starts empty
@@ -1047,7 +1055,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [1.5, 64, -3.25], yaw: 0.75, mode: 'survival', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0.42,
       advancements,
@@ -1080,7 +1088,7 @@ describe('collectSavePayload', () => {
   it('collectSavePayload stamps the current worldgen version', () => {
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1100,7 +1108,7 @@ describe('collectSavePayload', () => {
     const cow = { ...createPassiveMob('cow', { x: 1, y: 2, z: 3 }), hp: 7, yaw: 0.5 };
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1128,6 +1136,7 @@ describe('collectSavePayload', () => {
         mode: 'survival',
         inventory: [{ item: 'diamond_sword', count: 1, dur: 900 }],
         armor: emptyArmorSet(),
+        xp: createExperience(),
       },
       vitals: null,
       clockT: 0,
@@ -1154,7 +1163,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos, yaw: -1.25, mode: 'survival', inventory, armor: emptyArmorSet() },
+      player: { pos, yaw: -1.25, mode: 'survival', inventory, armor: emptyArmorSet(), xp: createExperience() },
       vitals,
       clockT: 0,
       advancements,
@@ -1195,7 +1204,7 @@ describe('collectSavePayload', () => {
     const before = Date.now();
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'creative', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0.1,
       advancements: emptyAdvancements(),
@@ -1225,7 +1234,7 @@ describe('collectSavePayload', () => {
     };
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 0, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [0, 0, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1272,7 +1281,7 @@ describe('collectSavePayload', () => {
     ];
     const payload = collectSavePayload({
       world,
-      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet() },
+      player: { pos: [0, 64, 0], yaw: 0, mode: 'survival', inventory: [], armor: emptyArmorSet(), xp: createExperience() },
       vitals: null,
       clockT: 0,
       advancements: emptyAdvancements(),
@@ -1311,6 +1320,7 @@ describe('B6 Task 8: light never enters the save, torch rides the modified overl
       mode: 'survival' as const,
       inventory: [] as Array<ItemStack | null>,
       armor: emptyArmorSet(),
+      xp: createExperience(),
     },
     vitals: null,
     clockT: 0,
@@ -1390,6 +1400,7 @@ describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', 
         mode: 'survival' as const,
         inventory: [] as Array<ItemStack | null>,
         armor: emptyArmorSet(),
+        xp: createExperience(),
       },
       vitals: null,
       clockT: 0,
@@ -1419,5 +1430,83 @@ describe('B2 Task 11: a popped cross rides the modified overlay (no regrowth)', 
     restored.addChunk(regen);
     restored.reapplyModifiedInChunk(0, 0); // main.ts 生成回應的同一步
     expect(restored.getBlock(0, 64, 0)).toBe(BLOCK.AIR); // 不會長回來
+  });
+});
+
+// ── B17 Task 7：玩家經驗附加欄位（本機 payload 維持 v6）───────────────────────
+//
+// `player.xp` 只是多出來的鍵（舊版程式讀到不認識的欄位會忽略）——**不升版**。
+// 讀取端 `loadGame` 一律回傳正規化後的 `xp`；髒值只會被清洗，**不會**讓整筆
+// 記錄被拒收（與 `passiveMobs`／`blockEntities` 同一套語意：附加欄位不在
+// `isValidSavePayload` 的基本結構檢查裡）。
+describe('B17 Task 7: player experience rides the local save (additive field)', () => {
+  const basePlayer = () => ({
+    pos: [0.5, 70, 0.5] as [number, number, number],
+    yaw: 0,
+    mode: 'survival' as const,
+    inventory: [] as Array<ItemStack | null>,
+    armor: emptyArmorSet(),
+    xp: createExperience(),
+  });
+  const sourcesOf = () => ({
+    world: { seed: 4242, serializeModified: () => [] as Array<[string, number]> },
+    player: basePlayer(),
+    vitals: null,
+    clockT: 0,
+    advancements: emptyAdvancements(),
+    stash: createModeStash(),
+    passiveMobs: [],
+    blockEntities: [],
+    spawnPoint: null,
+    savedAt: 0,
+  });
+
+  it('a v6 record without player.xp loads as level 0', async () => {
+    const raw = makePayload() as unknown as Record<string, unknown>;
+    const player = { ...makePayload().player } as Record<string, unknown>;
+    delete player.xp;
+    raw.player = player;
+    await putRawRecord(raw);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.player.xp).toEqual({ level: 0, xp: 0 });
+  });
+
+  it('player.xp round-trips through collectSavePayload and loadGame', async () => {
+    const payload = collectSavePayload({
+      ...sourcesOf(),
+      player: { ...basePlayer(), xp: { level: 7, xp: 3 } },
+    });
+    expect(payload.player.xp).toEqual({ level: 7, xp: 3 });
+    await saveGame(payload);
+    const loaded = await loadGame();
+    expect(loaded!.player.xp).toEqual({ level: 7, xp: 3 });
+  });
+
+  it('junk player.xp normalizes instead of rejecting the record', async () => {
+    // 髒值通過基本結構檢查（`isValidSavePayload` 刻意不看附加欄位）→ 讀取端清洗。
+    const junk = {
+      ...makePayload(),
+      player: { ...makePayload().player, xp: 'x' },
+    } as unknown;
+    expect(isValidSavePayload(junk)).toBe(true);
+    await putRawRecord(junk);
+    const loaded = await loadGame();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.player.xp).toEqual({ level: 0, xp: 0 });
+
+    // level 1.5 → 取整 1；xp 999 夾到 xpToNext(1)-1 = 8。
+    await putRawRecord({
+      ...makePayload(),
+      player: { ...makePayload().player, xp: { level: 1.5, xp: 999 } },
+    });
+    const loaded2 = await loadGame();
+    expect(loaded2).not.toBeNull();
+    expect(loaded2!.player.xp).toEqual({ level: 1, xp: 8 });
+  });
+
+  it('the save version stays 6 (and v7 is still rejected)', () => {
+    expect(collectSavePayload(sourcesOf()).version).toBe(6);
+    expect(isValidSavePayload({ ...makePayload(), version: 7 })).toBe(false);
   });
 });

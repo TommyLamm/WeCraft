@@ -22,6 +22,8 @@
 import { normalizeVitals, type Vitals } from '../player/survival';
 import { INVENTORY_SLOTS, sanitizeSlots, type ItemStack } from '../core/items';
 import { normalizeArmorSet, type ArmorSet } from '../core/armor';
+// B17：玩家經驗（等級＋當前級內點數）；存檔／雲端共用同一支 `normalizeExperience`。
+import { normalizeExperience, type Experience } from '../core/experience';
 import { normalizeModeStash, type ModeStash, type StashPayload } from '../core/mode-stash';
 import {
   emptyAdvancements,
@@ -127,8 +129,10 @@ export interface SavePayloadV6 extends Omit<SavePayloadV5, 'version'> {
 	spawnPoint?: SpawnPoint | null;
 	/** B12 附加欄位（**不升版**）：四格盔甲；舊記錄缺這個鍵 → `loadGame` 給四格
 	 *  空（不是壞檔）。型別上選填、讀寫路徑（`SavePayloadWithPassiveMobs`）必填
-	 *  → 呼叫端不必寫「有沒有這個鍵」的分支。 */
-	player: SavePayloadV5['player'] & { armor?: ArmorSet };
+	 *  → 呼叫端不必寫「有沒有這個鍵」的分支。
+	 *  B17 附加欄位（**不升版**）：玩家經驗 `xp`；舊記錄缺這個鍵 → `loadGame`
+	 *  給 `{ level: 0, xp: 0 }`（不是壞檔）——同一套「選填型別、讀寫路徑必填」。 */
+	player: SavePayloadV5['player'] & { armor?: ArmorSet; xp?: Experience };
 }
 
 /** The shape written to / read from the single local slot. */
@@ -150,8 +154,9 @@ export interface SavePayloadWithPassiveMobs extends SavePayloadV6 {
 	 *  明寫 `null`）→ 呼叫端不必寫「有沒有這個鍵」的分支。 */
 	spawnPoint: SpawnPoint | null;
 	/** B12：`loadGame`／`collectSavePayload` **一律**帶四格盔甲
-	 *  （沒有穿也要明寫四格 `null`）。 */
-	player: SavePayloadV6['player'] & { armor: ArmorSet };
+	 *  （沒有穿也要明寫四格 `null`）。
+	 *  B17：**一律**帶正規化後的玩家經驗（沒有等級也要明寫 `{ level: 0, xp: 0 }`）。 */
+	player: SavePayloadV6['player'] & { armor: ArmorSet; xp: Experience };
 }
 
 /** Live-state sources for {@link collectSavePayload} — structurally typed so
@@ -165,6 +170,8 @@ export interface SaveSources {
 		inventory: (ItemStack | null)[];
 		/** B12：live 四格盔甲（附加欄位；深拷貝＋清洗後寫入）。**必填**。 */
 		armor: ArmorSet;
+		/** B17：live 玩家經驗（附加欄位；`normalizeExperience` 清洗後寫入）。**必填**。 */
+		xp: Experience;
 	};
 	vitals: Vitals | null;
 	clockT: number;
@@ -217,6 +224,8 @@ export function collectSavePayload(args: SaveSources): SavePayloadWithPassiveMob
 			inventory: sanitizeSlots(args.player.inventory, INVENTORY_SLOTS),
 			// B12：四格盔甲（附加欄位；清洗＋逐格深拷貝）。
 			armor: normalizeArmorSet(args.player.armor),
+			// B17：玩家經驗（附加欄位；一律清洗成新物件）——級內點數夾到合法範圍。
+			xp: normalizeExperience(args.player.xp),
 		},
 		time: { t: args.clockT },
 		advancements: {
@@ -495,6 +504,10 @@ export async function loadGame(): Promise<SavePayloadWithPassiveMobs | null> {
 					armor: normalizeArmorSet(
 						(value as Partial<SavePayloadV6>).player?.armor,
 					),
+					// B17：玩家經驗**一律回傳**（正規化後）——舊記錄沒有這個鍵 →
+					// level 0（不是壞檔）；髒值（非物件／小數／越界）清洗成合法值，
+					// **不整包拒絕**（與 passiveMobs／blockEntities 同一套語意）。
+					xp: normalizeExperience((value as Partial<SavePayloadV6>).player?.xp),
 				},
 				passiveMobs: normalizePassiveMobs(rawPassiveMobs),
 				// B10：重生點**一律回傳**（正規化後）——舊記錄沒有這個鍵 → `null`
