@@ -4,6 +4,7 @@ import { ARMOR_ITEM_IDS, type ArmorSet } from './armor';
 import {
   ENCHANTMENT_MAX_LEVELS,
   ENCHANTMENT_NAMES,
+  type EnchantmentId,
   applyEnchant,
   compatibleEnchantments,
   efficiencyBonus,
@@ -35,6 +36,25 @@ const enchOf = (stack: ItemStack): unknown => (stack as TestStack).ench;
 const MATERIALS = ['wooden', 'stone', 'iron', 'golden', 'diamond'] as const;
 const ARMOR_MATERIALS = ['leather', 'iron', 'golden', 'diamond'] as const;
 const ARMOR_SLOTS = ['helmet', 'chestplate', 'leggings', 'boots'] as const;
+
+/** Tool id suffix group → the exact enchantment list `compatibleEnchantments`
+ *  must return for every catalog id carrying one of those suffixes.
+ *
+ *  `_shovel` and `_hoe` deliberately share one signature (both are
+ *  efficiency+unbreaking), so they form a single group here; the other three
+ *  signatures are unique to their family. */
+const TOOL_FAMILY_GROUPS: ReadonlyArray<{
+  suffixes: readonly string[];
+  enchants: readonly EnchantmentId[];
+}> = [
+  { suffixes: ['_pickaxe'], enchants: ['efficiency', 'fortune', 'unbreaking'] },
+  { suffixes: ['_axe'], enchants: ['efficiency', 'sharpness', 'unbreaking'] },
+  { suffixes: ['_shovel', '_hoe'], enchants: ['efficiency', 'unbreaking'] },
+  { suffixes: ['_sword'], enchants: ['sharpness', 'unbreaking'] },
+];
+
+const sameEnchants = (a: readonly EnchantmentId[], b: readonly EnchantmentId[]): boolean =>
+  a.length === b.length && a.every((id, index) => id === b[index]);
 
 describe('compatibleEnchantments', () => {
   it('follows the pinned order for each family', () => {
@@ -84,6 +104,31 @@ describe('compatibleEnchantments', () => {
     });
     expect(armorLike).toHaveLength(16);
     expect(new Set(armorLike)).toEqual(new Set(ARMOR_ITEM_IDS));
+  });
+
+  it('pins every catalog tool id to its family signature', () => {
+    // Catalog-level pin (the armor set got the same treatment). The catalog
+    // side comes from the REAL `ALL_ITEM_IDS`, never from a hand-copied list,
+    // so a tool id added to `items.ts` without the module's local family table
+    // knowing about it fails here instead of silently returning `[]`.
+    for (const { suffixes, enchants } of TOOL_FAMILY_GROUPS) {
+      const catalogFamilyIds = ALL_ITEM_IDS.filter((id) =>
+        suffixes.some((suffix) => id.endsWith(suffix)),
+      );
+      const expectedIds = suffixes.flatMap((suffix) =>
+        MATERIALS.map((material) => `${material}${suffix}`),
+      );
+      expect(new Set(catalogFamilyIds)).toEqual(new Set(expectedIds));
+      for (const id of catalogFamilyIds) {
+        expect(compatibleEnchantments(id)).toEqual(enchants);
+      }
+      // Reverse direction: the module must not hand a tool-family signature to
+      // any other catalog id (armor, plain blocks, bow, ...).
+      const withSignature = ALL_ITEM_IDS.filter((id) =>
+        sameEnchants(compatibleEnchantments(id), enchants),
+      );
+      expect(new Set(withSignature)).toEqual(new Set(catalogFamilyIds));
+    }
   });
 
   it('returns a fresh array each call', () => {
