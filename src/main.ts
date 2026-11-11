@@ -3146,11 +3146,6 @@ function applyCloudData(data: CloudData): void {
   // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。
   armor = normalizeArmorSet(data.armor);
   refreshArmor();
-  // B17：玩家經驗（附加欄位；舊 payload 沒有 → level 0）——`acceptCloudData`
-  // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。走單一顯示路徑
-  // `setExperience` → 讀雲端後 HUD 反映雲端等級（不殘留上一場）。
-  experience = normalizeExperience(data.xp);
-  setExperience(experience);
   // Player — pos + yaw restored (no pitch/velocity: session-only, fresh).
   player = createPlayer(data.pos[0], data.pos[1], data.pos[2]);
   player.yaw = data.yaw;
@@ -3171,6 +3166,13 @@ function applyCloudData(data: CloudData): void {
   const restoredSlots = sanitizeSlots(data.inventory, slots.length);
   for (let i = 0; i < slots.length; i++) inventory.setSlot(i, restoredSlots[i]);
   hud.setHotbar(slots, selected);
+  // B17：玩家經驗（附加欄位；舊 payload 沒有 → level 0）——`acceptCloudData`
+  // 已是正規化過的資料，這裡仍吃清洗器（雲端資料不可信）。走單一顯示路徑
+  // `setExperience` → 讀雲端後 HUD 反映雲端等級（不殘留上一場）。**必須排在
+  // `currentMode` 指派之後**（同 `setVitals`）：`setExperience` 依當下模式決定
+  // HUD 顯示／隱藏 → 先跑會用到還原前的舊模式（創造→生存會把經驗條留在隱藏）。
+  experience = normalizeExperience(data.xp);
+  setExperience(experience);
   setVitals(
     currentMode === 'survival'
       ? data.vitals
@@ -3670,11 +3672,6 @@ function continueGame(payload: SavePayload): void {
   // B12：四格盔甲（附加欄位；`loadGame` 一律回傳正規化後的結果）。
   armor = normalizeArmorSet(payload.player.armor);
   refreshArmor();
-  // B17：玩家經驗（附加欄位；`loadGame` 一律回傳正規化後的結果）——走單一顯示
-  // 路徑 `setExperience`（HUD 由它依模式決定顯示／隱藏）。**必須還原**：否則
-  // 讀檔後 HUD 仍是上一場的等級／進度（Task 6 的殘留顯示）。
-  experience = normalizeExperience(payload.player.xp);
-  setExperience(experience);
 
   const [px, py, pz] = payload.player.pos;
   player = createPlayer(px, py, pz);
@@ -3712,6 +3709,13 @@ function continueGame(payload: SavePayload): void {
     inventory.setSlot(i, s ? { ...s } : null); // setSlot copies + validates; clears the tail
   }
   hud.setHotbar(slots, selected);
+  // B17：玩家經驗（附加欄位；`loadGame` 一律回傳正規化後的結果）——走單一顯示
+  // 路徑 `setExperience`（HUD 由它依模式決定顯示／隱藏）。**必須還原**：否則
+  // 讀檔後 HUD 仍是上一場的等級／進度（Task 6 的殘留顯示）。**必須排在
+  // `currentMode` 指派之後**（同 `setVitals`）：`setExperience` 依當下模式決定
+  // 顯示／隱藏 → 先跑會用到還原前的舊模式（創造→生存會把經驗條留在隱藏）。
+  experience = normalizeExperience(payload.player.xp);
+  setExperience(experience);
   // vitals: survival restores saved values (payload vitals is null only when
   // it was saved in creative; a corrupt survival payload falls back to a full
   // reset); creative keeps the hidden bar hidden. Review #5: COPY the payload's

@@ -1995,12 +1995,36 @@ describe('main.ts 接線（B17：經驗）', () => {
     expect(ts.isIdentifier(xp) ? xp.text : '').toBe('experience');
   });
 
-  it('both restore paths re-seed experience through setExperience', () => {
-    for (const fn of ['continueGame', 'applyCloudData']) {
+  it('both restore paths re-seed experience after the mode is restored', () => {
+    // 兩條還原路徑都必須（a）以 `normalizeExperience(<payload 的 xp>)` 正規化、
+    // （b）指派回 `experience`、（c）走 `setExperience`、（d）**排在 `currentMode
+    // =` 指派之後**。`setExperience` 依當下模式決定 HUD 顯示／隱藏 → 先跑會用到
+    // 還原前的舊模式：創造→生存把經驗條留在隱藏、生存→創造留在可見。
+    const cases = [
+      {
+        fn: 'continueGame',
+        normalize: 'normalizeExperience(payload.player.xp)',
+        modeAssign: 'currentMode = payload.player.mode',
+      },
+      {
+        fn: 'applyCloudData',
+        normalize: 'normalizeExperience(data.xp)',
+        modeAssign: 'currentMode = data.settings.mode',
+      },
+    ];
+    for (const { fn, normalize, modeAssign } of cases) {
       const body = functionBody(fn);
       expect(body).toContain('experience =');
-      expect(body).toContain('setExperience(');
-      expect(body).toContain('normalizeExperience(');
+      expect(body).toContain(normalize);
+      expect(body).toContain('setExperience(experience)');
+      const modeAt = body.indexOf(modeAssign);
+      const restoreAt = body.indexOf(normalize);
+      const showAt = body.indexOf('setExperience(experience)');
+      expect(modeAt, `${fn}: 找不到 currentMode 指派`).toBeGreaterThanOrEqual(0);
+      expect(restoreAt, `${fn}: 找不到 normalizeExperience 還原`).toBeGreaterThanOrEqual(0);
+      // 把還原區塊搬回模式指派之前（突變）→ 這兩行轉紅。
+      expect(restoreAt).toBeGreaterThan(modeAt);
+      expect(showAt).toBeGreaterThan(modeAt);
     }
   });
 
