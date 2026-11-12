@@ -375,7 +375,7 @@ export function createMenus(uiRoot: HTMLElement): Menus {
         const hint = document.createElement('div');
         hint.className = 'ui-hint';
         hint.textContent =
-          '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角｜空桶右鍵水源裝水、水桶右鍵方塊倒水（水會流向低處，水平最多 7 格）';
+          '操作：雙擊 W 疾跑（Ctrl 也能疾跑，但 Ctrl+W 是瀏覽器保留鍵，可能被瀏覽器吃掉）｜Q 丟棄 1 個、Ctrl+Q 丟整疊｜右鍵長按連續放置｜F5 切換第一人稱／面後／面前視角｜空桶右鍵水源裝水、水桶右鍵方塊倒水（水會流向低處，水平最多 7 格）｜挖礦／擊殺／冶煉／釣魚可獲得經驗（經驗球自動吸附吸收），右鍵附魔台可用等級兌換附魔';
         el.append(
           title,
           btn('繼續遊戲', () => {
