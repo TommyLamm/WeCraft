@@ -212,6 +212,18 @@ function braceMatchedBody(open: number): string {
   throw new Error('大括號沒有配對');
 }
 
+/** 取出 `const name = (…) => { … }` 這種箭頭函式常數的**本體**。
+ *
+ *  `functionBody()` 只找 `function name(`；`openEnchantingAt` 以 arrow const
+ *  定義（見 Task 12 偏離 3），所以另外用同一套大括號配對取本體。 */
+function constArrowBody(name: string): string {
+  const at = mainSource.indexOf(`const ${name} = (`);
+  if (at === -1) throw new Error(`main.ts 裡找不到箭頭常數 ${name}——請更新這支釘子`);
+  const open = mainSource.indexOf('{\n', at);
+  if (open === -1) throw new Error(`箭頭常數 ${name} 找不到本體的大括號`);
+  return braceMatchedBody(open);
+}
+
 /** `if (state === 'playing') { … }` 這個分支的**本體**（主迴圈裡的遊戲中分支）。 */
 function playingBranchBody(): string {
   // 錨點有兩層：先定位**動畫迴圈**，再在迴圈**裡面**找遊戲中分支。
@@ -2145,6 +2157,56 @@ describe('main.ts 接線（B17 Task 12：附魔台面板）', () => {
     expect(countOf('openEnchantingAt(')).toBe(1);
     expect(countOf('enchantUi.open(')).toBe(1);
     expect(countOf('rollEnchantOffers(')).toBe(1);
+  });
+
+  it('openEnchantingAt enters the enchanting state and frees the pointer', () => {
+    const body = constArrowBody('openEnchantingAt');
+    // 右鍵分派只呼叫這個 helper → 它必須自己切狀態，否則 'enchanting' 分支
+    // 永遠不跑（面板不開、世界不凍結）。
+    expect(body).toContain("setState('enchanting')");
+    expect(body).toContain('document.exitPointerLock?.()');
+  });
+
+  it("the 'enchanting' state branch renders the panel", () => {
+    const branch = blockAfter("} else if (next === 'enchanting') {");
+    // 少了這一行，setState 進 'enchanting' 卻不掛面板（只凍結世界）。
+    expect(branch).toContain('renderEnchantPanel()');
+  });
+
+  it('renderEnchantPanel snapshots the offers and opened stack before opening', () => {
+    const body = functionBody('renderEnchantPanel');
+    const view = body.indexOf('const view = enchantView();');
+    const offers = body.indexOf('enchantOffers = view.offers;');
+    const opened = body.indexOf('enchantOpened = view.stack;');
+    const open = body.indexOf('enchantUi.open(view);');
+    expect(view).toBeGreaterThan(-1);
+    expect(offers).toBeGreaterThan(view);
+    expect(opened).toBeGreaterThan(view);
+    // onChoose 的身分檢查與選項重驗都讀這兩個 snapshot → 必須在 open 之前寫好；
+    // 先開面板再寫，畫面上一瞬間的 onChoose 會看到上一輪的殘留狀態。
+    expect(open).toBeGreaterThan(offers);
+    expect(open).toBeGreaterThan(opened);
+  });
+
+  it('onChoose rejects a stack that was swapped under the open panel', () => {
+    const body = functionBody('onChoose');
+    // 面板開著時玩家仍可能換手持格 → 舊 offer 不能套到新堆疊上。
+    expect(body).toContain('stack !== enchantOpened');
+  });
+
+  it('onChoose gates the survival spend and rejects a no-op spendLevels', () => {
+    const body = functionBody('onChoose');
+    // 創造 free（cost 0）完全不碰經驗；只有生存才驗等級／扣等級。
+    expect(body).toContain("const free = currentMode === 'creative';");
+    expect(body).toContain('const cost = free ? 0 : offer.cost;');
+    expect(body).toContain("if (currentMode === 'survival' && experience.level < cost) return;");
+    // 同一參考＝沒扣到等級 → 絕不可免費附魔（守門必須在 setExperience 之前）。
+    const spend = body.indexOf('spendLevels(experience, cost)');
+    const guard = body.indexOf('if (spent === experience) return;');
+    const commit = body.indexOf('setExperience(spent);');
+    expect(spend).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(spend);
+    expect(commit).toBeGreaterThan(guard);
   });
 
   it('the panel view explains why nothing can be enchanted', () => {
