@@ -56,12 +56,15 @@ export function xpForOre(blockId: number): number {
 
 /** 玩家擊殺生物的經驗點數；表外 kind → 0（不拋錯）。 */
 export function xpForMob(kind: XpMobKind): number {
-  return MOB_XP[kind] ?? 0;
+  // 用 `Object.hasOwn` 而非直接 `MOB_XP[kind]`：只認**自有**鍵，原型鏈上的鍵
+  // （如 `'constructor'`／`'toString'`）不會被誤當成表內項目（回 0、不拋錯）。
+  return Object.hasOwn(MOB_XP, kind) ? MOB_XP[kind]! : 0;
 }
 
 /** 成功收線的釣魚經驗點數；表外 category → 0（不拋錯）。 */
 export function xpForFishing(category: FishingCatch['category']): number {
-  return FISHING_XP[category] ?? 0;
+  // 同 `xpForMob`：只認自有鍵，原型鏈上的鍵（如 `'constructor'`）→ 0。
+  return Object.hasOwn(FISHING_XP, category) ? FISHING_XP[category]! : 0;
 }
 
 /** 冶煉取物：每取出 1 個產物發 1 點（原版「取走才發」）。 */

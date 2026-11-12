@@ -43,6 +43,9 @@ describe('xp-awards (B17 Task 4：經驗來源表)', () => {
     // 表外的 kind（非信任資料轉型進來）→ 0，不拋錯
     expect(xpForMob('enderman' as string as XpMobKind)).toBe(0);
     expect(xpForMob('' as string as XpMobKind)).toBe(0);
+    // 原型鏈上的鍵只認自有鍵 → 0（絕不回傳 Object.prototype 的成員）
+    expect(xpForMob('constructor' as string as XpMobKind)).toBe(0);
+    expect(xpForMob('toString' as string as XpMobKind)).toBe(0);
   });
 
   it('fishing table matches §6（魚 2／垃圾 1／寶物 5）', () => {
@@ -60,6 +63,8 @@ describe('xp-awards (B17 Task 4：經驗來源表)', () => {
   it('unknown fishing categories award 0 and never throw', () => {
     type Category = FishingCatch['category'];
     expect(xpForFishing('artifact' as string as Category)).toBe(0);
+    // 原型鏈上的鍵只認自有鍵 → 0（絕不回傳 Object.prototype 的成員）
+    expect(xpForFishing('constructor' as string as Category)).toBe(0);
   });
 
   it('smelting awards 1 XP per item taken out', () => {

@@ -38,22 +38,6 @@ import { damageMob, MOB_HALF_WIDTH, MOB_HITBOX_HEIGHT, type Mob } from '../world
  *  觸發（原版：幸運只在「這一下真的挖到礦」時生效）。非礦物／非鎬持有者
  *  一律逐值不變。
  *  Returns the new drops array — unchanged (same ref) when nothing spawns. */
-
-/** 會吃幸運加成的四種礦物（spec §7 fortune 列）。 */
-const FORTUNE_ORES: ReadonlySet<number> = new Set([
-  BLOCK.COAL_ORE,
-  BLOCK.IRON_ORE,
-  BLOCK.GOLD_ORE,
-  BLOCK.DIAMOND_ORE,
-]);
-
-/** 該堆疊上的 fortune 等級（0 ＝ 沒有）。`ench` 由 Task 9 的清洗保證是
- *  相容的單一附魔；`fortuneBonus` 自己也會夾等級，對不可信輸入安全。 */
-function fortuneLevelOf(stack: ItemStack | null): number {
-  const ench = stack?.ench;
-  return ench && ench.id === 'fortune' ? ench.level : 0;
-}
-
 export function spawnBlockDrop(
   drops: DropEntity[],
   mode: GameMode,
@@ -93,6 +77,21 @@ export function spawnBlockDrop(
   if (!FORTUNE_ORES.has(blockId)) return withItem;
   const extra = fortuneBonus(fortuneLevelOf(held), rng);
   return extra > 0 ? spawnDrop(withItem, item, extra, pos) : withItem;
+}
+
+/** 會吃幸運加成的四種礦物（spec §7 fortune 列）。 */
+const FORTUNE_ORES: ReadonlySet<number> = new Set([
+  BLOCK.COAL_ORE,
+  BLOCK.IRON_ORE,
+  BLOCK.GOLD_ORE,
+  BLOCK.DIAMOND_ORE,
+]);
+
+/** 該堆疊上的 fortune 等級（0 ＝ 沒有）。`ench` 由 Task 9 的清洗保證是
+ *  相容的單一附魔；`fortuneBonus` 自己也會夾等級，對不可信輸入安全。 */
+function fortuneLevelOf(stack: ItemStack | null): number {
+  const ench = stack?.ench;
+  return ench && ench.id === 'fortune' ? ench.level : 0;
 }
 
 // ---- Survival mining (Task 5): vanilla break-time formula + harvest gates ----
