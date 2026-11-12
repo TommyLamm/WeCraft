@@ -77,6 +77,9 @@ const TRIGGERS: ReadonlyArray<
     'first_night',
     [[{ type: 'phase', phase: 'night' }, { type: 'phase', phase: 'day' }]],
   ],
+  // B17 Task 12：附魔台使用／等級里程碑。
+  ['enchanter', [[{ type: 'enchanted', mode: 'survival' }]]],
+  ['experienced', [[{ type: 'level', level: 10, mode: 'survival' }]]],
 ];
 
 describe('checkAdvancements', () => {
@@ -102,6 +105,8 @@ describe('checkAdvancements', () => {
       { type: 'mob-killed', mode: 'creative' },
       { type: 'smelt-take', mode: 'creative' },
       { type: 'ate', item: 'apple', mode: 'creative' },
+      { type: 'enchanted', mode: 'creative' },
+      { type: 'level', level: 10, mode: 'creative' },
     ];
     for (const ev of creativeEvents) {
       const r = checkAdvancements(state, ev);
@@ -115,18 +120,57 @@ describe('checkAdvancements', () => {
 
   it('B13: farmer and baker are in the advancement table', () => {
     // **進度表總數不在這條釘** —— 每批加一項就會讓舊的數字過時；總數由最新
-    // 一批的測試（B14 那條「20 entries」）把關，這裡只守 B13 自己的兩項。
+    // 一批的測試（B17 Task 12 那條「22 entries」）把關，這裡只守 B13 自己的兩項。
     expect(ADVANCEMENTS.find((a) => a.id === 'farmer')?.icon).toBe('wheat');
     expect(ADVANCEMENTS.find((a) => a.id === 'baker')?.icon).toBe('bread');
   });
 
   // ---- B14：釣魚翁 ----
 
-  it('B14: the advancement table has 20 entries with angler', () => {
-    expect(ADVANCEMENTS).toHaveLength(20);
+  it('B14: the advancement table has 22 entries with angler', () => {
+    expect(ADVANCEMENTS).toHaveLength(22);
     const angler = ADVANCEMENTS.find((a) => a.id === 'angler');
     expect(angler?.icon).toBe('raw_cod');
     expect(angler?.title).toBe('釣魚翁');
+  });
+
+  // ---- B17 Task 12：附魔師／經驗老到 ----
+
+  it('B17: enchanter and experienced are appended to the table', () => {
+    expect(ADVANCEMENTS.slice(-2).map((a) => a.id)).toEqual(['enchanter', 'experienced']);
+    const enchanter = ADVANCEMENTS.find((a) => a.id === 'enchanter');
+    expect(enchanter?.title).toBe('附魔師');
+    expect(enchanter?.description).toBe('在附魔台附魔一件物品');
+    expect(enchanter?.icon).toBe('enchanting_table');
+    const experienced = ADVANCEMENTS.find((a) => a.id === 'experienced');
+    expect(experienced?.title).toBe('經驗老到');
+    expect(experienced?.description).toBe('達到 10 級經驗');
+    expect(experienced?.icon).toBe('diamond_pickaxe');
+  });
+
+  it('B17: level events unlock experienced at 10, not below', () => {
+    const nine = checkAdvancements(emptyAdvancements(), {
+      type: 'level',
+      level: 9,
+      mode: 'survival',
+    });
+    expect(nine.unlocked).toEqual([]);
+    expect(nine.state.done.experienced).toBeUndefined();
+    const ten = checkAdvancements(nine.state, { type: 'level', level: 10, mode: 'survival' });
+    expect(ten.unlocked).toEqual(['experienced']);
+    const higher = checkAdvancements(ten.state, { type: 'level', level: 30, mode: 'survival' });
+    expect(higher.unlocked).toEqual([]); // already done — no toast spam
+  });
+
+  it('B17: repeated enchanted events never unlock twice', () => {
+    const first = checkAdvancements(emptyAdvancements(), {
+      type: 'enchanted',
+      mode: 'survival',
+    });
+    const second = checkAdvancements(first.state, { type: 'enchanted', mode: 'survival' });
+    expect(first.unlocked).toEqual(['enchanter']);
+    expect(second.unlocked).toEqual([]);
+    expect(second.state).toBe(first.state);
   });
 
   // ---- B4 Task 1：牧場（pasture）進度 ----

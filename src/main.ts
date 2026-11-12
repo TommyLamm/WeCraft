@@ -43,9 +43,16 @@ import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './wo
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
-// B17 Task 9：`giveItem` 的第 4 參數型別（附魔跟著 give 路徑走；效果查詢的
-// 接線屬 Task 10，這裡只搬運資料）。
-import type { Enchantment } from './core/enchantments';
+// B17 Task 9：附魔跟著 give 路徑走；Task 12：附魔台面板的選項擲骰與套用。
+import {
+  applyEnchant,
+  compatibleEnchantments,
+  normalizeEnchantment,
+  rollEnchantOffers,
+  ENCHANTMENT_MAX_LEVELS,
+  type Enchantment,
+  type EnchantOffer,
+} from './core/enchantments';
 // B12：盔甲純邏輯（部位分類、減傷、磨損、清洗）。main 只負責接線與 HUD／模型。
 import {
   absorbArmorDamage,
@@ -267,6 +274,7 @@ import {
   createExperience,
   normalizeExperience,
   parseXpOverride,
+  spendLevels,
   xpToNext,
   type Experience,
 } from './core/experience';
@@ -286,6 +294,7 @@ import { createCrafting, type CraftingParams } from './ui/crafting';
 import { flushCraftGrid } from './ui/session-boundary';
 import { createFurnace } from './ui/furnace';
 import { createContainer } from './ui/container';
+import { createEnchanting, type EnchantView } from './ui/enchanting';
 import { createToasts } from './ui/toast';
 import { createHurtFlash } from './ui/hurt';
 // B4 Task 9：進食進度條（可選的視覺回饋；**規則不依賴它**）。
@@ -477,6 +486,8 @@ interface WecraftDebug {
   xpState: () => { level: number; xp: number; need: number };
   /** **B17**：場上的經驗球數量。**純唯讀**。 */
   orbs: () => number;
+  /** **B17 Task 12**：手持熱鍵格的附魔（沒有 → `null`）。**純唯讀**（回傳複本）。 */
+  enchants: () => Enchantment | null;
 }
 
 declare global {
@@ -491,8 +502,9 @@ declare global {
 // handling as 'inventory' — the frame loop's final else keeps it static)
 // 'furnace' (Task 6): the furnace panel overlay (same frozen-world handling)
 // 'container' (B8 Task 7): the 27-slot chest panel (same frozen-world handling)
+// 'enchanting' (B17 Task 12): the enchanting-table panel (same frozen-world handling)
 // B10：新增 'sleeping'（床的睡眠流程；狀態機的出口在 wakeFromBed）。
-type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'container' | 'dead' | 'sleeping';
+type GameState = 'title' | 'playing' | 'paused' | 'inventory' | 'crafting' | 'furnace' | 'container' | 'enchanting' | 'dead' | 'sleeping';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui-root') as HTMLElement;
@@ -580,6 +592,15 @@ const furnaceUi = createFurnace(uiRoot, {
 });
 // B8 Task 7: chest container panel (right-click on a placed chest) — callbacks only.
 const containerUi = createContainer(uiRoot);
+// B17 Task 12: enchanting-table overlay (right-click on a placed table) — the
+// panel holds no rules; every choice goes back through `onChoose` above.
+const enchantUi = createEnchanting(uiRoot, {
+  onChoose,
+  onClose: () => {
+    setState('playing');
+    relockCanvas();
+  },
+});
 // Task 10: death overlay — callbacks only (Decision A: ui never imports the bus)
 const deathScreen = createDeathScreen(uiRoot);
 // B10：睡眠黑幕（show/hide 冪等；setState 每次轉移都呼叫 hide()）。
@@ -649,6 +670,11 @@ let showDebug = false;
 // `xpOrbs` 是暫態實體（不跨存檔——resetSessionEntities 清空）；`xpSoundAcc`
 // 是撿取音的 0.15 秒節流累積器（每幀遞減、歸零才能再響）。
 let experience: Experience = createExperience();
+// B17 Task 12：附魔台面板綁在**當下選取的熱鍵格**；選項在開啟時擲一次，只有
+// 成功附魔後才以新視圖重擲。`enchantOpened` 記住擲骰當下的堆疊物件——面板開著
+// 時若格子被換掉（理論上按鍵已鎖，仍做縱深防禦），舊選項一律視為過期。
+let enchantOffers: EnchantOffer[] = [];
+let enchantOpened: ItemStack | null = null;
 let xpOrbs: XpOrb[] = [];
 let xpSoundAcc = 0;
 // B2.4：目前視角（`first`／`back`／`front`）——取代舊的兩態 `thirdPerson` 布林。
@@ -1026,6 +1052,77 @@ function openFurnaceAt(x: number, y: number, z: number): void {
   openFurnaceKey = key;
   setState('furnace');
   document.exitPointerLock?.();
+}
+
+/** B17 Task 12: the enchanting panel's view of the CURRENT held stack.
+ *  Offers are rolled ONCE per open; the owner re-renders after a choice.
+ *  Message priority: no item → 不能附魔 → 已達上限. */
+function enchantView(): EnchantView {
+  const stack = slots[selected] ?? null;
+  const free = currentMode === 'creative';
+  const offers = stack ? rollEnchantOffers(stack, Math.random) : [];
+  let message: string | null = null;
+  if (!stack) {
+    message = '手持物品才能附魔';
+  } else if (compatibleEnchantments(stack.item).length === 0) {
+    message = '此物品不能附魔';
+  } else {
+    const current = normalizeEnchantment(stack.ench);
+    if (current && current.level >= ENCHANTMENT_MAX_LEVELS[current.id]) {
+      message = '已達附魔上限';
+    }
+  }
+  return { stack, offers, level: experience.level, free, message };
+}
+
+/** B17 Task 12: snapshot the opened stack + rolled offers, then mount the
+ *  panel. `setState('enchanting')` opens it; a successful choice re-runs this
+ *  with a fresh view (upgrade / at-max state visible immediately). */
+function renderEnchantPanel(): void {
+  const view = enchantView();
+  enchantOffers = view.offers;
+  enchantOpened = view.stack;
+  enchantUi.open(view);
+}
+
+/** Right-click on a placed enchanting table → panel (both modes; creative is
+ *  free). The table has no block-entity state: the target is the current
+ *  hotbar stack. */
+const openEnchantingAt = (_x: number, _y: number, _z: number): void => {
+  setState('enchanting');
+  document.exitPointerLock?.();
+};
+
+/** B17 Task 12: the panel's choice handler. The owner re-validates the
+ *  (possibly stale) offer, charges levels (creative free), applies the
+ *  enchant, refreshes the HUD + advancement feed and re-renders. */
+function onChoose(index: number): void {
+  const offer = enchantOffers[index];
+  const stack = slots[selected];
+  if (!offer || !stack || stack !== enchantOpened) return;
+  if (!compatibleEnchantments(stack.item).includes(offer.enchant.id)) return;
+  if (offer.enchant.level > ENCHANTMENT_MAX_LEVELS[offer.enchant.id]) return;
+  const current = normalizeEnchantment(stack.ench);
+  if (current) {
+    // Upgrade offers only: same enchant, exactly one level above the current.
+    if (current.id !== offer.enchant.id) return;
+    if (offer.enchant.level !== current.level + 1) return;
+  } else if (offer.enchant.level < 1 || offer.enchant.level > 3) {
+    return; // base offers are tiers 1..3 (stale-option guard after a change)
+  }
+  const free = currentMode === 'creative';
+  const cost = free ? 0 : offer.cost;
+  if (!free && (!Number.isInteger(cost) || cost < 1)) return;
+  if (currentMode === 'survival' && experience.level < cost) return;
+  if (currentMode === 'survival') {
+    const spent = spendLevels(experience, cost);
+    if (spent === experience) return; // never apply an enchant for free in survival
+    setExperience(spent);
+  }
+  inventory.setSlot(selected, applyEnchant(stack, offer.enchant));
+  hud.setHotbar(slots, selected);
+  applyAdvancement({ type: 'enchanted', mode: currentMode });
+  renderEnchantPanel(); // roll fresh offers so upgrade / at-max shows now
 }
 
 // ---- Combat / vitals tuning (Task 9) ----
@@ -1812,12 +1909,21 @@ bus.on('vitals-changed', ({ hp, maxHp, hunger, maxHunger }) => {
 // ---- B17：經驗的單一顯示路徑與單一給點入口（Task 6 接線）--------------------
 /**
  * 經驗的**單一變更路徑**：指派＋HUD 顯示（創造 → `xpHud.set(null)` 隱藏）。
- * 每個經驗變化點（球吸收／新局／模式切換）都走這裡 → HUD 不會有第二條寫入路徑。
- * （等級上升時的 `applyAdvancement` 進度事件由 Task 12 在此補上——先佔位。）
+ * 每個經驗變化點（球吸收／新局／模式切換／附魔消費）都走這裡 → HUD 不會有
+ * 第二條寫入路徑。
+ *
+ * B17 Task 12：**只有等級上升**才發 `level` 進度事件（10 級 → 經驗老到）。
+ * 比較必須在指派之前算好：還原存檔／切模式是「同級」（`next === experience`），
+ * 附魔消費是**下降**——兩者都不得觸發（還原若誤觸會多一輪雲端存檔）。
+ * 先指派再發事件（事件看到的是新等級），`?xp=` 新局由 0 → n 也會正常解鎖。
  */
 function setExperience(next: Experience): void {
+  const levelGained = next.level > experience.level;
   experience = next;
   xpHud.set(currentMode === 'survival' ? experience : null);
+  if (levelGained) {
+    applyAdvancement({ type: 'level', level: next.level, mode: currentMode });
+  }
 }
 
 /**
@@ -2723,6 +2829,7 @@ function setState(next: GameState): void {
   craftUi.close(); // every transition clears the crafting overlay too (idempotent)
   furnaceUi.close(); // same for the furnace overlay (idempotent)
   containerUi.close(); // B8: same for the chest container panel (idempotent)
+  enchantUi.close(); // B17 Task 12: same for the enchanting panel (idempotent)
   deathScreen.hide(); // every transition clears the overlay; the 'dead' branch re-mounts it
   sleepScreen.hide(); // B10: every transition clears the sleep overlay too (idempotent; 'sleeping' re-shows)
   if (next === 'title') {
@@ -2944,6 +3051,10 @@ function setState(next: GameState): void {
         });
       }
     }
+  } else if (next === 'enchanting') {
+    // B17 Task 12：右鍵附魔台 → 面板（兩種模式）。選項在這裡**只擲一次**；
+    // 每次成功附魔後由 `onChoose` 以新視圖重繪（升級／上限訊息立即出現）。
+    renderEnchantPanel();
   }
 }
 
@@ -3624,11 +3735,15 @@ function startGame(): void {
   selected = 0;
   hud.setHotbar(slots, selected);
   setVitals(currentMode === 'survival' ? { ...modeStash.survivalVitals } : null);
+  // Task 11：新局 → 全新進度。**必須排在經驗指派之前**：`setExperience` 的
+  // 等級上升事件（B17 Task 12）要在這份新狀態上解鎖（`?xp=` 覆寫 ≥ 10 級時）。
+  advancements = emptyAdvancements();
   // B17：新局 → 經驗歸零（`?xp=<n>` 驗收覆寫除外——與 B15 `?weather=` 同級；
   // 正規化由 `addExperience(createExperience(), n)` 的曲線進位自然完成）。
-  experience =
-    xpOverride !== null ? addExperience(createExperience(), xpOverride) : createExperience();
-  setExperience(experience);
+  // 直接交給 `setExperience`（不先賦值）：等級上升的比較才看得到舊值。
+  setExperience(
+    xpOverride !== null ? addExperience(createExperience(), xpOverride) : createExperience(),
+  );
   clock = createClock(settings.dayLengthSec);
   // Phase 3 Task 10: arm the engine (this click IS the gesture), start the wind
   // bed and pin the ambience phase to the fresh clock (day).
@@ -3639,7 +3754,6 @@ function startGame(): void {
   resetWeather();
   // A4: the crafting grid is already empty (resetUiOwnedState flushed it into
   // the OLD inventory above) — the new session starts with an empty grid.
-  advancements = emptyAdvancements(); // Task 11: New Game → fresh progress
   deathCause = null; // Task 13: explicit (resetPlayerToSpawn below also nulls it)
   hazardState = createHazardState(); // B3 Task 6: 新局 → 仙人掌計時歸零
   resetSprintAndFov(); // B2.1: fresh sprint latch + FOV back to 70
@@ -4187,6 +4301,11 @@ window.__wecraft = {
     need: xpToNext(experience.level),
   }),
   orbs: () => xpOrbs.length,
+  // B17 Task 12：手持格附魔（**純唯讀**；回傳複本，呼叫端改不到模型）。
+  enchants: () => {
+    const enchant = slots[selected]?.ench;
+    return enchant ? { ...enchant } : null;
+  },
 };
 /** A1: the boot check (local read → cloud init/read/apply → title settle).
  *  Runs in the BACKGROUND — the title is already on screen while it works.
@@ -4541,8 +4660,9 @@ gs.renderer.setAnimationLoop(() => {
     const orbStep = stepXpOrbs(xpOrbs, dt, player.position, solidAt);
     xpOrbs = orbStep.orbs;
     if (orbStep.collected > 0) {
-      experience = addExperience(experience, orbStep.collected);
-      setExperience(experience);
+      // 直接交給 `setExperience`（不先賦值）：等級上升的比較才看得到舊值，
+      // 10 級時才會解鎖「經驗老到」（B17 Task 12）。
+      setExperience(addExperience(experience, orbStep.collected));
       // 撿取音（**本地音**——玩家自己吸收，不需 pos）：0.15 秒節流，磁吸
       // 連續吸收時不會機關槍連響；節流歸零後的下一顆一定會響。
       if (xpSoundAcc <= 0) {
@@ -5225,6 +5345,10 @@ gs.renderer.setAnimationLoop(() => {
           // B10：右鍵床 → 使用（距離／時間窗／怪物的判定都在 world/bed.ts；
           // 與工作台／熔爐／箱子同層——「使用方塊」優先於「使用手上物品」）。
           tryUseBed(hit.x, hit.y, hit.z);
+        } else if (hit && hitBlock === BLOCK.ENCHANTING_TABLE) {
+          // B17 Task 12：右鍵附魔台 → 面板（生存與創造都可開；創造免費）。
+          // 與熔爐／箱子同層，先於所有「使用手上物品」的分支。
+          openEnchantingAt(hit.x, hit.y, hit.z);
         } else if (hit && hitBlock === BLOCK.TNT && heldIsFlintAndSteel()) {
           // B11：手持打火石右鍵 TNT → 點燃（沒拿打火石時落在下面的一般放置路徑
           // ——TNT 是方塊，可以被疊放）。

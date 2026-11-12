@@ -2114,3 +2114,75 @@ describe('main.ts 接線（B17 Task 10：近戰傷害吃 sharpness）', () => {
     expect(countOf('meleeDamageFor(')).toBe(1); // 全檔唯一傷害計算點
   });
 });
+
+// ---- B17 Task 12：附魔台面板與接線、兩個新進度 ------------------------------
+describe('main.ts 接線（B17 Task 12：附魔台面板）', () => {
+  it('the game state has an enchanting mode', () => {
+    expect(mainSource).toMatch(/type GameState = [^;]*'enchanting'/);
+  });
+
+  it('every state transition closes the enchanting panel', () => {
+    expect(functionBody('setState')).toContain('enchantUi.close()');
+  });
+
+  it('the right-click chain opens the table between bed use and held-item branches', () => {
+    const pulse = blockAfter('if (wantPlace) {');
+    const bed = pulse.indexOf('hitBlock === BLOCK.BED');
+    const table = pulse.indexOf(
+      "} else if (hit && hitBlock === BLOCK.ENCHANTING_TABLE) {",
+    );
+    const bucket = pulse.indexOf('heldIsBucket()');
+    expect(bed).toBeGreaterThan(-1);
+    expect(table).toBeGreaterThan(bed);
+    expect(bucket).toBeGreaterThan(table);
+    // Both modes may open it: the table branch carries no survival-only gate.
+    const branch = pulse.slice(table, pulse.indexOf('hitBlock === BLOCK.TNT'));
+    expect(branch).toContain('openEnchantingAt(hit.x, hit.y, hit.z)');
+    expect(branch).not.toContain('currentMode ===');
+  });
+
+  it('the offer roll and panel open each have a single call site', () => {
+    expect(countOf('openEnchantingAt(')).toBe(1);
+    expect(countOf('enchantUi.open(')).toBe(1);
+    expect(countOf('rollEnchantOffers(')).toBe(1);
+  });
+
+  it('the panel view explains why nothing can be enchanted', () => {
+    const body = functionBody('enchantView');
+    expect(body).toContain('手持物品才能附魔');
+    expect(body).toContain('此物品不能附魔');
+    expect(body).toContain('已達附魔上限');
+    expect(body).toContain("currentMode === 'creative'");
+  });
+
+  it('onChoose spends levels, applies the enchant and unlocks the advancement', () => {
+    const body = functionBody('onChoose');
+    const spend = body.indexOf('spendLevels(');
+    const apply = body.indexOf('applyEnchant(');
+    const adv = body.indexOf("applyAdvancement({ type: 'enchanted'");
+    expect(spend).toBeGreaterThan(-1); // survival spend path
+    expect(apply).toBeGreaterThan(spend);
+    expect(adv).toBeGreaterThan(apply);
+    // The owner re-validates stale options and unaffordable levels.
+    expect(body).toContain('compatibleEnchantments(');
+    expect(body).toContain('experience.level < cost');
+    expect(body).toContain('offer.enchant.level !== current.level + 1');
+  });
+
+  it('only a level INCREASE fires the level advancement', () => {
+    const body = functionBody('setExperience');
+    const compare = body.indexOf('next.level > experience.level');
+    const assign = body.indexOf('experience = next;');
+    const fire = body.indexOf("applyAdvancement({ type: 'level'");
+    expect(compare).toBeGreaterThan(-1);
+    expect(assign).toBeGreaterThan(compare); // compare BEFORE the assignment
+    expect(fire).toBeGreaterThan(assign); // assign first, then fire
+    expect(body).toContain('if (levelGained)');
+  });
+
+  it('the debug hook exposes a copied enchant snapshot', () => {
+    expect(mainSource).toContain('enchants: () => Enchantment | null;');
+    expect(mainSource).toContain('enchants: () => {');
+    expect(mainSource).toContain('return enchant ? { ...enchant } : null;');
+  });
+});

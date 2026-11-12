@@ -447,6 +447,75 @@
   filter: none;
 }
 
+/* Enchanting table panel (B17 Task 12): backdrop + panel mirror the furnace
+   chrome; one row per offer. Disabled offers dim instead of disappearing. */
+.ui-overlay.ui-enchant-backdrop {
+  background: transparent;
+}
+.ui-enchant-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  background: #c6c6c6;
+  border: 3px solid #555;
+  border-radius: 4px;
+  padding: 12px;
+}
+.ui-enchant-panel h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #3f3f3f;
+}
+.ui-enchant-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ui-enchant-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  background: #8b8b8b;
+}
+.ui-enchant-name {
+  font-size: 13px;
+  color: #3f3f3f;
+}
+.ui-enchant-level {
+  font-size: 13px;
+  color: #3f3f3f;
+}
+.ui-enchant-offers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ui-enchant-offer {
+  padding: 6px 10px;
+  font-size: 13px;
+  text-align: left;
+  color: #fff;
+  background: linear-gradient(#6f6f6f, #5a5a5a);
+  border: 2px solid #000;
+  box-shadow: inset 0 0 0 2px #a0a0a0;
+  cursor: pointer;
+  text-shadow: 1px 1px 0 #000;
+}
+.ui-enchant-offer:hover:not(:disabled) {
+  background: linear-gradient(#7f8f9f, #6a7a8a);
+  box-shadow: inset 0 0 0 2px #c0d0e0;
+}
+.ui-enchant-offer:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ui-enchant-message {
+  min-height: 1em;
+  font-size: 12px;
+  color: #7a2f2f;
+}
+
 /* Container panel (B8 Task 3): 27 chest slots + the player's 36 slots.
    The overlay/backdrop and .ui-cursor-stack reuse the inventory rules; the
    chest grid is a 9-wide grid like .ui-inv-main. */

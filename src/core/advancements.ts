@@ -26,7 +26,9 @@ export type AdvancementId =
   | 'angler'
   | 'tasty'
   | 'monster_hunter'
-  | 'first_night';
+  | 'first_night'
+  | 'enchanter'
+  | 'experienced';
 
 export interface AdvancementDef {
   id: AdvancementId;
@@ -60,6 +62,9 @@ export const ADVANCEMENTS: readonly AdvancementDef[] = [
   { id: 'tasty', title: '吃個蘋果', description: '吃掉一個蘋果', icon: 'apple' },
   { id: 'monster_hunter', title: '怪物獵人', description: '擊殺一隻怪物', icon: 'stone_sword' },
   { id: 'first_night', title: '度過第一夜', description: '活著看見黎明', icon: 'grass' },
+  // B17 Task 12：附魔台使用 → 附魔師；等級里程碑 → 經驗老到。
+  { id: 'enchanter', title: '附魔師', description: '在附魔台附魔一件物品', icon: 'enchanting_table' },
+  { id: 'experienced', title: '經驗老到', description: '達到 10 級經驗', icon: 'diamond_pickaxe' },
 ];
 
 /** Unlock progress: `done` marks unlocked ids (absent = locked); `nightSeen`
@@ -78,11 +83,13 @@ export type AdvancementEvent =
   | { type: 'mob-killed'; mode: GameMode }
   | { type: 'smelt-take'; mode: GameMode }
   | { type: 'ate'; item: ItemId; mode: GameMode }
+  | { type: 'enchanted'; mode: GameMode }
+  | { type: 'level'; level: number; mode: GameMode }
   | { type: 'phase'; phase: 'day' | 'night' };
 
 /** Obtain → advancement map（Task 11 brief ＋ B4 Task 1 ＋ B5 Task 5 ＋ B13 ＋ B14）：
- * 39 個 item 觸發（其中 16 個進度 id 由「取得物品」解鎖；其餘 4 個進度由
- * 冶煉／進食／擊殺／夜晚事件解鎖 → 進度表共 20 項）。wood/stone/iron tools
+ * 39 個 item 觸發（其中 16 個進度 id 由「取得物品」解鎖；其餘 6 個進度由
+ * 冶煉／進食／擊殺／夜晚／附魔／等級事件解鎖 → 進度表共 22 項）。wood/stone/iron tools
  * share one id per tier; the B5 golden/diamond tools do the same. `stone_sword`
  * only triggers stone_tool here — monster_hunter needs the kill event. Both
  * iron inputs map to iron_age: raw_iron is what iron_ore blocks drop now
@@ -137,10 +144,11 @@ const OBTAIN_UNLOCKS: Readonly<Partial<Record<ItemId, AdvancementId>>> = {
 /** Apply one game event to the progress state. PURE: the input state is never
  *  mutated — a changed transition returns a FRESH state (unchanged ones return
  *  the original by reference, matching "nothing happened"). Rules:
- *  - obtain/mob-killed/smelt-take/ate in CREATIVE unlock nothing (infinite blocks are not
+ *  - obtain/mob-killed/smelt-take/ate/enchanted/level in CREATIVE unlock nothing (infinite blocks are not
  *    progression);
  *  - already-done ids never unlock twice (no toast spam);
- *  - smelt-take unlocks hot_stuff; ate unlocks tasty only for apples;
+ *  - smelt-take unlocks hot_stuff; ate unlocks tasty only for apples; enchanted
+ *    unlocks enchanter; level ≥ 10 unlocks experienced;
  *  - `phase:'night'` only marks `nightSeen`; `phase:'day'` unlocks first_night
  *    once a night has been seen (surviving to dawn). */
 export function checkAdvancements(
@@ -163,6 +171,8 @@ export function checkAdvancements(
     ev.type === 'obtain' ? OBTAIN_UNLOCKS[ev.item]
     : ev.type === 'smelt-take' ? 'hot_stuff'
     : ev.type === 'ate' ? (ev.item === 'apple' ? 'tasty' : undefined)
+    : ev.type === 'enchanted' ? 'enchanter'
+    : ev.type === 'level' ? (ev.level >= 10 ? 'experienced' : undefined)
     : 'monster_hunter';
   if (!id || state.done[id]) return { state, unlocked: [] };
   return { state: { done: { ...state.done, [id]: true }, nightSeen: state.nightSeen }, unlocked: [id] };
