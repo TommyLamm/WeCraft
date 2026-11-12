@@ -133,7 +133,9 @@ export function absorbArmorDamage(set: ArmorSet, amount: number): ArmorHit {
 }
 
 /** 清洗不可信的盔甲資料：每一格只接受「該部位」的盔甲、數量強制 1、
- *  耐久正規化（缺漏／非法 → 上限）。永不拋錯，結果一定是新的四格物件。 */
+ *  耐久正規化（缺漏／非法 → 上限）。B17 Task 9：合法且相容的附魔
+ *  （`sanitizeStack` 已清洗過 → 保護類留在盔甲上）原樣保留；垃圾附魔在
+ *  `sanitizeStack` 就地消失。永不拋錯，結果一定是新的四格物件。 */
 export function normalizeArmorSet(raw: unknown): ArmorSet {
   const source =
     typeof raw === 'object' && raw !== null && !Array.isArray(raw)
@@ -147,6 +149,7 @@ export function normalizeArmorSet(raw: unknown): ArmorSet {
       item: stack.item,
       count: 1,
       ...(stack.dur !== undefined ? { dur: stack.dur } : {}),
+      ...(stack.ench !== undefined ? { ench: stack.ench } : {}),
     };
   }
   return out;

@@ -1,5 +1,8 @@
 import { BLOCK, HOTBAR_DEFAULT, type BlockId } from '../world/blocks';
 import { maxDurability, normalizeDurability } from './durability';
+// B17 Task 9：附魔清洗的唯一真值在 enchantments.ts（該模組只 type-import 本檔，
+// 這個方向的 runtime import 不會形成模組循環）。
+import { sanitizeEnchantFor, type Enchantment } from './enchantments';
 
 export type ItemId =
   | 'grass' | 'dirt' | 'stone' | 'cobblestone' | 'oak_log' | 'oak_planks'
@@ -149,6 +152,10 @@ export interface ItemStack {
   count: number;
   /** 剩餘耐久；耐久物品必然帶明確值，非耐久物品必然沒有。 */
   dur?: number;
+  /** 附魔（B17）：**只在該物品合法可附魔時出現**（與 `dur` 同一條不變量——
+   *  不合法／垃圾附魔由 `sanitizeStack` 清洗成「鍵整個消失」）。每件物品
+   *  最多一個附魔（`{ id, level }`）。 */
+  ench?: Enchantment;
 }
 
 // Item ↔ block pairs for blocks that exist RIGHT NOW. chest is in the ItemId
@@ -302,18 +309,28 @@ const isItemId = (x: unknown): x is ItemId => typeof x === 'string' && ITEM_ID_S
  *  否則回傳 null（呼叫端視為空格）。count 原樣保留——取整與限制到
  *  `maxStack` 是寫入模型（`InventoryModel.setSlot`）的責任。耐久物品
  *  一律帶明確的剩餘耐久（缺漏或非法值改用上限）；非耐久物品則不帶。
+ *  B17 Task 9：附魔照 `dur` 同一條規則——合法且相容的 `ench` 原樣保留
+ *  （新物件，不別名輸入）、其餘（垃圾 id／不相容物品／髒 level）清洗成
+ *  「鍵整個消失」（不是 `ench: undefined`）。
  *  本函式不會拋錯，且結果一定是新物件，不會回傳原輸入。 */
 export function sanitizeStack(x: unknown): ItemStack | null {
   if (typeof x !== 'object' || x === null) return null;
   const s = x as Partial<ItemStack>;
   if (!isItemId(s.item)) return null;
   if (typeof s.count !== 'number' || !Number.isFinite(s.count) || s.count <= 0) return null;
+  // 附魔先驗證（與 item 無關的路徑也走同一支）：不合法 → 鍵不出現。
+  const ench = sanitizeEnchantFor(s.item, s.ench);
   const max = maxDurability(s.item);
   if (max > 0) {
     const dur = normalizeDurability(s.item, s.dur);
-    return { item: s.item, count: s.count, dur: dur ?? max };
+    return {
+      item: s.item,
+      count: s.count,
+      dur: dur ?? max,
+      ...(ench !== undefined ? { ench } : {}),
+    };
   }
-  return { item: s.item, count: s.count };
+  return { item: s.item, count: s.count, ...(ench !== undefined ? { ench } : {}) };
 }
 
 /** Sanitize an untrusted slot array to EXACTLY `count` slots: a non-array (or

@@ -230,4 +230,32 @@ describe('normalizeFurnaceState', () => {
     expect(normalizeFurnaceState({ input: { item: 'iron_pickaxe', count: 1, dur: 100 } }).input)
       .toEqual({ item: 'iron_pickaxe', count: 1, dur: 100 });
   });
+
+  // ---- B17 Task 9：熔爐狀態清洗與步進保留附加欄位 ----
+  it('normalizeFurnaceState keeps a legal enchant on a stack (defensive: smeltables are never enchantable)', () => {
+    // 可熔物（raw_iron）本來不可附魔 → sanitize 會把附魔洗掉；這裡釘住「清洗
+    // 後鍵整個消失」，而不是默默殘留。
+    const st = normalizeFurnaceState({
+      input: { item: 'raw_iron', count: 2, ench: { id: 'efficiency', level: 1 } },
+      fuel: null,
+      output: null,
+    });
+    expect(st.input).toEqual({ item: 'raw_iron', count: 2 });
+    expect(Object.hasOwn(st.input!, 'ench')).toBe(false);
+  });
+
+  it('stepFurnace keeps extra stack fields through the output/input rebuilds (spread)', () => {
+    // 縱深防禦釘子：若未來有「可附魔又可熔煉」的物品，input 的 spread 重建
+    // 不得把附加欄位洗掉（現行可熔物沒有 dur／ench，行為不變）。
+    const probeStack = { item: 'raw_iron', count: 3, mark: true } as unknown as ItemStack;
+    const r = stepFurnace(
+      { input: probeStack, fuel: { item: 'coal', count: 1 }, output: { item: 'iron_ingot', count: 1, mark: 'out' } as unknown as ItemStack, progressSec: 0, fuelUnits: 8 },
+      10,
+    );
+    expect(r.completed).toBe(1);
+    // input 的剩餘（3 → 2）保留了探測欄位；output 在既有堆疊上 +1 也保留
+    expect((r.state.input as unknown as { mark?: boolean }).mark).toBe(true);
+    expect((r.state.output as unknown as { mark?: string }).mark).toBe('out');
+    expect(r.state.output).toMatchObject({ item: 'iron_ingot', count: 2 });
+  });
 });

@@ -43,6 +43,9 @@ import { stepFurnace, SMELT_RECIPES, FUEL_VALUES, type FurnaceState } from './wo
 import { WORLDGEN_VERSION, needsWorldgenNotice } from './world/worldgen';
 import { shouldArmNotice, shouldFlushNotice } from './world/worldgen-notice';
 import { blockFromItem, stackName, maxStack, sanitizeSlots, starterSlots, INVENTORY_SLOTS, type ItemId, type ItemStack } from './core/items';
+// B17 Task 9：`giveItem` 的第 4 參數型別（附魔跟著 give 路徑走；效果查詢的
+// 接線屬 Task 10，這裡只搬運資料）。
+import type { Enchantment } from './core/enchantments';
 // B12：盔甲純邏輯（部位分類、減傷、磨損、清洗）。main 只負責接線與 HUD／模型。
 import {
   absorbArmorDamage,
@@ -755,32 +758,56 @@ function applyAdvancement(ev: AdvancementEvent): void {
 /** Give `count` of `item` back to the inventory → the overflow that didn't fit.
  *  B7 R6：`dur` 是這疊的剩餘耐久，**必須一路帶到底**——受損工具經 UI 往返
  *  （合成格交還、游標歸還、`resetCraftGrid` 沖刷）不得被洗成滿耐久；
- *  非耐久物品照舊沒有 `dur`（呼叫端傳 undefined → 模型 materialize 成滿耐久，
- *  但工具堆疊上限 1，合併迴圈永遠不會合併它們）。
+ *  B17 Task 9：`ench` 是這疊的附魔，同一條規則——附魔工具經 UI 往返不得被
+ *  洗掉附魔。非耐久／未附魔物品照舊沒有對應欄位（呼叫端傳 undefined →
+ *  模型 materialize 成滿耐久，但工具堆疊上限 1，合併迴圈永遠不會合併它們）。
  *  Creative's `addItem` is a no-op (infinite supply), so creative writes the
  *  stacks directly (merge partials, then empty slots). That branch is NOT dead
  *  (review #3): the crafting take/give-back paths are survival-only now, but
  *  `resetCraftGrid`'s flush below runs on every inventory open in ANY mode —
  *  a grid staged in survival and then mode-toggled must still hand its items
  *  back instead of losing them to the creative no-op. */
-function giveItem(item: ItemId, count: number, dur?: number): number {
-  if (inventory.mode !== 'creative') return inventory.addItem(item, count, dur);
+function giveItem(item: ItemId, count: number, dur?: number, ench?: Enchantment): number {
+  if (inventory.mode !== 'creative') return inventory.addItem(item, count, dur, ench);
   const cap = maxStack(item);
   let rest = count;
   for (let i = 0; i < slots.length && rest > 0; i++) {
     const s = slots[i];
-    if (!s || s.item !== item || s.count >= cap) continue;
+    // B17：附魔不同的堆疊不合併（縱深防禦——現行可附魔物品堆疊上限 1，
+    // `s.count >= cap` 已經擋掉；條件寫齊與模型的合併語意一致）。
+    const enchMatched =
+      ench === undefined
+        ? s?.ench === undefined
+        : s?.ench !== undefined && s.ench.id === ench.id && s.ench.level === ench.level;
+    if (!s || s.item !== item || s.count >= cap || !enchMatched) continue;
     const put = Math.min(cap - s.count, rest);
-    inventory.setSlot(i, { item, count: s.count + put, ...(dur !== undefined ? { dur } : {}) });
+    inventory.setSlot(i, {
+      item,
+      count: s.count + put,
+      ...(dur !== undefined ? { dur } : {}),
+      ...(ench !== undefined ? { ench } : {}),
+    });
     rest -= put;
   }
   for (let i = 0; i < slots.length && rest > 0; i++) {
     if (slots[i]) continue;
     const put = Math.min(cap, rest);
-    inventory.setSlot(i, { item, count: put, ...(dur !== undefined ? { dur } : {}) });
+    inventory.setSlot(i, {
+      item,
+      count: put,
+      ...(dur !== undefined ? { dur } : {}),
+      ...(ench !== undefined ? { ench } : {}),
+    });
     rest -= put;
   }
   return rest;
+}
+
+/** B17 Task 9：把**一疊**交回背包——`dur`／`ench` 原樣跟著走（游標歸還、
+ *  塊實體取物等「整疊搬運」的單一入口；不要拆回 `giveItem(item, count, dur)`
+ *  三參數呼叫，那會把附魔洗掉）。回傳放不下的數量。 */
+function giveStack(stack: ItemStack): number {
+  return giveItem(stack.item, stack.count, stack.dur, stack.ench);
 }
 
 /** Rebuild `craftGrid` for `size`, handing every leftover (plus anything
@@ -808,11 +835,13 @@ function resetCraftGrid(size: 2 | 3, dropOverflow?: (stack: ItemStack) => void):
 }
 
 /** A4: 把一疊「哪裡都放不下」的物品丟在玩家腳邊（地面掉落）。
- *  地面不是洗衣機：受損工具帶著 `dur` 丟出去（撿回來仍是受損的）。 */
+ *  地面不是洗衣機：受損工具帶著 `dur` 丟出去（撿回來仍是受損的）；
+ *  B17 Task 9：附魔工具帶著 `ench` 丟出去（撿回來仍是附魔的）。 */
 function dropAtPlayer(stack: ItemStack): void {
   if (!Number.isFinite(stack.count) || stack.count < 1) return;
   drops = spawnDrop(drops, stack.item, stack.count, player.position, {
     ...(stack.dur !== undefined ? { dur: stack.dur } : {}),
+    ...(stack.ench !== undefined ? { ench: stack.ench } : {}),
   });
 }
 
@@ -880,8 +909,9 @@ function craftingParams(size: 2 | 3): CraftingParams {
     },
     // B7 R6：交還的是「合成格裡那一疊」→ 它的 `dur` 要一起傳（受損工具
     // 從合成格拿回來仍是受損的）。
-    onGiveBack: (item, dur) => {
-      const overflow = giveItem(item, 1, dur);
+    // B17 Task 9：附魔同款——`ench` 一起傳（附魔工具從合成格拿回來仍是附魔的）。
+    onGiveBack: (item, dur, ench) => {
+      const overflow = giveItem(item, 1, dur, ench);
       hud.setHotbar(slots, selected);
       return overflow;
     },
@@ -918,7 +948,9 @@ function takeFurnaceOutput(): void {
   const out = st.output;
   if (!out || !Number.isFinite(out.count) || out.count < 1) return;
   if (!inventory.fits(out.item, out.count)) return; // full → blocked
-  giveItem(out.item, out.count, out.dur);
+  // B17 Task 9：整疊取物走 `giveStack`（`dur`／`ench` 一起帶；熔爐產物本身
+  // 不可附魔，這裡只是讓「整疊搬運」有單一入口）。
+  giveStack(out);
   // B17：冶煉取物經驗（原版「取走才發」：每取出 1 個產物 1 點；創造不發——
   // awardXpAt 自行守門）。球生在熔爐方塊中心。
   awardXpAt(xpPerSmelt() * out.count, {
@@ -945,7 +977,9 @@ function clickFurnaceSlot(which: 'input' | 'fuel'): void {
   let next: FurnaceState | null = null;
   if (stack && Number.isFinite(stack.count) && stack.count >= 1) {
     // B7 R6：耐久跟著回背包（熔爐只吃可熔／可燃物 → 對工具不可達，順手一致）
-    if (giveItem(stack.item, 1, stack.dur) > 0) return; // inventory full → stays put
+    // B17：附魔同款帶回（可熔／可燃物本來不可附魔 → `addItem` 的清洗讓這個
+    // 欄位在實務上恆為 undefined；傳參是縱深防禦）。
+    if (giveItem(stack.item, 1, stack.dur, stack.ench) > 0) return; // inventory full → stays put
     const rest = stack.count > 1 ? { item: stack.item, count: stack.count - 1 } : null;
     next = which === 'input' ? { ...st, input: rest } : { ...st, fuel: rest };
   } else {
@@ -1402,7 +1436,9 @@ function dropSelected(wholeStack: boolean): void {
       },
       // B7：掉落物帶著 `dur`，撿回來不會洗成滿耐久（非工具沒有 `dur`，
       // spawnDrop 不會把 `dur: undefined` 寫進實體）。
+      // B17：附魔同款——`ench` 跟著掉落物走（撿回來仍是附魔的）。
       dur: stack.dur,
+      ench: stack.ench,
     },
   );
   hud.setHotbar(slots, selected); // 熱鍵欄計數變了 → 刷新
@@ -2821,13 +2857,21 @@ function setState(next: GameState): void {
         // 關閉面板 → 把游標上的堆疊交回背包；回傳放不下的餘量（null ＝ 全部
         // 放回了）。背包滿時餘量留在 UI 上，下次開面板還看得到（不再憑空消失）。
         // B7 R6：游標上的堆疊帶著 `dur` 原樣交回（受損工具不會在關面板時復活）。
+        // B17 Task 9：`ench` 同款原樣交回（附魔工具不會在關面板時洗掉附魔）。
+        // 整疊搬運走 `giveStack`（單一入口，`dur`／`ench` 一起帶）。
         onReturnCursor: (stack) => {
-          const overflow = giveItem(stack.item, stack.count, stack.dur);
+          const overflow = giveStack(stack);
           hud.setHotbar(slots, selected);
           // B7 R6：放不下而留在游標上的餘量也要帶著 `dur`（下次開面板再放下
           // 才不會洗白；工具堆疊 1 → 餘量必是整把）。
+          // B17：餘量同款帶著 `ench`。
           return overflow > 0
-            ? { item: stack.item, count: overflow, ...(stack.dur !== undefined ? { dur: stack.dur } : {}) }
+            ? {
+                item: stack.item,
+                count: overflow,
+                ...(stack.dur !== undefined ? { dur: stack.dur } : {}),
+                ...(stack.ench !== undefined ? { ench: stack.ench } : {}),
+              }
             : null;
         },
         // B12：生存模式才渲染四格盔甲（創造模式看不到、也改不到）。
@@ -2887,8 +2931,8 @@ function setState(next: GameState): void {
           },
           onReturnCursor: (stack) => {
             // 回 `null` ＝ 已全數放回（游標清空）；回堆疊 ＝ 只放不下這麼多。
-            // `giveItem` 三參數（B7）→ 箱子裡拿出的受損工具歸還時仍受損。
-            const overflow = giveItem(stack.item, stack.count, stack.dur);
+            // `giveStack`（B17）→ 箱子裡拿出的受損／附魔工具歸還時原樣保留。
+            const overflow = giveStack(stack);
             hud.setHotbar(slots, selected);
             return overflow > 0 ? { ...stack, count: overflow } : null;
           },
@@ -4040,9 +4084,18 @@ window.__wecraft = {
   // 名稱沿用 `hotbar`（既有 Playwright 驗收腳本依賴）；B5 Task 7 起回傳 36 格。
   // B7 Task 5：工具堆疊多帶 `dur`（`dur !== undefined` 才加欄位——非工具的既有
   // 形狀不變）；人工驗收靠它讀出剩餘耐久。
+  // B17 Task 9：同款多帶 `ench`（附魔工具的驗收探針讀得出附魔；未附魔的既有
+  // 形狀不變）。
   hotbar: () =>
     slots.map((s) =>
-      s ? { item: s.item, count: s.count, ...(s.dur !== undefined ? { dur: s.dur } : {}) } : null,
+      s
+        ? {
+            item: s.item,
+            count: s.count,
+            ...(s.dur !== undefined ? { dur: s.dur } : {}),
+            ...(s.ench !== undefined ? { ench: s.ench } : {}),
+          }
+        : null,
     ),
   drops: () => drops.length,
   // B9：掉落物的逐筆（物品 id／數量）→ 供驗收探針分辨「方塊掉落」與「火藥掉落」。

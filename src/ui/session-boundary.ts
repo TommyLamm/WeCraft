@@ -11,6 +11,8 @@
 // **再交一次**（複製），而之後舞台的材料只活在孤兒裡（掉料）。
 import { emptyGrid } from '../core/recipes';
 import type { ItemId, ItemStack } from '../core/items';
+// B17 Task 9：`giveItem` 第 4 參數的型別（type-only，無循環風險）。
+import type { Enchantment } from '../core/enchantments';
 
 /** UI 擁有的合成狀態（兩個陣列都**原地**被清空／改寫）。 */
 export interface CraftGridState {
@@ -21,8 +23,10 @@ export interface CraftGridState {
 }
 
 export interface CraftGridFlushDeps {
-  /** 把一疊物品交還背包；回傳放不下的數量（0 ＝ 全部放得下）。 */
-  giveItem(item: ItemId, count: number, dur?: number): number;
+  /** 把一疊物品交還背包；回傳放不下的數量（0 ＝ 全部放得下）。
+   *  B17 Task 9：第 4 參數是這疊的附魔——合成格里舞台化的附魔工具被沖刷
+   *  （開背包／存檔／session 邊界）時不得被洗掉附魔。 */
+  giveItem(item: ItemId, count: number, dur?: number, ench?: Enchantment): number;
   /** 「哪裡都放不下」的東西要去哪。**不傳** → 重新停在合成格的前幾格（場內
    *  的既有行為：玩家還看得到、還拿得到）。session 邊界會傳 sink（地面掉落）
    *  → 重新停放會讓那些東西**洩漏進下一場次**的背包（複製）。 */
@@ -52,17 +56,19 @@ export function flushCraftGrid(
   state.grid.push(...emptyGrid(size));
   let front = 0;
   for (const p of pending) {
-    const overflow = deps.giveItem(p.item, p.count, p.dur);
+    // B17 Task 9：`ench` 跟著 `dur` 一起交還（附魔工具沖刷後仍是附魔的）。
+    const overflow = deps.giveItem(p.item, p.count, p.dur, p.ench);
     if (overflow <= 0) continue;
     const stack: ItemStack = {
       item: p.item,
       count: overflow,
       ...(p.dur !== undefined ? { dur: p.dur } : {}),
+      ...(p.ench !== undefined ? { ench: p.ench } : {}),
     };
     if (deps.dropOverflow) {
       deps.dropOverflow(stack);
     } else if (front < state.grid.length) {
-      // 工具堆疊上限 1 → 溢出的工具是整把停在前面幾格，`dur` 原樣保留
+      // 工具堆疊上限 1 → 溢出的工具是整把停在前面幾格，`dur`／`ench` 原樣保留
       state.grid[front++] = stack;
     } else {
       state.excess.push(stack);

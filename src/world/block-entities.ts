@@ -107,9 +107,24 @@ export function entityToFurnaceState(entity: BlockEntity): FurnaceState {
   };
 }
 
+/** 兩個附魔是否「實質相同」（同 id 同 level；都沒有也算相同）。
+ *  B17 Task 9：`sameStack` 的合併語意延伸——附魔不同的堆疊不得視為同一疊。 */
+function sameEnch(
+  a: ItemStack['ench'],
+  b: ItemStack['ench'],
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.id === b.id && a.level === b.level;
+}
+
 function sameStack(a: ItemStack | null, b: ItemStack | null): boolean {
   if (a === null || b === null) return a === b;
-  return a.item === b.item && a.count === b.count && a.dur === b.dur;
+  return (
+    a.item === b.item &&
+    a.count === b.count &&
+    a.dur === b.dur &&
+    sameEnch(a.ench, b.ench)
+  );
 }
 
 /** 兩個熔爐狀態是否「實質相同」——每幀推進用來避免無謂的 map 寫回。 */
@@ -217,12 +232,17 @@ export function spillBlockEntity(
   let out = drops;
   const spill = (stack: ItemStack | null): void => {
     if (!stack) return;
+    // B17：附魔跟著內容物一起噴出去（地面不是洗衣機；spawnDrop 只在
+    // 有值時寫入鍵，所以沒附魔的堆疊照舊不長出 `ench`）。
     out = spawnDrop(
       out,
       stack.item,
       stack.count,
       pos,
-      stack.dur !== undefined ? { dur: stack.dur } : {},
+      {
+        ...(stack.dur !== undefined ? { dur: stack.dur } : {}),
+        ...(stack.ench !== undefined ? { ench: stack.ench } : {}),
+      },
     );
   };
   if (entity.kind === 'chest') {

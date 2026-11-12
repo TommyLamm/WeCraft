@@ -2038,3 +2038,61 @@ describe('main.ts 接線（B17：經驗）', () => {
     expect(ts.isIdentifier(xp) ? xp.text : '').toBe('experience');
   });
 });
+
+// ---- B17 Task 9：ItemStack.ench 貫穿所有堆疊路徑（接線釘子） ------------------
+describe('main.ts 接線（B17 Task 9：附魔跟著堆疊走）', () => {
+  it('giveStack exists and forwards dur AND ench to giveItem', () => {
+    // 整疊搬運的單一入口：游標歸還、熔爐取物都走這裡——拆回三參數的
+    // giveItem 呼叫會把附魔洗掉，這支釘子讓那種回退直接轉紅。
+    expect(mainSource).toContain('function giveStack(');
+    const body = functionBody('giveStack');
+    expect(body).toContain('giveItem(stack.item, stack.count, stack.dur, stack.ench)');
+  });
+
+  it('dropAtPlayer drops the stack WITH its enchant', () => {
+    const body = functionBody('dropAtPlayer');
+    // session 邊界把放不下的附魔工具丟在腳邊：ench 必須跟著進 spawnDrop。
+    expect(body).toContain('stack.ench');
+    expect(body).toContain('spawnDrop(');
+  });
+
+  it('dropSelected throws the held stack WITH its enchant', () => {
+    const body = functionBody('dropSelected');
+    expect(body).toContain('ench: stack.ench');
+    expect(body).toContain('dur: stack.dur');
+  });
+
+  it('giveItem takes the 4th ench parameter and forwards it to addItem', () => {
+    // 簽名在 functionBody 之外（它只取大括號內的本體）→ 比對整份原始碼的標頭。
+    expect(mainSource).toContain(
+      'function giveItem(item: ItemId, count: number, dur?: number, ench?: Enchantment): number',
+    );
+    const body = functionBody('giveItem');
+    expect(body).toContain('inventory.addItem(item, count, dur, ench)');
+  });
+
+  it('craftingParams.onGiveBack passes the enchant through to giveItem', () => {
+    const body = functionBody('craftingParams');
+    // 合成格交還：三引數簽名（item, dur, ench）→ giveItem 四參數呼叫。
+    expect(body).toContain('onGiveBack: (item, dur, ench)');
+    expect(body).toContain('giveItem(item, 1, dur, ench)');
+  });
+
+  it('the inventory cursor return path carries the enchant (giveStack + remainder)', () => {
+    const body = functionBody('setState');
+    // setState 的 inventory 分支包含 onReturnCursor（main 的背包面板參數）。
+    expect(body).toContain('onReturnCursor: (stack) =>');
+    expect(body).toContain('giveStack(stack)');
+    // 放不下的餘量也要帶著附魔留在游標上（下次開面板再放下才不會洗掉）。
+    expect(body).toContain('stack.ench !== undefined ? { ench: stack.ench } : {}');
+  });
+
+  it('the container cursor return path carries the enchant (giveStack + spread remainder)', () => {
+    const body = functionBody('setState');
+    // 兩個 onReturnCursor（背包面板＋容器面板）都走 giveStack 整疊搬運。
+    expect(countOf('onReturnCursor: (stack) =>')).toBe(2);
+    expect(countOf('giveStack(stack)')).toBe(2);
+    // 容器面板的餘量走 spread 重建 → ench 原樣保留。
+    expect(body).toContain('return overflow > 0 ? { ...stack, count: overflow } : null');
+  });
+});

@@ -348,4 +348,71 @@ describe('inventory model — fits (capacity pre-check)', () => {
     expect(inv.fits('dirt', 1)).toBe(false);
     expect(inv.fits('dirt', 0)).toBe(true);
   });
+
+  // ---- B17 Task 9：附魔跟著堆疊走（ctor／setSlot／addItem） ----
+  it('ctor keeps a legal enchant and drops a junk one', () => {
+    const inv = createInventoryModel(
+      [
+        { item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } },
+        { item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'sharpness', level: 1 } }, // 不相容
+      ],
+      'survival',
+    );
+    expect(inv.slots[0]).toEqual({ item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } });
+    expect(inv.slots[1]).toEqual({ item: 'diamond_pickaxe', count: 1, dur: 100 });
+  });
+
+  it('setSlot keeps a legal enchant (fresh copy) and drops a junk one', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    const source: ItemStack = {
+      item: 'iron_chestplate',
+      count: 1,
+      dur: 9,
+      ench: { id: 'protection', level: 2 },
+    };
+    inv.setSlot(0, source);
+    expect(inv.slots[0]).toEqual(source);
+    expect(inv.slots[0]).not.toBe(source); // setSlot 一律拷貝，不別名呼叫端
+    inv.setSlot(1, {
+      item: 'iron_chestplate',
+      count: 1,
+      dur: 9,
+      ench: { id: 'efficiency', level: 1 },
+    });
+    expect(inv.slots[1]).toEqual({ item: 'iron_chestplate', count: 1, dur: 9 }); // 盔甲不吃 efficiency
+  });
+
+  it('addItem stores an enchanted tool via the 4th parameter', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    expect(inv.addItem('diamond_pickaxe', 1, 100, { id: 'unbreaking', level: 3 })).toBe(0);
+    expect(inv.slots[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'unbreaking', level: 3 },
+    });
+  });
+
+  it('enchanted tools never merge: one slot each, enchants intact', () => {
+    const inv = createInventoryModel(empty(3), 'survival');
+    expect(inv.addItem('diamond_pickaxe', 1, 100, { id: 'efficiency', level: 3 })).toBe(0);
+    expect(inv.addItem('diamond_pickaxe', 1, 200, { id: 'efficiency', level: 3 })).toBe(0);
+    expect(inv.addItem('diamond_pickaxe', 1, 100, { id: 'unbreaking', level: 1 })).toBe(0);
+    expect(inv.slots).toEqual([
+      { item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } },
+      { item: 'diamond_pickaxe', count: 1, dur: 200, ench: { id: 'efficiency', level: 3 } },
+      { item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'unbreaking', level: 1 } },
+    ]);
+  });
+
+  it('addItem drops a junk enchant but keeps the item', () => {
+    const inv = createInventoryModel(empty(2), 'survival');
+    // sharpness 對鎬不合法 → 附魔鍵不出現（其餘照常落地）
+    inv.addItem('diamond_pickaxe', 1, 50, { id: 'sharpness', level: 1 });
+    expect(inv.slots[0]).toEqual({ item: 'diamond_pickaxe', count: 1, dur: 50 });
+    // 不可附魔物品帶附魔 → 鍵不出現、合併行為照舊
+    const plain = createInventoryModel([{ item: 'dirt', count: 60 }], 'survival');
+    expect(plain.addItem('dirt', 4, undefined, { id: 'efficiency', level: 1 })).toBe(0);
+    expect(plain.slots[0]).toEqual({ item: 'dirt', count: 64 }); // 照樣合併
+  });
 });

@@ -134,14 +134,22 @@ export function stepFurnace(
     if (fuelUnits <= 0) {
       if (!fuel || FUEL_VALUES[fuel.item] === undefined) break; // nothing to burn → freeze
       const units = FUEL_VALUES[fuel.item] as number;
-      fuel = fuel.count > 1 ? { item: fuel.item, count: fuel.count - 1 } : null;
+      // B17 Task 9：堆疊重建改用 spread 保留附加欄位。可燃物（煤／原木／板材／
+      // 木棍）本來就不可附魔、也不帶耐久 → 這裡實際上不會多出任何鍵；
+      // spread 純粹是防禦（與下方 input／output 的重建同一套寫法）。
+      fuel = fuel.count > 1 ? { ...fuel, count: fuel.count - 1 } : null;
       fuelUnits += units;
     }
     const need = SMELT_TIME_SEC - progressSec;
     if (need <= 0) {
       // carried a finished bar (e.g. output was full at 10 s) → settle now
-      input = input.count > 1 ? { item: input.item, count: input.count - 1 } : null;
-      output = output ? { item: output.item, count: output.count + 1 } : { item: product, count: 1 };
+      // B17 Task 9：input／output 重建用 spread 保留附加欄位。可熔物（礦物／
+      // 沙／生肉／生魚）與產物（錠／玻璃／熟食）都不可附魔、不帶耐久 →
+      // 實際上不會多出任何鍵；spread 是「漏清洗也不洗白」的縱深防禦。
+      input = input.count > 1 ? { ...input, count: input.count - 1 } : null;
+      output = output
+        ? { ...output, count: output.count + 1 }
+        : { item: product, count: 1 };
       fuelUnits = Math.max(0, fuelUnits - 1); // 扣 1 次，夾在 ≥ 0
       progressSec = 0;
       completed += 1;
@@ -151,8 +159,10 @@ export function stepFurnace(
     progressSec += burn;
     remaining -= burn;
     if (progressSec >= SMELT_TIME_SEC) {
-      input = input.count > 1 ? { item: input.item, count: input.count - 1 } : null;
-      output = output ? { item: output.item, count: output.count + 1 } : { item: product, count: 1 };
+      input = input.count > 1 ? { ...input, count: input.count - 1 } : null;
+      output = output
+        ? { ...output, count: output.count + 1 }
+        : { item: product, count: 1 };
       fuelUnits = Math.max(0, fuelUnits - 1); // 扣 1 次，夾在 ≥ 0
       progressSec = 0;
       completed += 1;

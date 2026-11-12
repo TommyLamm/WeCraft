@@ -19,19 +19,20 @@ import {
   unbreakingAvoidChance,
 } from './enchantments';
 
-/** A stack plus the B17 `ench` field, which `items.ts` only gains in Task 9.
- *  The intersection keeps this assignable to `ItemStack` before AND after that
- *  task (the extra property is optional). */
-type TestStack = ItemStack & { ench?: unknown };
+/** B17 Task 9 落地後 `ItemStack` 本身就有 `ench` → 不再需要交集中的
+ *  `ench?: unknown` 補欄；但 `ench` 參數仍收**不可信的** `unknown`（這個
+ *  測試檔專門測 normalizeEnchantment 對髒值的防禦），所以 `stackOf` 的
+ *  ench 欄位用 cast 寫進去，`enchOf` 讀出來仍是 `unknown`。 */
+type TestStack = ItemStack;
 
 const stackOf = (item: ItemId, ench?: unknown, dur?: number): TestStack => ({
   item,
   count: 1,
   ...(dur === undefined ? {} : { dur }),
-  ...(ench === undefined ? {} : { ench }),
+  ...(ench === undefined ? {} : { ench: ench as ItemStack['ench'] }),
 });
 
-const enchOf = (stack: ItemStack): unknown => (stack as TestStack).ench;
+const enchOf = (stack: ItemStack): unknown => (stack as { ench?: unknown }).ench;
 
 const MATERIALS = ['wooden', 'stone', 'iron', 'golden', 'diamond'] as const;
 const ARMOR_MATERIALS = ['leather', 'iron', 'golden', 'diamond'] as const;

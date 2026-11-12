@@ -34,6 +34,8 @@ import { normalizeVitals, type Vitals } from '../player/survival';
 import { emptyArmorSet, normalizeArmorSet, type ArmorSet } from './armor';
 // B17：玩家經驗（等級＋當前級內點數）；存檔／雲端共用同一支 `normalizeExperience`。
 import { createExperience, normalizeExperience, type Experience } from './experience';
+// B17 Task 9：雲端堆疊的附魔清洗（合法且相容 → 保留；其餘 → 鍵消失）。
+import { sanitizeEnchantFor } from './enchantments';
 import { createInventoryModel } from './inventory';
 import { INVENTORY_SLOTS, type ItemId, type ItemStack } from './items';
 import { maxDurability, normalizeDurability } from './durability';
@@ -99,13 +101,21 @@ export function migrateInventorySlots(
 
 /** 雲端堆疊的 `dur` 正規化（format 3 的核心）：耐久物品 → **明確值**（缺漏／
  *  非法 → 上限）；其餘（含未知 item id——沒有上限可算）→ **沒有 `dur` 欄位**。
+ *  B17 Task 9：附魔同款——合法且相容的 `ench` 帶走（新物件）；未知 id／
+ *  不可附魔物品／垃圾附魔 → **沒有 `ench` 欄位**（不是 `ench: undefined`）。
  *  一律回傳新物件；呼叫端負責先過 {@link migrateInventorySlots}（先遷移槽位數、
  *  再正規化 `dur`——順序不可顛倒）。 */
 function normalizeCloudStack(s: ItemStack): ItemStack {
   const max = maxDurability(s.item);
-  if (max <= 0) return { item: s.item, count: s.count };
+  const ench = sanitizeEnchantFor(s.item, s.ench);
+  if (max <= 0) return { item: s.item, count: s.count, ...(ench !== undefined ? { ench } : {}) };
   const dur = normalizeDurability(s.item, s.dur);
-  return { item: s.item, count: s.count, dur: dur ?? max };
+  return {
+    item: s.item,
+    count: s.count,
+    dur: dur ?? max,
+    ...(ench !== undefined ? { ench } : {}),
+  };
 }
 
 /** Upload budget: 64 KiB of UTF-8 JSON. */
@@ -462,7 +472,8 @@ export function mergeCloudData(local: CloudData, remote: CloudData): CloudData {
       for (const s of remote.inventory) if (s && s.item === id) total += s.count;
       if (!inv.fits(id, total)) continue; // 放不下 → 整個 id 捨棄
       for (const s of remote.inventory) {
-        if (s && s.item === id) inv.addItem(id, s.count, s.dur);
+        // B17 Task 9：雲端補入的堆疊帶著自己的附魔（`addItem` 內部再清洗一次）。
+        if (s && s.item === id) inv.addItem(id, s.count, s.dur, s.ench);
       }
     }
     const localDone = local.advancements?.done ?? {};

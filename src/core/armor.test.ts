@@ -144,4 +144,37 @@ describe('normalizeArmorSet', () => {
     expect(normalized.helmet).toEqual({ item: 'iron_helmet', count: 1, dur: 100 });
     expect(normalized.helmet).not.toBe(helmet);
   });
+
+  // ---- B17 Task 9：附魔跟著盔甲走 ----
+  it('keeps a legal protection enchant on the matching slot (fresh object)', () => {
+    const helmet = {
+      item: 'iron_helmet' as const,
+      count: 1,
+      dur: 100,
+      ench: { id: 'protection', level: 2 },
+    };
+    const normalized = normalizeArmorSet({ helmet });
+    expect(normalized.helmet).toEqual({
+      item: 'iron_helmet',
+      count: 1,
+      dur: 100,
+      ench: { id: 'protection', level: 2 },
+    });
+    expect(normalized.helmet).not.toBe(helmet);
+  });
+
+  it('drops a junk or incompatible enchant but keeps the piece', () => {
+    const raw = {
+      // efficiency 對盔甲不合法
+      helmet: { item: 'iron_helmet', count: 1, dur: 165, ench: { id: 'efficiency', level: 1 } },
+      // 保護合法，但這件擺錯部位 → 整格丟棄
+      boots: { item: 'iron_chestplate', count: 1, dur: 240, ench: { id: 'protection', level: 3 } },
+    };
+    expect(normalizeArmorSet(raw)).toEqual({
+      helmet: { item: 'iron_helmet', count: 1, dur: 165 },
+      chestplate: null,
+      leggings: null,
+      boots: null,
+    });
+  });
 });

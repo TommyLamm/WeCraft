@@ -118,6 +118,18 @@ describe('spawnDrop options (B2.5)', () => {
     expect(d.vel).toEqual({ x: 1, y: 2, z: 3 }); // the entity never aliases the caller's vector
   });
 
+  // ---- B17 Task 9：附魔跟著掉落物走 ----
+  it('spawnDrop writes ench only when given (no ench: undefined key)', () => {
+    const ench = { id: 'efficiency', level: 3 } as const;
+    const [enchanted] = spawnDrop([], 'diamond_pickaxe', 1, { x: 0, y: 0, z: 0 }, {
+      dur: 100,
+      ench,
+    });
+    expect(enchanted.ench).toEqual(ench);
+    const [plain] = spawnDrop([], 'stone', 3, { x: 0, y: 0, z: 0 }, { dur: undefined });
+    expect('ench' in plain).toBe(false);
+  });
+
   it('pins the player-drop pickup delay at 2 s (40 tick)', () => {
     expect(PLAYER_DROP_PICKUP_DELAY).toBe(2);
   });
@@ -602,6 +614,45 @@ describe('B7 drops carry durability', () => {
     const drops = spawnDrop([], 'iron_pickaxe', 1, { x: 0, y: 0, z: 0 });
     pickup(drops, 0, inv);
     expect(inv.slots[0]).toEqual({ item: 'iron_pickaxe', count: 1, dur: 250 }); // 鐵滿耐久
+  });
+});
+
+// ---- B17 Task 9：附魔跟著掉落物走（地面不是洗衣機） -------------------------
+describe('B17 drops carry enchantments', () => {
+  it('stepDrops preserves the enchant of a lying drop', () => {
+    const [d] = stepDrops(
+      spawnDrop([], 'diamond_pickaxe', 1, { x: 0, y: 5, z: 0 }, {
+        dur: 100,
+        ench: { id: 'efficiency', level: 3 },
+      }),
+      0.1,
+      noGround,
+    );
+    expect(d.ench).toEqual({ id: 'efficiency', level: 3 }); // 物理步進只搬位置
+  });
+
+  it('pickup puts the enchant back into the inventory', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    const drops = spawnDrop([], 'diamond_pickaxe', 1, { x: 0, y: 0, z: 0 }, {
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+    const res = pickup(drops, 0, inv);
+    expect(res.overflow).toBe(0);
+    expect(inv.slots[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+  });
+
+  it('a drop without an enchant is picked up without an ench key', () => {
+    const inv = createInventoryModel([null, null], 'survival');
+    const drops = spawnDrop([], 'diamond_pickaxe', 1, { x: 0, y: 0, z: 0 }, { dur: 100 });
+    pickup(drops, 0, inv);
+    expect(inv.slots[0]).toEqual({ item: 'diamond_pickaxe', count: 1, dur: 100 });
+    expect(Object.hasOwn(inv.slots[0]!, 'ench')).toBe(false);
   });
 });
 

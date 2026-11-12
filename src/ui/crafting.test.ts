@@ -219,7 +219,8 @@ describe('crafting section (embedded)', () => {
     clickCell(0); // take one back
     // B7 R6：`onGiveBack` 多了可選的 `dur` → 非耐久物品明確傳 `undefined`
     // （斷言強度不變：第二個引數必須是 undefined，不是被省略）。
-    expect(params.onGiveBack).toHaveBeenCalledWith('oak_planks', undefined);
+    // B17 Task 9：同款邏輯多到第三個引數 `ench`（未附魔 → 明確 undefined）。
+    expect(params.onGiveBack).toHaveBeenCalledWith('oak_planks', undefined, undefined);
     expect(grid[0]).toBeNull();
   });
 
@@ -347,7 +348,8 @@ describe('B7 crafting-cell durability round-trip (R6)', () => {
     grid[0] = { item: 'stone_pickaxe', count: 1, dur: 40 };
     mountCrafting(root(), params);
     clickCell(0); // 交還背包
-    expect(params.onGiveBack).toHaveBeenCalledWith('stone_pickaxe', 40); // 不是滿耐久 131
+    // B17 Task 9：`onGiveBack` 的第三引數 `ench`（未附魔 → 明確 undefined）。
+    expect(params.onGiveBack).toHaveBeenCalledWith('stone_pickaxe', 40, undefined); // 不是滿耐久 131
     expect(grid[0]).toBeNull();
   });
 
@@ -357,7 +359,68 @@ describe('B7 crafting-cell durability round-trip (R6)', () => {
     mountCrafting(root(), params);
     clickCell(0); // 拉進合成格
     clickCell(0); // 交還背包
-    expect(params.onGiveBack).toHaveBeenCalledWith('iron_pickaxe', 77); // 進了又出仍是 77
+    // B17 Task 9：`onGiveBack` 的第三引數 `ench`（未附魔 → 明確 undefined）。
+    expect(params.onGiveBack).toHaveBeenCalledWith('iron_pickaxe', 77, undefined); // 進了又出仍是 77
+    expect(grid[0]).toBeNull();
+  });
+});
+
+// ---- B17 Task 9：合成格往返不得洗掉附魔 --------------------------------------
+describe('B17 crafting-cell enchant round-trip', () => {
+  it('pulling an enchanted tool into an empty cell stages its ench', () => {
+    const { grid, slots, params } = harness(2);
+    slots[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    mountCrafting(root(), params);
+    clickCell(0);
+    expect(params.onSpend).toHaveBeenCalledWith(0, 'diamond_pickaxe');
+    expect(grid[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+    expect(slots[0]).toBeNull();
+  });
+
+  it('clicking a filled cell that holds an enchanted tool passes its ench to onGiveBack', () => {
+    const { grid, params } = harness(2);
+    grid[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    mountCrafting(root(), params);
+    clickCell(0); // 交還背包
+    expect(params.onGiveBack).toHaveBeenCalledWith(
+      'diamond_pickaxe',
+      100,
+      { id: 'efficiency', level: 3 },
+    );
+    expect(grid[0]).toBeNull();
+  });
+
+  it('an enchanted tool survives the full crafting-cell round-trip (ench intact)', () => {
+    const { grid, slots, params } = harness(2);
+    slots[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    mountCrafting(root(), params);
+    clickCell(0); // 拉進合成格
+    clickCell(0); // 交還背包
+    expect(params.onGiveBack).toHaveBeenCalledWith(
+      'diamond_pickaxe',
+      100,
+      { id: 'efficiency', level: 3 },
+    );
     expect(grid[0]).toBeNull();
   });
 });

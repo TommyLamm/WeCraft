@@ -1,5 +1,8 @@
 import { maxStack, type ItemId, type ItemStack } from './items';
 import { maxDurability, normalizeDurability } from './durability';
+// B17 Task 9：附魔在模型落地前一律清洗（合法且相容才保留）——與 `dur` 的
+// 正規化同一條不變量：附魔只出現在「該物品合法可附魔」的堆疊上。
+import { sanitizeEnchantFor, type Enchantment } from './enchantments';
 
 export type GameMode = 'survival' | 'creative';
 
@@ -13,8 +16,11 @@ export interface InventoryModel {
   setMode(mode: GameMode): void;
   /** 依 maxStack 加入物品：先補滿既有堆疊，再跨空位拆分；回傳放不下的數量。
    *  創造模式為無限供應，直接回傳 0。第三個參數是從地上撿回來的受損工具
-   *  剩餘耐久。 */
-  addItem(item: ItemId, count: number, dur?: number): number;
+   *  剩餘耐久。第四個參數（B17）是掉落物／雲端補入帶回來的附魔——**有附魔
+   *  的堆疊永不與不同附魔（或無附魔）的堆疊合併**（合併條件加「附魔相同」；
+   *  現行所有可附魔物品堆疊上限都是 1，本來就合不了，這條是對未來
+   *  「可附魔又可堆疊」物品的縱深防禦）。 */
+  addItem(item: ItemId, count: number, dur?: number, ench?: Enchantment): number;
   /** Decrement up to `count` across slots, clearing emptied ones. Returns the
    *  number actually removed. No-op returning 0 in creative (never consumes). */
   removeItem(item: ItemId, count: number): number;
@@ -51,11 +57,18 @@ export function createInventoryModel(
   // 最終修正波：建構路徑與 `setSlot`／`addItem` 用同一套耐久落地規則——
   // 耐久物品帶**明確** `dur`（缺漏／非法 → 材質上限），非耐久物品不帶 `dur`
   // 欄位（多帶的鍵丟棄）。初始槽位一律拷貝（新物件），從不別名呼叫端的物件。
+  // B17 Task 9：附魔同一條規則——合法且相容 → 帶新物件；其餘 → 鍵不出現。
   const slots: Array<ItemStack | null> = initialSlots.map((s) => {
     if (!s) return null;
     const max = maxDurability(s.item);
     const dur = max > 0 ? (normalizeDurability(s.item, s.dur) ?? max) : undefined;
-    return { item: s.item, count: s.count, ...(dur !== undefined ? { dur } : {}) };
+    const ench = sanitizeEnchantFor(s.item, s.ench);
+    return {
+      item: s.item,
+      count: s.count,
+      ...(dur !== undefined ? { dur } : {}),
+      ...(ench !== undefined ? { ench } : {}),
+    };
   });
   let currentMode = mode;
 
@@ -67,16 +80,25 @@ export function createInventoryModel(
     setMode(next) {
       currentMode = next;
     },
-    addItem(item, count, dur) {
+    addItem(item, count, dur, ench) {
       if (currentMode === 'creative' || count <= 0) return 0;
       const cap = maxStack(item);
       const max = maxDurability(item);
       const durable = max > 0 ? (normalizeDurability(item, dur) ?? max) : undefined;
+      // B17：附魔與耐久同一套落地規則——合法且相容才保留；垃圾附魔在這裡
+      // 就地消失（之後的合併與拆分都以清洗後的值為準）。
+      const carried = sanitizeEnchantFor(item, ench);
+      // 「附魔相同」＝兩邊都沒有，或 id 與 level 都一致——任何一邊有附魔而
+      // 另一邊沒有（或附魔不同）都不得合併。
+      const sameEnch = (other: Enchantment | undefined): boolean =>
+        carried === other ||
+        (carried !== undefined && other !== undefined &&
+          carried.id === other.id && carried.level === other.level);
       let remaining = count;
-      // pass 1: top up partial stacks of this item
+      // pass 1: top up partial stacks of this item (same enchantment only)
       for (const s of slots) {
         if (remaining <= 0) break;
-        if (!s || s.item !== item || s.count >= cap) continue;
+        if (!s || s.item !== item || s.count >= cap || !sameEnch(s.ench)) continue;
         const put = Math.min(cap - s.count, remaining);
         s.count += put;
         remaining -= put;
@@ -89,6 +111,7 @@ export function createInventoryModel(
           item,
           count: put,
           ...(durable !== undefined ? { dur: durable } : {}),
+          ...(carried !== undefined ? { ench: carried } : {}),
         };
         remaining -= put;
       }
@@ -131,10 +154,13 @@ export function createInventoryModel(
       }
       const max = maxDurability(stack.item);
       const dur = max > 0 ? (normalizeDurability(stack.item, stack.dur) ?? max) : undefined;
+      // B17：附魔照 `dur` 同款——合法且相容 → 帶新物件；其餘 → 鍵不出現。
+      const ench = sanitizeEnchantFor(stack.item, stack.ench);
       slots[index] = {
         item: stack.item,
         count: Math.min(Math.floor(stack.count), maxStack(stack.item)),
         ...(dur !== undefined ? { dur } : {}),
+        ...(ench !== undefined ? { ench } : {}),
       };
     },
     spendFromSlot(slot, count) {

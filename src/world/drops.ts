@@ -1,5 +1,7 @@
 import { itemFromBlock, type ItemId } from '../core/items';
 import type { InventoryModel } from '../core/inventory';
+// B17 Task 9：附魔跟著掉落物走（type-only import，無循環風險）。
+import type { Enchantment } from '../core/enchantments';
 import { BLOCK } from './blocks';
 // B13：小麥階段與短草種子機率的單一真值在 farming.ts（純邏輯，無循環依賴）。
 import { seedsFromShortGrass, wheatStageOf } from './farming';
@@ -59,6 +61,9 @@ export interface DropEntity {
    *  **地面不是洗衣機**：受損工具丟出去／從熔爐噴出來時帶著 `dur`，
    *  撿回來仍是受損的。 */
   dur?: number;
+  /** 掉落物的附魔（B17）：**地面不是洗衣機**——附魔工具丟出去／從塊實體
+   *  噴出來時帶著 `ench`，撿回來仍是附魔的；沒有附魔的實體不含這個鍵。 */
+  ench?: Enchantment;
 }
 
 /** Block → drop item, with vanilla-parity overrides:
@@ -168,6 +173,9 @@ export interface SpawnDropOptions {
   /** 掉落物要帶的剩餘耐久（B7：Q 丟棄的受損工具、挖掉熔爐時噴出的受損工具）。
    *  **不給時實體完全沒有 `dur` 欄位** → 撿起來由模型 materialize 成滿耐久。 */
   dur?: number;
+  /** 掉落物要帶的附魔（B17：Q 丟棄的附魔工具、塊實體噴出的附魔物）。
+   *  **不給時實體完全沒有 `ench` 欄位**（不是 `ench: undefined`）。 */
+  ench?: Enchantment;
 }
 
 /** Append a dropped stack at `pos` — returns a NEW array with one more entity
@@ -201,8 +209,10 @@ export function spawnDrop(
       age: 0,
       pickupDelay: opts.pickupDelay ?? SPAWN_PICKUP_DELAY,
       bounced: false,
-      // 只在有值時寫入：`dur: undefined` 會讓既有的 deep-equal 斷言多出一個鍵
+      // 只在有值時寫入：`dur: undefined`／`ench: undefined` 會讓既有的
+      // deep-equal 斷言多出一個鍵（B7 的 `dur` 慣例，B17 的 `ench` 同款）。
       ...(opts.dur !== undefined ? { dur: opts.dur } : {}),
+      ...(opts.ench !== undefined ? { ench: opts.ench } : {}),
     },
   ];
 }
@@ -312,6 +322,7 @@ export function pickable(
  *
  *  B7：`d.dur` 原樣交給 `addItem`——受損工具撿回來仍是受損的（地面不是
  *  洗衣機）；沒有 `dur` 的掉落物由模型 materialize 成滿耐久。
+ *  B17：`d.ench` 同款原樣交給 `addItem`——附魔工具撿回來仍是附魔的。
  *
  *  Returns `{ drops, overflow }` with a NEW array in every branch (invalid
  *  index → no-op, overflow 0). Creative caveat: `addItem` no-ops returning 0
@@ -326,7 +337,7 @@ export function pickup(
   const d = idx >= 0 && idx < drops.length ? drops[idx] : undefined;
   if (!d) return { drops: [...drops], overflow: 0 };
 
-  const overflow = inventory.addItem(d.item, d.count, d.dur); // B7: dur 一起進背包
+  const overflow = inventory.addItem(d.item, d.count, d.dur, d.ench); // B7: dur、B17: ench 一起進背包
   if (overflow >= d.count) return { drops: [...drops], overflow: d.count }; // nothing taken
   if (overflow <= 0) return { drops: drops.filter((_, i) => i !== idx), overflow: 0 };
   return {

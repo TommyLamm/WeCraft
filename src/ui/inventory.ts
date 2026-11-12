@@ -214,7 +214,9 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
 
   /** 右鍵：游標空且格子有貨 → 取一半（ceil(count/2)，1 也整拿）；
    *  游標有貨 → 放 1 個（目標必須空或同物品未滿）；0 變 null。
-   *  事件必須 preventDefault（擋瀏覽器右鍵選單）。 */
+   *  事件必須 preventDefault（擋瀏覽器右鍵選單）。
+   *  B17 Task 9：每一處手動重建都補 `ench`（與 B7 的 `dur` 同款條件式
+   *  spread——沒有附魔的堆疊不長出 `ench: undefined` 鍵）。 */
   const rightClickSlot = (index: number): void => {
     const target = slotStack(index);
     const armorSlot = armorSlotAt(index);
@@ -225,14 +227,32 @@ export function createInventory(uiRoot: HTMLElement): InventoryUi {
       const rest = target.count - half;
       // B7：耐久跟著堆疊上游標（工具堆疊 1 → 這一步就是整把搬移；沒有 dur
       // 的話放回格子會被 setSlot materialize 成滿耐久＝洗白）。
-      cursor = { item: target.item, count: half, ...(target.dur !== undefined ? { dur: target.dur } : {}) };
-      emitChange(index, rest >= 1 ? { item: target.item, count: rest } : null);
+      // B17：附魔同款跟著上游標（附魔工具右鍵＝整把拿起，附魔不得洗掉）。
+      cursor = {
+        item: target.item,
+        count: half,
+        ...(target.dur !== undefined ? { dur: target.dur } : {}),
+        ...(target.ench !== undefined ? { ench: target.ench } : {}),
+      };
+      emitChange(index, rest >= 1
+        ? {
+            item: target.item,
+            count: rest,
+            ...(target.dur !== undefined ? { dur: target.dur } : {}),
+            ...(target.ench !== undefined ? { ench: target.ench } : {}),
+          }
+        : null);
     } else if (!target) {
-      emitChange(index, { item: cursor.item, count: 1, ...(cursor.dur !== undefined ? { dur: cursor.dur } : {}) });
-      cursor = cursor.count > 1 ? { item: cursor.item, count: cursor.count - 1 } : null;
+      emitChange(index, {
+        item: cursor.item,
+        count: 1,
+        ...(cursor.dur !== undefined ? { dur: cursor.dur } : {}),
+        ...(cursor.ench !== undefined ? { ench: cursor.ench } : {}),
+      });
+      cursor = cursor.count > 1 ? { ...cursor, count: cursor.count - 1 } : null;
     } else if (target.item === cursor.item && target.count < maxStack(target.item)) {
-      emitChange(index, { item: target.item, count: target.count + 1 });
-      cursor = cursor.count > 1 ? { item: cursor.item, count: cursor.count - 1 } : null;
+      emitChange(index, { ...target, count: target.count + 1 });
+      cursor = cursor.count > 1 ? { ...cursor, count: cursor.count - 1 } : null;
     } // 目標是別物品或已滿 → 不動（游標保留）
     render();
     renderCursor();

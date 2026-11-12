@@ -393,6 +393,106 @@ describe('cloud-save', () => {
     expect(built.inventory[0]).toEqual({ item: 'iron_axe', count: 1, dur: 88 });
   });
 
+  // ---- B17 Task 9：雲端堆疊的附魔清洗（normalizeCloudStack 經 build/accept 覆蓋）----
+  it('buildCloudData carries the enchant of the inventory stacks', () => {
+    const built = buildCloudData({
+      seed: 42,
+      pos: [0, 0, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [{ item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } }],
+      advancements: emptyAdvancements(),
+      settings: validSettings(),
+      stash: createModeStash(),
+      passiveMobs: [],
+      blockEntities: [],
+      spawnPoint: null,
+    });
+    expect(built.inventory[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+    // stash 兩側走同一支 normalizeCloudStack
+    const withStash = buildCloudData({
+      seed: 42,
+      pos: [0, 0, 0],
+      yaw: 0,
+      vitals: null,
+      clockT: 0,
+      inventory: [],
+      advancements: emptyAdvancements(),
+      settings: validSettings(),
+      stash: {
+        survival: slots({ item: 'iron_sword', count: 1, dur: 10, ench: { id: 'sharpness', level: 2 } }),
+        creative: createModeStash().creative,
+        survivalVitals: createModeStash().survivalVitals,
+      },
+      passiveMobs: [],
+      blockEntities: [],
+      spawnPoint: null,
+    });
+    expect(withStash.stash!.survival[0]).toEqual({
+      item: 'iron_sword',
+      count: 1,
+      dur: 10,
+      ench: { id: 'sharpness', level: 2 },
+    });
+  });
+
+  it('acceptCloudData keeps a compatible enchant and drops a junk one', () => {
+    // 合法且相容 → 保留（level 夾回 1..上限）
+    const good = {
+      ...rawValid(),
+      inventory: [{ item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'fortune', level: 9 } }],
+    };
+    expect(acceptCloudData(good)!.inventory[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'fortune', level: 3 },
+    });
+    // 不相容（sharpness 不上鎬）→ 鍵不出現
+    const incompatible = {
+      ...rawValid(),
+      inventory: [{ item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'sharpness', level: 1 } }],
+    };
+    expect(acceptCloudData(incompatible)!.inventory[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+    });
+    // 不可附魔物品 → 鍵不出現
+    const plain = {
+      ...rawValid(),
+      inventory: [{ item: 'stone', count: 1, ench: { id: 'efficiency', level: 1 } }],
+    };
+    expect(acceptCloudData(plain)!.inventory[0]).toEqual({ item: 'stone', count: 1 });
+  });
+
+  it('mergeCloudData keeps the enchant of the stacks it adds from the remote', () => {
+    const local = acceptCloudData({
+      ...rawValid(),
+      inventory: [{ item: 'dirt', count: 10 }],
+    })!;
+    const remote = acceptCloudData({
+      ...rawValid(),
+      inventory: [{ item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } }],
+    })!;
+    const merged = mergeCloudData(local, remote);
+    const pickaxe = merged.inventory.find((s) => s?.item === 'diamond_pickaxe');
+    expect(pickaxe).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+    // 本機已有的物品（dirt）照舊不被複製
+    expect(merged.inventory.find((s) => s?.item === 'dirt')!.count).toBe(10);
+  });
+
   it('the manifest declares the same cloud format as the code', () => {
     const manifest = JSON.parse(rawManifest) as {
       cloudSave: { writeFormat: number; readableFormats: number[] };

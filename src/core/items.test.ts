@@ -675,4 +675,63 @@ describe('items', () => {
     expect(slots[1]!.count).toBe(1);
     expect(slots[2]).toBeNull();
   });
+
+  // ---- B17 Task 9：附魔照 `dur` 同一條清洗規則 ----
+  it('sanitizeStack keeps a legal compatible enchant (fresh object)', () => {
+    const source = {
+      item: 'diamond_pickaxe' as const,
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    const cleaned = sanitizeStack(source)!;
+    expect(cleaned).toEqual(source);
+    expect(cleaned.ench).not.toBe(source.ench); // 新物件，不別名輸入
+  });
+
+  it('sanitizeStack clamps an out-of-range level instead of dropping the enchant', () => {
+    // 修復性清洗（與 sanitizeEnchantFor 同一語意）：形狀對但超範圍 → 夾回上限
+    //（合法的 `dur: 10` 原樣保留——清洗只動不合法的欄位）
+    expect(
+      sanitizeStack({ item: 'iron_sword', count: 1, dur: 10, ench: { id: 'sharpness', level: 99 } }),
+    ).toEqual({ item: 'iron_sword', count: 1, dur: 10, ench: { id: 'sharpness', level: 5 } });
+  });
+
+  it('sanitizeStack drops junk enchants (unknown id / incompatible item / bad level)', () => {
+    // 未知 id
+    expect(
+      sanitizeStack({ item: 'diamond_pickaxe', count: 1, dur: 1, ench: { id: 'nope', level: 1 } })!.ench,
+    ).toBeUndefined();
+    // 不相容物品（sharpness 不上鎬）
+    expect(
+      sanitizeStack({ item: 'diamond_pickaxe', count: 1, dur: 1, ench: { id: 'sharpness', level: 1 } })!.ench,
+    ).toBeUndefined();
+    // 不可附魔的物品（dirt 根本沒有附魔欄）
+    expect(
+      sanitizeStack({ item: 'dirt', count: 1, ench: { id: 'efficiency', level: 1 } })!.ench,
+    ).toBeUndefined();
+    // 髒 level（非有限 → 不可修 → 丟棄）
+    expect(
+      sanitizeStack({ item: 'iron_sword', count: 1, dur: 1, ench: { id: 'sharpness', level: Number.NaN } })!.ench,
+    ).toBeUndefined();
+  });
+
+  it('sanitizeStack rejects prototype-key enchants (Set allow-list, not `in`)', () => {
+    // `id in ENCHANTMENT_MAX_LEVELS` 型的檢查會讓原型鍵通過；allow-list Set 不會。
+    expect(
+      sanitizeStack({ item: 'iron_sword', count: 1, dur: 1, ench: { id: '__proto__', level: 1 } })!.ench,
+    ).toBeUndefined();
+    expect(
+      sanitizeStack({ item: 'iron_sword', count: 1, dur: 1, ench: { id: 'toString', level: 1 } })!.ench,
+    ).toBeUndefined();
+    expect(
+      sanitizeStack({ item: 'iron_sword', count: 1, dur: 1, ench: { id: 'constructor', level: 1 } })!.ench,
+    ).toBeUndefined();
+  });
+
+  it('sanitizeStackClamped keeps the enchant along with the clamped count', () => {
+    expect(
+      sanitizeStackClamped({ item: 'diamond_pickaxe', count: 9, dur: 5, ench: { id: 'fortune', level: 2 } }),
+    ).toEqual({ item: 'diamond_pickaxe', count: 1, dur: 5, ench: { id: 'fortune', level: 2 } });
+  });
 });

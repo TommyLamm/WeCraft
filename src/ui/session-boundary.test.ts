@@ -41,12 +41,13 @@ function countOf(slots: ReadonlyArray<ItemStack | null>, item: ItemId): number {
   return slots.reduce((n, s) => (s && s.item === item ? n + s.count : n), 0);
 }
 
-/** 背包模型的 `giveItem`（與 main.ts 的接線同義）。 */
+/** 背包模型的 `giveItem`（與 main.ts 的接線同義；B17 起帶第 4 參數 ench）。 */
 const giveTo = (inv: ReturnType<typeof createInventoryModel>) => (
   item: ItemId,
   count: number,
   dur?: number,
-): number => inv.addItem(item, count, dur);
+  ench?: { id: 'efficiency' | 'sharpness' | 'protection' | 'unbreaking' | 'fortune'; level: number },
+): number => inv.addItem(item, count, dur, ench);
 
 describe('A4：舞台化的材料在存檔／讀檔之間恰好出現一次', () => {
   it('a full inventory with staged materials survives Save&Quit and Continue exactly once', () => {
@@ -252,5 +253,69 @@ describe('A4：合成格必須原地清空（開著的面板仍持有同一個�
     craftUi.refresh();
     expect(cell().title).toBe('');
     craftUi.close();
+  });
+});
+
+// ---- B17 Task 9：沖刷不得洗掉附魔 --------------------------------------------
+describe('B17：合成格沖刷保留附魔', () => {
+  it('an enchanted tool staged in the grid flushes back WITH its ench', () => {
+    const inv = createInventoryModel(Array.from({ length: INVENTORY_SLOTS }, () => null), 'survival');
+    const grid = emptyGrid(2);
+    grid[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    flushCraftGrid({ grid, excess: [] }, 2, { giveItem: giveTo(inv) });
+    expect(inv.slots[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
+  });
+
+  it('an enchanted overflow re-parked in the front cells keeps its ench', () => {
+    // 背包全滿 → 溢出 → 沒有 sink → 整把停在合成格前幾格（ench 原樣）。
+    const inv = createInventoryModel(fullInventory(), 'survival');
+    const grid = emptyGrid(2);
+    grid[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'unbreaking', level: 2 },
+    };
+    flushCraftGrid({ grid, excess: [] }, 2, { giveItem: giveTo(inv) });
+    expect(grid[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'unbreaking', level: 2 },
+    });
+    expect(inv.slots.every((s) => s === null || s.item !== 'diamond_pickaxe')).toBe(true);
+  });
+
+  it('an enchanted overflow handed to the sink keeps its ench (session boundary)', () => {
+    const inv = createInventoryModel(fullInventory(), 'survival');
+    const grid = emptyGrid(2);
+    grid[0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    const sunk: Array<ItemStack | null> = [];
+    flushCraftGrid({ grid, excess: [] }, 2, {
+      giveItem: giveTo(inv),
+      dropOverflow: (s) => sunk.push(s),
+    });
+    expect(sunk).toHaveLength(1);
+    expect(sunk[0]).toEqual({
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
   });
 });

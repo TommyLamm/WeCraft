@@ -114,6 +114,23 @@ describe('block entities', () => {
     expect(sameFurnaceState(a, { ...a, input: null })).toBe(false);
   });
 
+  // ---- B17 Task 9：sameStack 把附魔差異視為不同堆疊；灑出保留附魔 ----
+  it('sameFurnaceState treats stacks with different enchants as different', () => {
+    const a: FurnaceState = {
+      input: { item: 'diamond_pickaxe', count: 1, dur: 100, ench: { id: 'efficiency', level: 3 } },
+      fuel: null,
+      output: null,
+      progressSec: 0,
+      fuelUnits: 0,
+    };
+    // 同附魔（不同物件、同 id 同 level）→ 視為同一疊
+    expect(sameFurnaceState(a, { ...a, input: { ...a.input!, ench: { id: 'efficiency', level: 3 } } })).toBe(true);
+    // 不同附魔 → 不同疊
+    expect(sameFurnaceState(a, { ...a, input: { ...a.input!, ench: { id: 'unbreaking', level: 1 } } })).toBe(false);
+    // 有附魔 vs 沒附魔 → 不同疊
+    expect(sameFurnaceState(a, { ...a, input: { item: 'diamond_pickaxe', count: 1, dur: 100 } })).toBe(false);
+  });
+
   it('spillBlockEntity drops one item entity per non-empty chest slot', () => {
     const chest = emptyChestEntity(1, 2, 3);
     chest.slots![0] = { item: 'stone', count: 5 };
@@ -134,6 +151,22 @@ describe('block entities', () => {
     chest.slots![0] = { item: 'iron_pickaxe', count: 1, dur: 77 };
     const out = spillBlockEntity([], chest, { x: 1.5, y: 2.5, z: 3.5 }, 'survival');
     expect(out[0].dur).toBe(77);
+  });
+
+  it('spillBlockEntity keeps the enchant of an enchanted tool', () => {
+    const chest = emptyChestEntity(1, 2, 3);
+    chest.slots![0] = {
+      item: 'diamond_pickaxe',
+      count: 1,
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    };
+    const out = spillBlockEntity([], chest, { x: 1.5, y: 2.5, z: 3.5 }, 'survival');
+    expect(out[0]).toMatchObject({
+      item: 'diamond_pickaxe',
+      dur: 100,
+      ench: { id: 'efficiency', level: 3 },
+    });
   });
 
   it('spillBlockEntity drops one stack per slot from a full chest', () => {

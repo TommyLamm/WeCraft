@@ -1,6 +1,7 @@
 import './ui.css';
 import { consumeGrid, matchRecipe } from '../core/recipes';
 import type { ItemId, ItemStack } from '../core/items';
+import type { Enchantment } from '../core/enchantments';
 import { stackName } from '../core/items';
 import { ICON_PX, getContext2d, itemIcon } from './icons';
 import { mountDurabilityBar } from './durbar';
@@ -43,8 +44,9 @@ export interface CraftingParams {
   onSpend(slot: number, item: ItemId): boolean;
   /** Put 1 `item` back into the inventory; returns overflow (1 = didn't fit).
    *  B7 R6：`dur` 是這格堆疊的剩餘耐久（受損工具交還時不得被洗成滿耐久）；
-   *  非耐久物品沒有 `dur`（呼叫端照舊只收到一個引數的有意義值）。 */
-  onGiveBack(item: ItemId, dur?: number): number;
+   *  B17 Task 9：`ench` 是這格堆疊的附魔（附魔工具交還時不得被洗掉）。
+   *  非耐久／未附魔物品沒有對應欄位（呼叫端照舊只收到有意義的引數值）。 */
+  onGiveBack(item: ItemId, dur?: number, ench?: Enchantment): number;
   /** Try to take `result`; false blocks the take and leaves the grid intact. */
   onTake(result: ItemStack): boolean;
 }
@@ -172,19 +174,27 @@ export function mountCrafting(host: HTMLElement, params: CraftingParams): Crafti
     const cellStack = params.grid[i];
     if (validStack(cellStack)) {
       // filled → hand one back; overflow (inventory full) leaves the cell as is
-      // B7 R6：耐久跟著堆疊走（受損工具交還不得洗白）
-      if (params.onGiveBack(cellStack.item, cellStack.dur) > 0) {
+      // B7 R6：耐久跟著堆疊走（受損工具交還不得洗白）；
+      // B17：附魔同款（附魔工具交還不得洗掉附魔）。
+      if (params.onGiveBack(cellStack.item, cellStack.dur, cellStack.ench) > 0) {
         render();
         return;
       }
-      params.grid[i] = cellStack.count > 1 ? { item: cellStack.item, count: cellStack.count - 1 } : null;
+      // 減一用 spread 保留附加欄位：附魔物品在格子里恆為 count 1（工具堆疊
+      // 上限 1）→ 這支分支對它不會走到；spread 是縱深防禦。
+      params.grid[i] = cellStack.count > 1 ? { ...cellStack, count: cellStack.count - 1 } : null;
     } else {
       const src = params.slots[selected];
       if (!validStack(src)) return; // nothing selected to pull from
       if (!params.onSpend(selected, src.item)) return; // slot changed underneath
       // B7 R6：耐久跟著堆疊進合成格（受損工具拉進來不得洗白）；
-      // 非耐久物品沒有 `dur` → 不寫入 `dur: undefined`。
-      params.grid[i] = { item: src.item, count: 1, ...(src.dur !== undefined ? { dur: src.dur } : {}) };
+      // B17：附魔同款。非耐久／未附魔物品沒有對應欄位 → 不寫入 undefined 鍵。
+      params.grid[i] = {
+        item: src.item,
+        count: 1,
+        ...(src.dur !== undefined ? { dur: src.dur } : {}),
+        ...(src.ench !== undefined ? { ench: src.ench } : {}),
+      };
     }
     render();
   };
