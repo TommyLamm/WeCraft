@@ -11,6 +11,8 @@ import { PLAYER_HALF_WIDTH, PLAYER_HEIGHT } from './physics';
 import type { ItemId, ItemStack } from '../core/items';
 import type { GameMode } from '../core/inventory';
 import { spawnDrop, dropItemFor, chanceDropFor, gravelDropFor, type DropEntity } from '../world/drops';
+// B17 Task 10：附魔效果查詢（純邏輯在 core/enchantments.ts；這裡只做接線）。
+import { efficiencyBonus, fortuneBonus, sharpnessBonus } from '../core/enchantments';
 // B13：小麥的階段與收成規則在 farming.ts（純邏輯；這裡只組裝掉落）。
 import { wheatHarvestFor, wheatStageOf } from '../world/farming';
 import { damageMob, MOB_HALF_WIDTH, MOB_HITBOX_HEIGHT, type Mob } from '../world/mobs';
@@ -29,7 +31,29 @@ import { damageMob, MOB_HALF_WIDTH, MOB_HITBOX_HEIGHT, type Mob } from '../world
  *  它**不受 `dropItemFor` 回 null 的影響**（樹葉本體不掉，但機率掉落照算），
  *  但**仍受創造模式與收穫門檻約束**（創造模式不產生任何掉落；收穫門檻管的是
  *  「這一次破壞有沒有收穫」）。`rng` 可注入 → 測試能釘住 0.5% 這個門檻。
+ *
+ *  **幸運（B17 Task 10）**：四種礦物（煤／鐵／金／鑽石）在**基礎掉落之後**
+ *  追加 `fortuneBonus(等級, rng)` 件（同一個 rng 流；L1 50%／L2 +1／L3 +1 且
+ *  50% 再 +1）。只在這兩道早退之後才擲骰＝只有生存模式＋通過收穫門檻才會
+ *  觸發（原版：幸運只在「這一下真的挖到礦」時生效）。非礦物／非鎬持有者
+ *  一律逐值不變。
  *  Returns the new drops array — unchanged (same ref) when nothing spawns. */
+
+/** 會吃幸運加成的四種礦物（spec §7 fortune 列）。 */
+const FORTUNE_ORES: ReadonlySet<number> = new Set([
+  BLOCK.COAL_ORE,
+  BLOCK.IRON_ORE,
+  BLOCK.GOLD_ORE,
+  BLOCK.DIAMOND_ORE,
+]);
+
+/** 該堆疊上的 fortune 等級（0 ＝ 沒有）。`ench` 由 Task 9 的清洗保證是
+ *  相容的單一附魔；`fortuneBonus` 自己也會夾等級，對不可信輸入安全。 */
+function fortuneLevelOf(stack: ItemStack | null): number {
+  const ench = stack?.ench;
+  return ench && ench.id === 'fortune' ? ench.level : 0;
+}
+
 export function spawnBlockDrop(
   drops: DropEntity[],
   mode: GameMode,
@@ -63,7 +87,12 @@ export function spawnBlockDrop(
   const item = dropItemFor(blockId);
   if (!item) return withChance; // 樹葉：只有 0.5% 蘋果，沒有本體
   // 一般掉落最後 append → 掉落陣列的順序是「機率掉落先、本體後」。
-  return spawnDrop(withChance, item, 1, pos);
+  const withItem = spawnDrop(withChance, item, 1, pos);
+  // B17 Task 10：幸運追加**在本體之後**（同一個 rng 流）。能走到這裡
+  // 就代表「生存模式＋通過收穫門檻」——創造與收不到礦的情形早已早退。
+  if (!FORTUNE_ORES.has(blockId)) return withItem;
+  const extra = fortuneBonus(fortuneLevelOf(held), rng);
+  return extra > 0 ? spawnDrop(withItem, item, extra, pos) : withItem;
 }
 
 // ---- Survival mining (Task 5): vanilla break-time formula + harvest gates ----
@@ -118,13 +147,18 @@ export function canHarvest(blockId: number, held: ItemStack | null): boolean {
  *  else 1 — a wrong kind never speeds a block up. Unbreakable blocks
  *  (hardness Infinity) report 1 too: their break time is Infinity regardless.
  *  Note the tier gate is NOT applied here — a wooden pickaxe still mines iron
- *  ore at 2× (the ×5 penalty comes from `getBreakTime`'s harvest check). */
+ *  ore at 2× (the ×5 penalty comes from `getBreakTime`'s harvest check).
+ *
+ *  **B17 Task 10**：工具種類正確時再加 `efficiencyBonus(held)`（`L²+1`）。
+ *  只在「基礎速度 > 1」的分支加成——原版效率也只在該工具真的挖得快時生效
+ *  （錯種類／徒手／劍仍是 1×）。 */
 export function toolSpeed(blockId: number, held: ItemStack | null): number {
   const def = getBlockDef(blockId);
   if (!Number.isFinite(def.hardness)) return 1; // bedrock/water unchanged
   const wanted = def.requiredTool?.kind ?? def.fastTool;
   const info = held ? TOOL_INFO[held.item] : undefined;
-  return info && wanted && info.kind === wanted ? info.speed : 1;
+  if (!info || !wanted || info.kind !== wanted) return 1;
+  return info.speed + efficiencyBonus(held);
 }
 
 /** Seconds to break `blockId` with `held` (MC Java 1.20+ formula):
@@ -164,6 +198,14 @@ export function toolDamage(heldItem: ItemId | null): number {
   if (!heldItem) return 1; // 徒手 1（原版）
   const d = DAMAGE_TABLE[heldItem];
   return d === undefined ? 1 : d;
+}
+
+/** 一次近戰的實際傷害（B17 Task 10）：`toolDamage(物品) + sharpnessBonus`。
+ *  `sharpnessBonus` 自帶相容性把關（只認劍／斧上的附魔）→ 沒有附魔的堆疊
+ *  逐值等於 `toolDamage`，既有數值完全不變。**main.ts 的近戰呼叫端只走
+ *  這一個入口**（`toolDamage` 仍保留給純表查詢與測試）。 */
+export function meleeDamageFor(held: ItemStack | null): number {
+  return toolDamage(held?.item ?? null) + sharpnessBonus(held);
 }
 
 /** The id of the NEAREST mob whose hitbox the ray crosses within `reach`

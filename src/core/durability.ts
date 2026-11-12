@@ -1,6 +1,7 @@
 // 最大耐久依「材質」（Java Edition 1.20+）：金 32／木 59／石 131／
 // 鐵 250／鑽 1561；同一材質的鎬／斧／鏟／劍同值。dur 是「剩餘耐久」。
 import type { ItemId, ItemStack } from './items';
+import { unbreakingAvoidChance } from './enchantments';
 
 /** 最大耐久（依材質；同一材質的鎬／斧／鏟／劍同值）。 */
 export const TOOL_MAX_DURABILITY: Readonly<Partial<Record<ItemId, number>>> = {
@@ -64,11 +65,22 @@ export interface DurabilityResult {
  * 沿用 `Math.floor` 取整後扣。非耐久物品同樣不動作。扣到 0（含一次扣逾
  * 剩餘）→ `broke: true` 且 `stack: null`。所有不動作分支都回傳**輸入堆疊
  * 的拷貝**（不是輸入參考）→ 呼叫端無法透過結果改到模型內的堆疊。
+ *
+ * **B17 Task 10：unbreaking**——只有「這一次真的會扣耐久」（有限 amount ≥ 1
+ * ＋耐久物品）才**擲一次**骰：`rng() < L/(L+1)` → 這一次不扣，回傳拷貝
+ * （`broke: false`）。無附魔時 chance 為 0 → **完全不呼叫 `rng`**（既有呼叫端
+ * 的行為與亂數流都不變）。`rng` 預設 `Math.random`，測試可注入。
  */
-export function damageStack(stack: ItemStack, amount: number): DurabilityResult {
+export function damageStack(
+  stack: ItemStack,
+  amount: number,
+  rng: () => number = Math.random,
+): DurabilityResult {
   if (!Number.isFinite(amount) || amount < 1) return { stack: { ...stack }, broke: false };
   const max = maxDurability(stack.item);
   if (max === 0) return { stack: { ...stack }, broke: false };
+  const avoidChance = unbreakingAvoidChance(stack);
+  if (avoidChance > 0 && rng() < avoidChance) return { stack: { ...stack }, broke: false };
   const next = currentDurability(stack) - Math.floor(amount);
   if (next <= 0) return { stack: null, broke: true };
   return { stack: { ...stack, dur: next }, broke: false };

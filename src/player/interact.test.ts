@@ -13,11 +13,12 @@ import {
   toolSpeed,
   digStep,
   toolDamage,
+  meleeDamageFor,
   hitMobId,
   attackMob,
 } from './interact';
 import { BLOCK } from '../world/blocks';
-import type { ItemId } from '../core/items';
+import type { ItemId, ItemStack } from '../core/items';
 import { createMob, isDead, KNOCKBACK_SPEED, type Mob } from '../world/mobs';
 import { World } from '../world/world';
 import { Chunk } from '../world/chunk';
@@ -672,6 +673,141 @@ describe('toolDamage (Task 9 melee damage table)', () => {
     expect(toolDamage('apple')).toBe(1);
     expect(toolDamage('stick')).toBe(1);
     expect(toolDamage('dirt')).toBe(1);
+  });
+});
+
+// ---- B17 Task 10：五種附魔效果接到既有的單一真值 --------------------------
+
+describe('toolSpeed 的 efficiency（B17 Task 10：只有工具種類正確才加成）', () => {
+  const enchanted = (item: ItemId, level: number): ItemStack => ({
+    item,
+    count: 1,
+    ench: { id: 'efficiency', level },
+  });
+
+  it('adds L²+1 to the matching tool (L1 +2, L2 +5, L3 +10)', () => {
+    // 木鎬基礎速度 2 → L1 4、L2 7、L3 12
+    expect(toolSpeed(BLOCK.STONE, enchanted('wooden_pickaxe', 1))).toBe(4);
+    expect(toolSpeed(BLOCK.STONE, enchanted('wooden_pickaxe', 2))).toBe(7);
+    expect(toolSpeed(BLOCK.STONE, enchanted('wooden_pickaxe', 3))).toBe(12);
+  });
+
+  it('the bonus flows into getBreakTime as a faster break', () => {
+    // stone：1.5 硬度 × 1.5（可收穫）÷（2 + 5）= 0.3214…
+    expect(getBreakTime(BLOCK.STONE, enchanted('wooden_pickaxe', 2))).toBeCloseTo(2.25 / 7);
+  });
+
+  it('a wrong-kind tool never gets the bonus (still 1×)', () => {
+    expect(toolSpeed(BLOCK.LOG, enchanted('wooden_pickaxe', 3))).toBe(1);
+    expect(toolSpeed(BLOCK.STONE, enchanted('iron_axe', 3))).toBe(1);
+  });
+
+  it('unenchanted and unbreakable blocks are unchanged', () => {
+    expect(toolSpeed(BLOCK.STONE, { item: 'wooden_pickaxe', count: 1 })).toBe(2);
+    expect(toolSpeed(BLOCK.BEDROCK, enchanted('iron_pickaxe', 5))).toBe(1);
+    expect(toolSpeed(BLOCK.WATER, enchanted('iron_pickaxe', 5))).toBe(1);
+  });
+});
+
+describe('spawnBlockDrop 的 fortune（B17 Task 10：四種礦物、同一個 rng 流）', () => {
+  const at = { x: 1, y: 2, z: 3 };
+  const luckyPick = (level: number): ItemStack => ({
+    item: 'iron_pickaxe',
+    count: 1,
+    ench: { id: 'fortune', level },
+  });
+
+  it('L1: 50% chance of one extra ore drop, after the base drop', () => {
+    const lucky = spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at, luckyPick(1), () => 0.4);
+    expect(lucky.map((d) => [d.item, d.count])).toEqual([
+      ['coal', 1],
+      ['coal', 1],
+    ]);
+    const unlucky = spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at, luckyPick(1), () => 0.6);
+    expect(unlucky.map((d) => [d.item, d.count])).toEqual([['coal', 1]]);
+  });
+
+  it('L2 always adds exactly one extra; L3 adds one plus a 50% second', () => {
+    const l2 = spawnBlockDrop([], 'survival', BLOCK.IRON_ORE, at, luckyPick(2), () => 0.99);
+    expect(l2.map((d) => [d.item, d.count])).toEqual([
+      ['raw_iron', 1],
+      ['raw_iron', 1],
+    ]);
+    const l3lucky = spawnBlockDrop([], 'survival', BLOCK.DIAMOND_ORE, at, luckyPick(3), () => 0.49);
+    // 額外件數走與小麥種子同一條路：**一個實體帶 count**（不是多個實體）。
+    expect(l3lucky.map((d) => [d.item, d.count])).toEqual([
+      ['diamond', 1],
+      ['diamond', 2],
+    ]);
+    const l3unlucky = spawnBlockDrop([], 'survival', BLOCK.DIAMOND_ORE, at, luckyPick(3), () => 0.5);
+    expect(l3unlucky.map((d) => [d.item, d.count])).toEqual([
+      ['diamond', 1],
+      ['diamond', 1],
+    ]);
+  });
+
+  it('covers all four ores (gold included) with their vanilla drop items', () => {
+    const ores: Array<[number, ItemId]> = [
+      [BLOCK.COAL_ORE, 'coal'],
+      [BLOCK.IRON_ORE, 'raw_iron'],
+      [BLOCK.GOLD_ORE, 'raw_gold'],
+      [BLOCK.DIAMOND_ORE, 'diamond'],
+    ];
+    for (const [block, item] of ores) {
+      const drops = spawnBlockDrop([], 'survival', block, at, luckyPick(2), () => 0.99);
+      expect(drops.map((d) => [d.item, d.count])).toEqual([
+        [item, 1],
+        [item, 1],
+      ]);
+    }
+  });
+
+  it('no fortune → exactly the old single drop (behaviour unchanged)', () => {
+    const drops = spawnBlockDrop([], 'survival', BLOCK.COAL_ORE, at, { item: 'iron_pickaxe', count: 1 }, () => 0);
+    expect(drops.map((d) => [d.item, d.count])).toEqual([['coal', 1]]);
+    // 非礦物也不會多掉（石頭帶 fortune 也只有圓石）。
+    const stone = spawnBlockDrop([], 'survival', BLOCK.STONE, at, luckyPick(3), () => 0);
+    expect(stone.map((d) => [d.item, d.count])).toEqual([['cobblestone', 1]]);
+  });
+
+  it('creative and unharvestable breaks never roll fortune', () => {
+    let rolls = 0;
+    const counting = () => {
+      rolls++;
+      return 0;
+    };
+    // 創造模式：不產生任何掉落（既有早退）→ 連骰都不擲。
+    expect(spawnBlockDrop([], 'creative', BLOCK.DIAMOND_ORE, at, luckyPick(3), counting)).toEqual([]);
+    expect(rolls).toBe(0);
+    // 木鎬挖金礦：收不到 → 同一個參考、不掉任何東西（也不會擲幸運）。
+    const base = spawnBlockDrop([], 'survival', BLOCK.STONE, at, { item: 'wooden_pickaxe', count: 1 });
+    const denied = { ...luckyPick(3), item: 'wooden_pickaxe' as const };
+    expect(spawnBlockDrop(base, 'survival', BLOCK.GOLD_ORE, at, denied, counting)).toBe(base);
+    expect(rolls).toBe(0);
+  });
+});
+
+describe('meleeDamageFor（B17 Task 10：toolDamage + sharpness）', () => {
+  it('equals toolDamage for unenchanted and bare hands', () => {
+    expect(meleeDamageFor(null)).toBe(1);
+    expect(meleeDamageFor({ item: 'iron_sword', count: 1 })).toBe(6);
+    expect(meleeDamageFor({ item: 'apple', count: 1 })).toBe(1);
+  });
+
+  it('adds 1 + 0.5×(L−1) (L1 +1, L3 +2, L5 +3)', () => {
+    const sword = (level: number): ItemStack => ({
+      item: 'iron_sword',
+      count: 1,
+      ench: { id: 'sharpness', level },
+    });
+    expect(meleeDamageFor(sword(1))).toBe(7);
+    expect(meleeDamageFor(sword(3))).toBe(8);
+    expect(meleeDamageFor(sword(5))).toBe(9);
+  });
+
+  it('ignores a sharpness enchant on an incompatible item (pickaxe)', () => {
+    // sharpness 只在劍／斧合法 → 鎬上的殘留附魔沒有加成（相容表把關）。
+    expect(meleeDamageFor({ item: 'iron_pickaxe', count: 1, ench: { id: 'sharpness', level: 2 } })).toBe(4);
   });
 });
 

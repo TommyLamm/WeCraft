@@ -133,3 +133,78 @@ describe('durability', () => {
     expect(stack.dur).toBe(129);
   });
 });
+
+// ---- B17 Task 10：unbreaking（每次扣耐久擲一次，L/(L+1) 機率免除） ----------
+describe('damageStack 的 unbreaking（B17 Task 10）', () => {
+  const pick = (level: number, dur = 10): ItemStack => ({
+    item: 'iron_pickaxe',
+    count: 1,
+    dur,
+    ench: { id: 'unbreaking', level },
+  });
+
+  it('an avoided roll keeps the whole stack intact (a fresh copy, no break)', () => {
+    const s = pick(1);
+    const r = damageStack(s, 1, () => 0.4); // 0.4 < 1/2 → 免除
+    expect(r.broke).toBe(false);
+    expect(r.stack).toEqual(s);
+    expect(r.stack).not.toBe(s);
+  });
+
+  it('a failed avoid roll still consumes durability', () => {
+    const r = damageStack(pick(1), 1, () => 0.5); // 0.5 !< 0.5 → 照扣
+    expect(r.broke).toBe(false);
+    expect(r.stack?.dur).toBe(9);
+  });
+
+  it('follows the L/(L+1) thresholds (L2 2/3, L3 3/4)', () => {
+    expect(damageStack(pick(2), 1, () => 0.66).stack?.dur).toBe(10); // 0.66 < 2/3 → 免除
+    expect(damageStack(pick(2), 1, () => 0.67).stack?.dur).toBe(9);
+    expect(damageStack(pick(3), 1, () => 0.74).stack?.dur).toBe(10); // 0.74 < 3/4 → 免除
+    expect(damageStack(pick(3), 1, () => 0.75).stack?.dur).toBe(9);
+  });
+
+  it('can save the item on its last point of durability (broke stays false)', () => {
+    const r = damageStack(pick(3, 1), 1, () => 0);
+    expect(r.broke).toBe(false);
+    expect(r.stack).toEqual(pick(3, 1));
+  });
+
+  it('rolls exactly ONCE per damaging call, whatever the amount', () => {
+    let calls = 0;
+    const rng = () => {
+      calls++;
+      return 0.99;
+    };
+    const r = damageStack(pick(1), 3, rng);
+    expect(calls).toBe(1);
+    expect(r.stack?.dur).toBe(7);
+  });
+
+  it('never rolls on the deliberate no-op branches (amount < 1, non-durable)', () => {
+    let calls = 0;
+    const rng = () => {
+      calls++;
+      return 0;
+    };
+    damageStack(pick(3), 0.5, rng);
+    damageStack(pick(3), 0, rng);
+    damageStack(pick(3), Number.NaN, rng);
+    damageStack(pick(3), Number.POSITIVE_INFINITY, rng);
+    damageStack({ item: 'stone', count: 5 }, 1, rng);
+    expect(calls).toBe(0);
+  });
+
+  it('unenchanted stacks never roll and behave exactly as before', () => {
+    let calls = 0;
+    const rng = () => {
+      calls++;
+      return 0;
+    };
+    const r = damageStack({ item: 'iron_pickaxe', count: 1, dur: 10 }, 1, rng);
+    expect(calls).toBe(0);
+    expect(r.stack?.dur).toBe(9);
+    // 沒有附魔但「有 rng」也不會被免除（chance 0 → 不擲骰）。
+    expect(damageStack({ item: 'iron_pickaxe', count: 1, dur: 1 }, 1, () => 0).broke).toBe(true);
+  });
+});

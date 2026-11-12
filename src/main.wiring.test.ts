@@ -2096,3 +2096,21 @@ describe('main.ts 接線（B17 Task 9：附魔跟著堆疊走）', () => {
     expect(body).toContain('return overflow > 0 ? { ...stack, count: overflow } : null');
   });
 });
+
+// ---- B17 Task 10：五種附魔效果接線（近戰傷害走 meleeDamageFor） --------------
+// 其餘四種效果住在純邏輯模組（interact/durability/armor 的行為測試）；
+// 這裡只釘**組裝根**有沒有把近戰傷害換成吃 sharpness 的版本。
+describe('main.ts 接線（B17 Task 10：近戰傷害吃 sharpness）', () => {
+  it('the attack branch computes damage through meleeDamageFor(heldStack)', () => {
+    const playing = playingBranchBody();
+    const calcAt = playing.indexOf('const dmg = meleeDamageFor(heldStack);');
+    expect(calcAt).toBeGreaterThan(-1);
+    // 舊算法（只看物品 id）不得留在攻擊分支裡——它會讓 sharpness 無聲消失。
+    expect(playing).not.toContain('toolDamage(');
+    // 全檔也不再有舊呼叫（import 不含括號，所以這個計數只算呼叫點）。
+    expect(countOf('toolDamage(')).toBe(0);
+    // 算完再打：攻擊必須發生在這個計算之後（同一個攻擊區塊）。
+    expect(playing.indexOf('attackMob(')).toBeGreaterThan(calcAt);
+    expect(countOf('meleeDamageFor(')).toBe(1); // 全檔唯一傷害計算點
+  });
+});

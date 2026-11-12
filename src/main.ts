@@ -122,7 +122,7 @@ import {
   spawnBlockDrop,
   digStep,
   getBreakTime,
-  toolDamage,
+  meleeDamageFor,
   hitMobId,
   attackMob,
 } from './player/interact';
@@ -4910,7 +4910,8 @@ gs.renderer.setAnimationLoop(() => {
             hitPassiveMobId(passiveMobs, rayOrigin, dir, meleeReach) !== null;
         } else {
           const heldStack = slots[selected];
-          const dmg = toolDamage(heldStack?.item ?? null);
+          // B17 Task 10：近戰傷害＝物品基礎值 ＋ sharpness（沒有附魔時逐值不變）。
+          const dmg = meleeDamageFor(heldStack);
           const atk = attackMob(
             mobs,
             rayOrigin,

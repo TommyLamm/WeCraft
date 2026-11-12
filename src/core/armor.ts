@@ -2,9 +2,11 @@
  *
  *  本模組不碰 DOM／Three／存檔 IO；main、UI、存檔層都只透過這裡的函式。
  *
- *  **明示簡化**：減傷公式是 `damage × (1 − min(20, points) / 25)`（每點 4%，
- *  上限 80%，四捨五入、正傷害至少 1）。原版 1.20 的公式另外吃盔甲韌性與傷害值，
- *  本作沒有韌性、也沒有鎖鏈／獄髓；這個差距寫在 README〈與原版的差異〉。
+ *  **明示簡化**：減傷公式是 `damage × (1 − min(20, points + protection) / 25)`
+ *  （每點 4%，上限 80%，四捨五入、正傷害至少 1）。**B17 Task 10**：每級
+ *  protection 視為 +1 護甲點（spec §7／§8），與護甲點數合計後同樣夾在 20。
+ *  原版 1.20 的公式另外吃盔甲韌性與傷害值，本作沒有韌性、也沒有鎖鏈／獄髓；
+ *  這個差距寫在 README〈與原版的差異〉。
  *
  *  **磨損規則**：每次「盔甲可減免」的傷害事件，每個已裝備部位各扣 1 耐久；
  *  同一次傷害的減傷先算完，才移除壞掉的部位（最後一點耐久的那件仍保護該次）。 */
@@ -12,6 +14,7 @@
 import type { ItemId, ItemStack } from './items';
 import { sanitizeStack } from './items';
 import { damageStack } from './durability';
+import { protectionLevels } from './enchantments';
 
 export const ARMOR_SLOTS = ['helmet', 'chestplate', 'leggings', 'boots'] as const;
 export type ArmorSlot = (typeof ARMOR_SLOTS)[number];
@@ -112,13 +115,19 @@ export interface ArmorHit {
 
 /** 套用一次盔甲可減免的傷害：先算減傷，再讓每個部位各掉 1 耐久。
  *  沒有護甲（或 amount 非正／非有限）→ 回傳同一個 `armor` 物件，呼叫端可
- *  用 `result.armor === armor` 判斷「不必重繪」。 */
+ *  用 `result.armor === armor` 判斷「不必重繪」。
+ *
+ *  **B17 Task 10**：減傷點數＝`min(20, 護甲點數 + protectionLevels(set))`。
+ *  選定行為：`protectionLevels` 只計「合法且有 protection 的已穿著部位」→
+ *  「有 protection 卻沒有任何護甲點」不可達，所以既有的 `points <= 0` 早退
+ *  （同參考、不磨損）原樣保留；有穿盔甲但沒 protection 時結果逐值不變。 */
 export function absorbArmorDamage(set: ArmorSet, amount: number): ArmorHit {
   if (!Number.isFinite(amount) || amount <= 0) {
     return { damage: amount, armor: set, broken: [] };
   }
   const points = totalArmorPoints(set);
   if (points <= 0) return { damage: amount, armor: set, broken: [] };
+  const effectivePoints = Math.min(20, points + protectionLevels(set));
 
   const next: ArmorSet = { ...set };
   const broken: Array<{ slot: ArmorSlot; item: ItemId }> = [];
@@ -129,7 +138,7 @@ export function absorbArmorDamage(set: ArmorSet, amount: number): ArmorHit {
     next[slot] = result.stack;
     if (result.broke) broken.push({ slot, item: stack.item });
   }
-  return { damage: reducedDamage(amount, points), armor: next, broken };
+  return { damage: reducedDamage(amount, effectivePoints), armor: next, broken };
 }
 
 /** 清洗不可信的盔甲資料：每一格只接受「該部位」的盔甲、數量強制 1、
