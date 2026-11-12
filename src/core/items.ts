@@ -79,7 +79,10 @@ export type ItemId =
   | 'cooked_salmon' | 'pufferfish' | 'tropical_fish'
   // B16：空桶（右鍵水源裝水）與水桶（右鍵方塊倒水）。都不是方塊物品、都堆疊 1；
   // 水桶不是配方產物（配方只有空桶的 3 鐵錠 V 形）。
-  | 'bucket' | 'water_bucket';
+  | 'bucket' | 'water_bucket'
+  // B17 Task 11：附魔台的物品形式（隨 BLOCK.ENCHANTING_TABLE = 49 一起補上
+  // → 挖掉的附魔台能放回世界；`itemFromBlock` 的兩條守門會立刻紅）。
+  | 'enchanting_table';
 
 /** Exhaustive canonical id list (Minor 5): the `Record<ItemId, true>` is
  *  total, so adding a union member without listing it here is a TYPE ERROR —
@@ -136,15 +139,17 @@ const ITEM_IDS: Record<ItemId, true> = {
   cooked_salmon: true, pufferfish: true, tropical_fish: true,
   // B16：空桶與水桶
   bucket: true, water_bucket: true,
+  // B17 Task 11：附魔台的物品形式
+  enchanting_table: true,
 };
 
-/** 全部 ItemId 的正規清單（目前 115 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
+/** 全部 ItemId 的正規清單（目前 116 個：36 個既有 ＋ B3 Task 4 補的 5 個物品形式
  *  ＋ B4 Task 1 補的 13 個食物／材料／羊毛 ＋ B5 Task 1 補的 4 個新方塊物品
  *  ＋ B5 Task 2 補的 3 個原料與 11 把工具 ＋ B6 Task 5 補的 1 個火把物品形式
  *  ＋ B9 Task 1 補的 3 個生物掉落材料 ＋ B10 補的 3 個（床／燧石／弓）
  *  ＋ B11 補的 2 個（TNT／打火石）＋ B12 補的 16 個盔甲 ＋ B13 補的 9 個
  *  （4 個農產／材料 ＋ 5 把鋤）＋ B14 補的 7 個（釣魚竿 ＋ 6 種魚）
- *  ＋ B16 補的 2 個（空桶／水桶））。 */
+ *  ＋ B16 補的 2 個（空桶／水桶）＋ B17 Task 11 補的 1 個（附魔台））。 */
 export const ALL_ITEM_IDS = Object.keys(ITEM_IDS) as ItemId[];
 
 export interface ItemStack {
@@ -206,6 +211,8 @@ const BLOCK_PAIRS: ReadonlyArray<readonly [ItemId, BlockId]> = [
   ['bed', BLOCK.BED],
   // B11 Task 2：TNT 的方塊物品形式（挖掉掉自身 → 要能放回世界）
   ['tnt', BLOCK.TNT],
+  // B17 Task 11：附魔台的方塊物品形式（挖掉掉自身 → 要能放回世界）
+  ['enchanting_table', BLOCK.ENCHANTING_TABLE],
 ];
 
 const BLOCK_ID = new Map<ItemId, BlockId>(BLOCK_PAIRS);

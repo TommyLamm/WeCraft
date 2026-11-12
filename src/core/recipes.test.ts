@@ -5,7 +5,7 @@ import type { ItemId, ItemStack } from './items';
 /** A usable stack; `count` defaults to 1 (what the crafting UI places per cell). */
 const s = (item: ItemId, count = 1): ItemStack => ({ item, count });
 
-/** Look up a recipe by its settled id (asserts the table holds exactly the 69). */
+/** Look up a recipe by its settled id (asserts the table holds exactly the 70). */
 function recipe(id: string): Recipe {
   const r = RECIPES.find((x) => x.id === id);
   if (!r) throw new Error(`recipe not found: ${id}`);
@@ -13,8 +13,8 @@ function recipe(id: string): Recipe {
 }
 
 describe('recipe table', () => {
-  it('holds exactly the 69 settled recipes, no extras', () => {
-    expect(RECIPES.length).toBe(69);
+  it('holds exactly the 70 settled recipes, no extras', () => {
+    expect(RECIPES.length).toBe(70);
     expect(RECIPES.map((r) => r.id).sort()).toEqual(
       [
         'log_to_planks',
@@ -76,6 +76,8 @@ describe('recipe table', () => {
         'fishing_rod',
         // B16：空桶（3 鐵錠 V 形；水桶不可合成）
         'bucket',
+        // B17 Task 11：附魔台（1 金錠＋2 鑽石＋4 石頭）
+        'enchanting_table',
       ].sort(),
     );
   });
@@ -242,6 +244,54 @@ describe('bucket recipe (B16)', () => {
 
   it('B16: water_bucket is not craftable (filling a source makes one)', () => {
     expect(RECIPES.some((r) => r.result.item === 'water_bucket')).toBe(false);
+  });
+});
+
+describe('enchanting table recipe (B17 Task 11)', () => {
+  it('B17: 1 gold ingot + 2 diamonds + 4 stone craft one enchanting table', () => {
+    const g = emptyGrid(3);
+    g[1] = s('gold_ingot'); // 上排中央
+    g[3] = s('diamond'); // 中排左
+    g[4] = s('stone'); // 中排中央
+    g[5] = s('diamond'); // 中排右
+    g[6] = s('stone'); // 下排左
+    g[7] = s('stone'); // 下排中央
+    g[8] = s('stone'); // 下排右
+    expect(findRecipe(g, 3)?.id).toBe('enchanting_table');
+    expect(matchRecipe(g, 3)).toEqual({ item: 'enchanting_table', count: 1 });
+  });
+
+  it('B17: the pattern is the settled 3×3 shape (exact cells)', () => {
+    const r = recipe('enchanting_table');
+    expect(r.kind).toBe('shaped');
+    expect(r.result).toEqual({ item: 'enchanting_table', count: 1 });
+    if (r.kind === 'shaped') {
+      expect(r.pattern).toEqual([
+        [null, 'gold_ingot', null],
+        ['diamond', 'stone', 'diamond'],
+        ['stone', 'stone', 'stone'],
+      ]);
+    }
+  });
+
+  it('B17: the enchanting table recipe never steals an existing recipe', () => {
+    // 熔爐的 8 圓石環仍是熔爐（不能被新配方蓋掉）
+    const furnace = emptyGrid(3);
+    for (const i of [0, 1, 2, 3, 5, 6, 7, 8]) furnace[i] = s('cobblestone');
+    expect(findRecipe(furnace, 3)?.id).toBe('furnace');
+    // 金錠位置錯（左下角）→ 不成立
+    const wrongGold = emptyGrid(3);
+    wrongGold[6] = s('gold_ingot');
+    wrongGold[3] = s('diamond'); wrongGold[5] = s('diamond');
+    wrongGold[4] = s('stone');
+    wrongGold[7] = s('stone'); wrongGold[8] = s('stone');
+    expect(findRecipe(wrongGold, 3)?.id ?? null).not.toBe('enchanting_table');
+    // 少一顆石頭（只有 3 顆）→ 不成立
+    const missing = emptyGrid(3);
+    missing[1] = s('gold_ingot');
+    missing[3] = s('diamond'); missing[5] = s('diamond');
+    missing[4] = s('stone'); missing[7] = s('stone'); missing[8] = s('stone');
+    expect(findRecipe(missing, 3)?.id ?? null).not.toBe('enchanting_table');
   });
 });
 

@@ -459,6 +459,40 @@ export function drawAtlas(): AtlasImage {
     return stem ? [92, 160, 62, 255] : [0, 0, 0, 0];
   }); // wheat stage 3
 
+  // ---- B17 Task 11：附魔台（tile 50／51）----
+  // 暗紫（黑曜石風）底 ＋ 四角 2×2 金色角飾；top 中央是 2×2 發光符文點
+  // （外加 8 px 十字臂）。所有像素 alpha 255（不透明方塊）；不得留洋紅
+  // （管線中洋紅 = 未畫的除錯色，見 `buildTextureArray`）。位置固定、可數。
+  const ENCHANT_PURPLE: RGBA = [38, 24, 56, 255];
+  const ENCHANT_GOLD: RGBA = [226, 184, 72, 255];
+  const isGoldCorner = (x: number, y: number): boolean =>
+    (x === 1 || x === 2 || x === 13 || x === 14) &&
+    (y === 1 || y === 2 || y === 13 || y === 14);
+
+  put(T.ENCHANTING_TOP, (x, y, r) => {
+    if (isGoldCorner(x, y)) return vary(ENCHANT_GOLD, r, 14);
+    const rune = x >= 7 && x <= 8 && y >= 7 && y <= 8; // 中央 2×2 發光符文點
+    if (rune) return vary([170, 250, 235, 255], r, 10);
+    const arm =
+      ((x === 6 || x === 9) && (y === 7 || y === 8)) ||
+      ((y === 6 || y === 9) && (x === 7 || x === 8));
+    if (arm) return vary([112, 202, 190, 255], r, 12); // 符文周圍的 8 px 十字臂
+    // 中央的微光暈（越近符文越亮）→ 黑曜石的玻璃感
+    const dx = x - 7.5;
+    const dy = y - 7.5;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const glow = d < 3 ? 18 : d < 4.5 ? 8 : 0;
+    const c = vary(ENCHANT_PURPLE, r, 12);
+    return [clamp255(c[0] + glow), clamp255(c[1] + glow * 0.8), clamp255(c[2] + glow), 255];
+  }); // enchanting table top
+
+  put(T.ENCHANTING_SIDE, (x, y, r) => {
+    if (isGoldCorner(x, y)) return vary(ENCHANT_GOLD, r, 14);
+    const grain = x % 4 === 1 ? -10 : 0; // 黑曜石風的垂直紋理
+    const c = vary([34, 20, 50, 255], r, 12);
+    return [clamp255(c[0] + grain), clamp255(c[1] + grain), clamp255(c[2] + grain), 255];
+  }); // enchanting table side
+
   cachedAtlas = { width: ATLAS_SIZE, height: ATLAS_SIZE, data };
   return cachedAtlas;
 }

@@ -431,6 +431,55 @@ describe('textures', () => {
     expect(magenta, `tile ${T.TORCH} magenta`).toBeLessThan(TILE_PX * TILE_PX);
     expect(painted, `tile ${T.TORCH} painted`).toBeGreaterThan(0);
   });
+
+  // ---- B17 Task 11：附魔台（tile 50／51）----
+  // 暗紫（黑曜石風）底 ＋ 四角 2×2 金色角飾；top 中央有發光符文點。
+  // 所有像素 alpha 255（不透明方塊），且不得出現管線的洋紅除錯色。
+  it('B17: the enchanting tiles are opaque dark purple with gold corner trim', () => {
+    const atlas = drawAtlas();
+    for (const tile of [T.ENCHANTING_TOP, T.ENCHANTING_SIDE]) {
+      let opaque = 0;
+      let magenta = 0;
+      let gold = 0;
+      let purple = 0;
+      for (let y = 0; y < TILE_PX; y++) {
+        for (let x = 0; x < TILE_PX; x++) {
+          const [r, g, b, a] = tilePixel(atlas, tile, x, y);
+          if (a === 255) opaque++;
+          if (r === 255 && g === 0 && b === 255) magenta++;
+          if (r > 190 && g > 140 && b < 120) gold++;
+          if (b > r && r > g) purple++;
+        }
+      }
+      expect(opaque, `tile ${tile} opaque`).toBe(TILE_PX * TILE_PX);
+      expect(magenta, `tile ${tile} magenta`).toBe(0);
+      expect(gold, `tile ${tile} gold corners`).toBeGreaterThanOrEqual(16); // 四角各 2×2
+      expect(purple, `tile ${tile} purple base`).toBeGreaterThan(150); // 底色仍是主體
+    }
+  });
+
+  it('B17: the top tile has a glowing rune dot in the centre and both faces differ', () => {
+    const atlas = drawAtlas();
+    for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]] as const) {
+      const [r, g, b] = tilePixel(atlas, T.ENCHANTING_TOP, x, y);
+      expect(g, `rune ${x},${y} g`).toBeGreaterThan(200); // 亮綠松色符文
+      expect(b, `rune ${x},${y} b`).toBeGreaterThan(180);
+      expect(r, `rune ${x},${y} r`).toBeLessThan(g);
+    }
+    // 發光像素是少數（符文點，不是整片亮色）
+    let glow = 0;
+    for (let y = 0; y < TILE_PX; y++)
+      for (let x = 0; x < TILE_PX; x++) {
+        const [r, g, b] = tilePixel(atlas, T.ENCHANTING_TOP, x, y);
+        if (g > 220 && b > 200 && r < 200) glow++;
+      }
+    expect(glow).toBeGreaterThanOrEqual(4);
+    expect(glow).toBeLessThan(64);
+    // top（符文面）與 side（側面材質）不可共用同一張圖
+    expect(Array.from(tilePixels(atlas, T.ENCHANTING_TOP))).not.toEqual(
+      Array.from(tilePixels(atlas, T.ENCHANTING_SIDE)),
+    );
+  });
 });
 
 // ---- Task 15: texture array for greedy-mesh sampling ----

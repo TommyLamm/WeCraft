@@ -71,6 +71,8 @@ describe('materialGroup', () => {
       [BLOCK.WATER_FLOW_6]: 'water',
       [BLOCK.WATER_FLOW_7]: 'water',
       [BLOCK.WATER_FALL]: 'water',
+      // B17 Task 11：附魔台是石頭音色（原版 sound type 也是 stone）
+      [BLOCK.ENCHANTING_TABLE]: 'stone',
     };
     expect(Object.keys(table)).toHaveLength(Object.keys(BLOCK).length); // every id covered
     for (const [id, group] of Object.entries(table)) {

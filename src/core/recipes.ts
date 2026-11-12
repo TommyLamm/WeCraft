@@ -1,6 +1,6 @@
 import type { ItemId, ItemStack } from './items';
 
-// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming + B14 fishing rod + B16 bucket: exactly 69) ----
+// ---- Recipe table (13 settled recipes + B5 expansion + B6 torch + B8 chest + B10 bow/bed + B11 TNT + B12 armor + B13 farming + B14 fishing rod + B16 bucket + B17 enchanting table: exactly 70) ----
 //
 // Patterns are arrays of rows (top → bottom), each row an array of cells
 // (left → right): an ItemId marks a required item, a list of ids accepts any
@@ -76,7 +76,7 @@ const WHEAT: PatternCell = 'wheat';
 const ROD_STICK: PatternCell = 'stick';
 const ROD_STRING: PatternCell = 'string';
 
-/** The settled recipe table — exactly 69 entries, checked by tests. */
+/** The settled recipe table — exactly 70 entries, checked by tests. */
 export const RECIPES: ReadonlyArray<Recipe> = [
   // 1 log anywhere → 4 planks (one exact species per recipe — no substitution)
   { id: 'log_to_planks', kind: 'shapeless', inputs: ['oak_log'], result: { item: 'oak_planks', count: 4 } },
@@ -640,6 +640,18 @@ export const RECIPES: ReadonlyArray<Recipe> = [
       [null, I, null],
     ],
     result: { item: 'bucket', count: 1 },
+  },
+  // B17 Task 11：附魔台（1 金錠＋2 鑽石＋4 石頭；原版是 4 黑曜石＋2 鑽石＋1 書，
+  // 本作沒有黑曜石與書 → 已揭露的偏離）。寬 3 × 高 3 → 需工作台 3×3。
+  {
+    id: 'enchanting_table',
+    kind: 'shaped',
+    pattern: [
+      [null, 'gold_ingot', null],
+      ['diamond', 'stone', 'diamond'],
+      ['stone', 'stone', 'stone'],
+    ],
+    result: { item: 'enchanting_table', count: 1 },
   },
 ];
 

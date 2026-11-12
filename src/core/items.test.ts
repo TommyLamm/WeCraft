@@ -39,6 +39,8 @@ const BLOCK_ITEMS: ItemId[] = [
   'bed',
   // B11 Task 2：TNT 的物品形式（隨 BLOCK.TNT = 35 一起補上）
   'tnt',
+  // B17 Task 11：附魔台的物品形式（隨 BLOCK.ENCHANTING_TABLE = 49 一起補上）
+  'enchanting_table',
 ];
 /** B13：耕地與小麥四階段是狀態方塊，刻意沒有物品形式。
  *  B16：流動水 41–48 也是世界模擬產生的狀態方塊，沒有物品形式。 */
@@ -140,8 +142,9 @@ const ALL_ITEMS: ItemId[] = [...new Set<ItemId>([
  *  B13 再補 9 個（4 個農產／材料 ＋ 5 把鋤）→ 106。
  *  B14 再補 7 個（釣魚竿 ＋ 6 種魚）→ **113**。
  *  B16 再補 2 個（空桶／水桶；皆堆疊 1、皆非方塊）→ **115**。
+ *  B17 Task 11 再補 1 個（附魔台的方塊物品形式，隨 BLOCK.ENCHANTING_TABLE = 49 落地）→ **116**。
  *  下批再加 id → **只改這一個數字**。 */
-const TOTAL_ITEM_COUNT = 115;
+const TOTAL_ITEM_COUNT = 116;
 
 /** B4 Task 1 的 13 個新 id（照 brief 逐字）。 */
 const B4_ITEM_IDS: readonly ItemId[] = [
@@ -344,6 +347,17 @@ describe('items', () => {
     // 沒有 DISPLAY_NAMES 覆寫 → title-case 自動轉出原版名稱
     expect(stackName('bucket')).toBe('Bucket');
     expect(stackName('water_bucket')).toBe('Water Bucket');
+  });
+
+  // ---- B17 Task 11：附魔台的方塊物品形式 ----
+
+  it('B17: the enchanting table has a block form and stacks to 64', () => {
+    expect(blockFromItem('enchanting_table')).toBe(BLOCK.ENCHANTING_TABLE);
+    expect(itemFromBlock(BLOCK.ENCHANTING_TABLE)).toBe('enchanting_table');
+    expect(stackFromBlock(BLOCK.ENCHANTING_TABLE)).toEqual({ item: 'enchanting_table', count: 64 });
+    expect(maxStack('enchanting_table')).toBe(64);
+    expect(stackName('enchanting_table')).toBe('Enchanting Table');
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.ENCHANTING_TABLE);
   });
 
   // ---- B9 Task 1：火藥／線／蜘蛛眼（三個暫無用途的生物掉落材料）----

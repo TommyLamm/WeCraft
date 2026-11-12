@@ -91,6 +91,8 @@ describe('blocks', () => {
       [BLOCK.WATER_FLOW_6, Infinity],
       [BLOCK.WATER_FLOW_7, Infinity],
       [BLOCK.WATER_FALL, Infinity],
+      // B17 Task 11 新增：附魔台硬度 5（原版）
+      [BLOCK.ENCHANTING_TABLE, 5],
     ];
     for (const [id, hardness] of expected) {
       expect(getBlockDef(id).hardness).toBe(hardness);
@@ -160,6 +162,8 @@ describe('blocks', () => {
       [BLOCK.WATER_FLOW_6, null, null],
       [BLOCK.WATER_FLOW_7, null, null],
       [BLOCK.WATER_FALL, null, null],
+      // B17 Task 11 新增：附魔台要鎬（level 0 門檻）、鎬加速
+      [BLOCK.ENCHANTING_TABLE, { kind: 'pickaxe', level: 0 }, 'pickaxe'],
     ];
     for (const [id, requiredTool, fastTool] of expected) {
       expect(getBlockDef(id).requiredTool).toEqual(requiredTool);
@@ -536,10 +540,12 @@ describe('blocks', () => {
     expect(HOTBAR_DEFAULT).not.toContain(BLOCK.TORCH);
   });
 
-  it('the wheat stage 3 tile is the last declared tile', () => {
-    // 不綁死數字：上游 tile 表變動不會誤報；B13 起最高 tile 是 T.WHEAT_3（49），
-    // TILE_COUNT = 50。跨批撞號由各批自己的相鄰檢查把關。
-    expect(T.WHEAT_3).toBe(TILE_COUNT - 1);
+  it('the enchanting side tile is the last declared tile', () => {
+    // 不綁死「哪一批」：TILE_COUNT ＝ 最高 tile ＋ 1。B17 起最高 tile 是
+    // T.ENCHANTING_SIDE（51），TILE_COUNT = 52。跨批撞號由各批自己的相鄰檢查把關。
+    expect(T.ENCHANTING_SIDE).toBe(TILE_COUNT - 1);
+    expect(T.ENCHANTING_TOP).toBe(T.ENCHANTING_SIDE - 1);
+    expect(T.WHEAT_3).toBe(T.ENCHANTING_TOP - 1);
     expect(T.WHEAT_0).toBe(T.WHEAT_3 - 3);
     expect(T.FARMLAND_TOP).toBe(T.WHEAT_0 - 1);
     expect(T.TNT_SIDE).toBe(T.FARMLAND_TOP - 1);
@@ -585,7 +591,7 @@ describe('blocks', () => {
     expect(T.WHEAT_1).toBe(47);
     expect(T.WHEAT_2).toBe(48);
     expect(T.WHEAT_3).toBe(49);
-    expect(TILE_COUNT).toBe(50);
+    expect(TILE_COUNT).toBe(52);
   });
 
   it('B13: farmland is a full cube and wheat stages are cross plants', () => {
@@ -682,6 +688,8 @@ describe('blocks', () => {
     expect(blastResistanceOf(BLOCK.DIAMOND_ORE)).toBe(3);
     expect(blastResistanceOf(BLOCK.TORCH)).toBe(0);
     expect(blastResistanceOf(BLOCK.CHEST)).toBe(2.5);
+    // B17 Task 11：附魔台是黑曜石級抗性（原版 1200）
+    expect(blastResistanceOf(BLOCK.ENCHANTING_TABLE)).toBe(1200);
     expect(blastResistanceOf(BLOCK.AIR)).toBe(0); // 空氣不是目標，但 fallback 也要有值
   });
 
@@ -732,5 +740,41 @@ describe('blocks', () => {
       expect(PLACEABLE).not.toContain(id);
       expect(HOTBAR_DEFAULT).not.toContain(id);
     }
+  });
+
+  // ---- B17 Task 11：附魔台（append-only id 49；tile 50–51）----
+
+  it('B17: the enchanting table is id 49 with vanilla hardness, tools and blast resistance', () => {
+    expect(BLOCK.ENCHANTING_TABLE).toBe(49);
+    // append-only：49 是目前最大的方塊 id（加新 id 只能往後）
+    expect(Math.max(...Object.values(BLOCK))).toBe(49);
+    const def = getBlockDef(BLOCK.ENCHANTING_TABLE);
+    expect(def).toMatchObject({
+      id: 49,
+      name: 'enchanting_table',
+      hardness: 5,
+      blastResistance: 1200,
+      solid: true,
+      transparent: false,
+      shape: 'cube',
+      requiredTool: { kind: 'pickaxe', level: 0 },
+      fastTool: 'pickaxe',
+      top: T.ENCHANTING_TOP,
+      side: T.ENCHANTING_SIDE,
+      bottom: T.ENCHANTING_SIDE,
+    });
+    // 可放置（合成物 → 創造清單自動出現）；不是初始熱鍵物品
+    expect(PLACEABLE).toContain(BLOCK.ENCHANTING_TABLE);
+    expect(HOTBAR_DEFAULT).not.toContain(BLOCK.ENCHANTING_TABLE);
+  });
+
+  it('B17: the enchanting tiles are appended after the wheat tiles (no cross-batch collision)', () => {
+    expect(T.ENCHANTING_TOP).toBe(50);
+    expect(T.ENCHANTING_SIDE).toBe(51);
+    expect(TILE_COUNT).toBe(52);
+    expect(T.ENCHANTING_TOP).not.toBe(T.TORCH);
+    expect(T.ENCHANTING_TOP).not.toBe(T.CHEST);
+    expect(T.ENCHANTING_TOP).not.toBe(T.ENCHANTING_SIDE); // top ≠ side
+    expect(TILE_COUNT).toBeLessThanOrEqual(64);
   });
 });

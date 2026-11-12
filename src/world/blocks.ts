@@ -73,6 +73,9 @@ export const BLOCK = {
   WATER_FLOW_6: 46,
   WATER_FLOW_7: 47,
   WATER_FALL: 48,
+  // B17 Task 11：附魔台（append-only 49；舊版遇到未知 id 會 fallback 空氣、不崩，
+  // 存檔格式不動）。upright 滿格方塊，原版硬度 5、黑曜石級爆炸抗性 1200。
+  ENCHANTING_TABLE: 49,
 } as const;
 
 export type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
@@ -155,12 +158,15 @@ export const T = {
   // 耕地側面／底面沿用泥土 tile。
   FARMLAND_TOP: 45,
   WHEAT_0: 46, WHEAT_1: 47, WHEAT_2: 48, WHEAT_3: 49,
+  // B17 Task 11：附魔台的 top／side（底面沿用 side）。跨批編號：本批 = 50、51
+  // → TILE_COUNT = 52（< ARRAY_LAYERS = 64）。
+  ENCHANTING_TOP: 50, ENCHANTING_SIDE: 51,
 } as const;
 
 /** Tiles are `0..TILE_COUNT-1`; `TILE_COUNT` is derived from the LAST tile
- *  (currently `T.WHEAT_3`), so appending a tile and pointing `TILE_COUNT` at it
- *  is the only change needed to grow the atlas. */
-export const TILE_COUNT = T.WHEAT_3 + 1;
+ *  (currently `T.ENCHANTING_SIDE`), so appending a tile and pointing
+ *  `TILE_COUNT` at it is the only change needed to grow the atlas. */
+export const TILE_COUNT = T.ENCHANTING_SIDE + 1;
 
 /** B16：流動水 41–48 與水源 id 9 共用同一份定義（差別只有 id；三面都用
  *  水源 tile）。`hardness: Infinity` = 不可破壞；沒有物品形式。 */
@@ -269,6 +275,10 @@ const DEFS: Record<number, BlockDef> = {
   46: FLOWING_WATER_DEF(46),
   47: FLOWING_WATER_DEF(47),
   48: FLOWING_WATER_DEF(48),
+  // B17 Task 11：附魔台（minecraft.wiki/Enchanting Table，2026-11-11）：硬度 5、
+  // 爆炸抗性 1200、鎬（level 0 門檻／加速）、滿格不透明方塊。上表面是符文貼圖、
+  // 側面／底面共用側面貼圖。
+  49: { id: 49, name: 'enchanting_table', hardness: 5, blastResistance: 1200, solid: true, transparent: false, shape: 'cube', top: T.ENCHANTING_TOP, side: T.ENCHANTING_SIDE, bottom: T.ENCHANTING_SIDE, requiredTool: { kind: 'pickaxe', level: 0 }, fastTool: 'pickaxe' },
 };
 
 export function getBlockDef(id: number): BlockDef {
@@ -319,6 +329,9 @@ export const PLACEABLE: BlockId[] = [
   // B11 Task 1：TNT（物品形式隨方塊一起補上 → 創造清單自動出現；
   // HOTBAR_DEFAULT 不加——TNT 是做出來的（火藥＋沙），不是初始物品）
   BLOCK.TNT,
+  // B17 Task 11：附魔台（物品形式隨方塊一起補上 → 創造清單自動出現；
+  // HOTBAR_DEFAULT 不加——附魔台是做出來的）
+  BLOCK.ENCHANTING_TABLE,
 ];
 
 export const HOTBAR_DEFAULT: BlockId[] = [
